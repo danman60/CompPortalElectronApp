@@ -28,22 +28,6 @@
   color: var(--text-secondary);
 }
 
-.action-btn {
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 500;
-  transition: all 0.15s;
-  white-space: nowrap;
-}
-
-.action-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
-.action-btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
-.action-btn.photos { background: linear-gradient(135deg, #7c3aed, #a855f7); border-color: #7c3aed; color: white; }
-
 /* Stats bar */
 .stats-bar {
   border-top: 1px solid var(--border);
@@ -65,4 +49,47 @@
 .stats-bar .stat-num {
   font-weight: 700;
   font-size: 13px;
+}
+
+/* Output directory in stats bar */
+.output-dir-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.output-dir-path {
+  cursor: pointer;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.output-dir-path:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
+
+.output-dir-change {
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.output-dir-change:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
 }

@@ -95,6 +95,7 @@
 
 .field input[type="text"],
 .field input[type="password"],
+.field input[type="number"],
 .field select {
   padding: 6px 8px;
   background: var(--bg-tertiary);
@@ -137,47 +138,21 @@
   font-family: 'Consolas', 'Monaco', monospace;
 }
 
-/* Track mapping grid */
-.track-mapping {
+/* Unified audio config grid (role | OBS source | recording track) */
+.audio-config-grid {
   display: grid;
-  grid-template-columns: auto auto 1fr;
+  grid-template-columns: 100px 1fr 1fr;
   gap: 6px 10px;
   align-items: center;
 }
 
-.track-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.arrow {
+.audio-config-header {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   color: var(--text-muted);
-  font-size: 12px;
-}
-
-.track-mapping select {
-  padding: 5px 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-family: inherit;
-  outline: none;
-  cursor: pointer;
-}
-
-.track-mapping select:focus {
-  border-color: var(--border-focus);
-}
-
-/* Input mapping grid */
-.input-mapping {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  align-items: center;
+  padding-bottom: 2px;
 }
 
 .role-label {
@@ -186,7 +161,7 @@
   color: var(--text-primary);
 }
 
-.input-mapping select {
+.audio-config-grid select {
   padding: 5px 8px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
@@ -198,8 +173,37 @@
   cursor: pointer;
 }
 
-.input-mapping select:focus {
+.audio-config-grid select:focus {
   border-color: var(--border-focus);
+}
+
+/* Hotkey capture input */
+.hotkey-input {
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.hotkey-input:focus,
+.hotkey-input.capturing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.hotkey-input.capturing {
+  color: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 /* Toggle rows for behavior section */

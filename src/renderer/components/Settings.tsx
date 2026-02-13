@@ -1,7 +1,66 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import type { AppSettings } from '../../shared/types'
 import '../styles/settings.css'
+
+// --- Hotkey Capture Component ---
+function HotkeyInput({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}): React.ReactElement {
+  const [capturing, setCapturing] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!capturing) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (e.key === 'Escape') {
+        setCapturing(false)
+        return
+      }
+
+      // Build accelerator string
+      const parts: string[] = []
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.shiftKey) parts.push('Shift')
+      if (e.altKey) parts.push('Alt')
+
+      // Map key names to Electron accelerator format
+      const key = e.key
+      if (!['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
+        if (key.length === 1) {
+          parts.push(key.toUpperCase())
+        } else {
+          parts.push(key)
+        }
+        const accelerator = parts.join('+')
+        onChange(accelerator)
+        setCapturing(false)
+      }
+    },
+    [capturing, onChange],
+  )
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      className={`hotkey-input ${capturing ? 'capturing' : ''}`}
+      value={capturing ? 'Press a key...' : value}
+      readOnly
+      onFocus={() => setCapturing(true)}
+      onBlur={() => setCapturing(false)}
+      onKeyDown={handleKeyDown}
+      style={{ width: '120px', cursor: 'pointer', textAlign: 'center' }}
+    />
+  )
+}
 
 export default function Settings(): React.ReactElement {
   const currentSettings = useStore((s) => s.settings)
@@ -10,6 +69,7 @@ export default function Settings(): React.ReactElement {
   const [obsInputs, setObsInputs] = useState<string[]>([])
   const [namingPreview, setNamingPreview] = useState('')
   const [diagCopied, setDiagCopied] = useState(false)
+  const [overlayCopied, setOverlayCopied] = useState(false)
 
   useEffect(() => {
     if (currentSettings) {
@@ -47,12 +107,45 @@ export default function Settings(): React.ReactElement {
     if (!draft) return
     await window.api.settingsSet(draft)
     useStore.getState().setSettings(draft)
+
+    // Apply always-on-top if changed
+    if (currentSettings && draft.behavior.alwaysOnTop !== currentSettings.behavior.alwaysOnTop) {
+      await window.api.toggleAlwaysOnTop(draft.behavior.alwaysOnTop)
+    }
+
     setSettingsOpen(false)
+  }
+
+  // Build inverted track mapping: role -> trackN
+  function getRoleToTrack(): Record<string, string> {
+    if (!draft) return {}
+    const result: Record<string, string> = {}
+    for (const [track, role] of Object.entries(draft.audioTrackMapping)) {
+      if (role && role !== 'unused') {
+        result[role] = track
+      }
+    }
+    return result
+  }
+
+  function setRoleTrack(role: string, track: string): void {
+    if (!draft) return
+    // Clear old mapping for this role
+    const newMapping = { ...draft.audioTrackMapping }
+    for (const [k, v] of Object.entries(newMapping)) {
+      if (v === role) newMapping[k] = 'unused'
+    }
+    // Set new
+    if (track) newMapping[track] = role
+    setDraft({ ...draft, audioTrackMapping: newMapping })
   }
 
   if (!draft) return <div />
 
   const judgeCount = draft.competition.judgeCount
+  const roles = ['performance', ...Array.from({ length: judgeCount }, (_, i) => `judge${i + 1}`)]
+  const roleToTrack = getRoleToTrack()
+  const trackOptions = Array.from({ length: 6 }, (_, i) => `track${i + 1}`)
 
   return (
     <div className="settings-overlay">
@@ -97,6 +190,7 @@ export default function Settings(): React.ReactElement {
                 <option value="mp4">MP4</option>
                 <option value="flv">FLV</option>
               </select>
+              <span className="hint">Applied to OBS on save (Simple output mode)</span>
             </div>
           </div>
         </div>
@@ -156,67 +250,46 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
-        {/* Audio Track Mapping */}
+        {/* Unified Audio Configuration */}
         <div className="settings-section">
-          <div className="settings-section-title">Audio Track Mapping</div>
-          <p className="section-desc">Maps OBS recording tracks to output files.</p>
-          <div className="track-mapping">
-            {Array.from({ length: judgeCount + 1 }, (_, i) => {
-              const trackKey = `track${i + 1}`
-              const roles = ['performance', ...Array.from({ length: judgeCount }, (_, j) => `judge${j + 1}`), 'unused']
-              return (
-                <React.Fragment key={i}>
-                  <span className="track-label">Track {i + 1}</span>
-                  <span className="arrow">&rarr;</span>
-                  <select
-                    value={draft.audioTrackMapping[trackKey] || ''}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        audioTrackMapping: { ...draft.audioTrackMapping, [trackKey]: e.target.value },
-                      })
-                    }
-                  >
-                    {roles.map((r) => (
-                      <option key={r} value={r}>
-                        {r === 'performance' ? 'Performance (main mix)' : r === 'unused' ? 'Unused' : `Judge ${r.replace('judge', '')}`}
-                      </option>
-                    ))}
-                  </select>
-                </React.Fragment>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Audio Input Mapping (Meters) */}
-        <div className="settings-section">
-          <div className="settings-section-title">Audio Input Mapping (Meters)</div>
-          <p className="section-desc">Maps OBS audio sources to meter roles.</p>
-          <div className="input-mapping">
-            {['performance', ...Array.from({ length: judgeCount }, (_, i) => `judge${i + 1}`)].map(
-              (role) => (
-                <React.Fragment key={role}>
-                  <span className="role-label">
-                    {role === 'performance' ? 'Performance' : `Judge ${role.replace('judge', '')}`}
-                  </span>
-                  <select
-                    value={draft.audioInputMapping[role] || ''}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        audioInputMapping: { ...draft.audioInputMapping, [role]: e.target.value },
-                      })
-                    }
-                  >
-                    <option value="">Select input...</option>
-                    {obsInputs.map((input) => (
-                      <option key={input} value={input}>{input}</option>
-                    ))}
-                  </select>
-                </React.Fragment>
-              ),
-            )}
+          <div className="settings-section-title">Audio Configuration</div>
+          <p className="section-desc">
+            For each role, assign the OBS audio source (for live meters) and the recording track number (for FFmpeg splitting).
+          </p>
+          <div className="audio-config-grid">
+            <span className="audio-config-header">Role</span>
+            <span className="audio-config-header">OBS Source (meters)</span>
+            <span className="audio-config-header">Recording Track (FFmpeg)</span>
+            {roles.map((role) => (
+              <React.Fragment key={role}>
+                <span className="role-label">
+                  {role === 'performance' ? 'Performance' : `Judge ${role.replace('judge', '')}`}
+                </span>
+                <select
+                  value={draft.audioInputMapping[role] || ''}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      audioInputMapping: { ...draft.audioInputMapping, [role]: e.target.value },
+                    })
+                  }
+                >
+                  <option value="">Select input...</option>
+                  {obsInputs.map((input) => (
+                    <option key={input} value={input}>{input}</option>
+                  ))}
+                </select>
+                <select
+                  value={roleToTrack[role] || ''}
+                  onChange={(e) => setRoleTrack(role, e.target.value)}
+                >
+                  <option value="">None</option>
+                  {trackOptions.map((t) => (
+                    <option key={t} value={t}>Track {t.replace('track', '')}</option>
+                  ))}
+                </select>
+              </React.Fragment>
+            ))}
           </div>
           <p className="section-desc" style={{ marginTop: '6px' }}>
             Input list auto-populated from OBS when connected.
@@ -311,42 +384,34 @@ export default function Settings(): React.ReactElement {
         {/* Global Hotkeys */}
         <div className="settings-section">
           <div className="settings-section-title">Global Hotkeys</div>
-          <p className="section-desc">Work even when the app is not focused.</p>
+          <p className="section-desc">Click a field and press a key combination. Works even when the app is not focused.</p>
           <div className="settings-grid">
             <div className="field">
               <label>Start / Stop Recording</label>
-              <input
-                type="text"
+              <HotkeyInput
                 value={draft.hotkeys.toggleRecording}
-                onChange={(e) => update('hotkeys', { toggleRecording: e.target.value })}
-                style={{ width: '100px' }}
+                onChange={(v) => update('hotkeys', { toggleRecording: v })}
               />
             </div>
             <div className="field">
               <label>Next Routine</label>
-              <input
-                type="text"
+              <HotkeyInput
                 value={draft.hotkeys.nextRoutine}
-                onChange={(e) => update('hotkeys', { nextRoutine: e.target.value })}
-                style={{ width: '100px' }}
+                onChange={(v) => update('hotkeys', { nextRoutine: v })}
               />
             </div>
             <div className="field">
               <label>Fire Lower Third</label>
-              <input
-                type="text"
+              <HotkeyInput
                 value={draft.hotkeys.fireLowerThird}
-                onChange={(e) => update('hotkeys', { fireLowerThird: e.target.value })}
-                style={{ width: '100px' }}
+                onChange={(v) => update('hotkeys', { fireLowerThird: v })}
               />
             </div>
             <div className="field">
               <label>Save Replay</label>
-              <input
-                type="text"
+              <HotkeyInput
                 value={draft.hotkeys.saveReplay}
-                onChange={(e) => update('hotkeys', { saveReplay: e.target.value })}
-                style={{ width: '100px' }}
+                onChange={(v) => update('hotkeys', { saveReplay: v })}
               />
             </div>
           </div>
@@ -367,22 +432,41 @@ export default function Settings(): React.ReactElement {
               </select>
             </div>
             <div className="field">
-              <label>Auto-hide After</label>
-              <select
+              <label>Auto-hide After (seconds)</label>
+              <input
+                type="number"
+                min="0"
+                max="120"
                 value={draft.lowerThird.autoHideSeconds}
-                onChange={(e) => update('lowerThird', { autoHideSeconds: parseInt(e.target.value) })}
-              >
-                <option value="0">Never (manual hide)</option>
-                <option value="5">5 seconds</option>
-                <option value="8">8 seconds</option>
-                <option value="10">10 seconds</option>
-                <option value="15">15 seconds</option>
-              </select>
+                onChange={(e) => update('lowerThird', { autoHideSeconds: parseInt(e.target.value) || 0 })}
+                style={{ width: '80px' }}
+              />
+              <span className="hint">0 = never auto-hide (manual only)</span>
             </div>
-            <div className="field">
-              <label>Overlay URL</label>
-              <input type="text" value={draft.lowerThird.overlayUrl} disabled style={{ opacity: 0.6 }} />
-              <span className="hint">Add this as a Browser Source in OBS (1920x1080)</span>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label>Overlay URL (Browser Source in OBS)</label>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value={draft.lowerThird.overlayUrl}
+                  readOnly
+                  style={{ flex: 1, opacity: 0.8 }}
+                />
+                <button
+                  className="back-btn"
+                  onClick={() => {
+                    navigator.clipboard.writeText(draft.lowerThird.overlayUrl)
+                    setOverlayCopied(true)
+                    setTimeout(() => setOverlayCopied(false), 2000)
+                  }}
+                >
+                  {overlayCopied ? 'Copied!' : 'Copy URL'}
+                </button>
+              </div>
+              <span className="hint">
+                Add this URL as a Browser Source in OBS (1920x1080, transparent background).
+                The overlay shows entry #, routine title, studio name, and dancers.
+              </span>
             </div>
           </div>
         </div>

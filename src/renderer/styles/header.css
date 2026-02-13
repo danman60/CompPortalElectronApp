@@ -67,3 +67,22 @@
 .load-comp-btn:hover {
   filter: brightness(1.15);
 }
+
+/* Action buttons in header */
+.action-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.action-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+.action-btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+.action-btn.primary:hover { filter: brightness(1.15); }
+.action-btn.photos { background: linear-gradient(135deg, #7c3aed, #a855f7); border-color: #7c3aed; color: white; }
+.action-btn.photos:hover { filter: brightness(1.15); }

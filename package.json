@@ -1,6 +1,6 @@
 {
   "name": "compsync-media",
-  "version": "1.0.4",
+  "version": "2.0.0",
   "description": "CompSync Media — OBS recording control, audio splitting, photo import, and upload for dance competitions",
   "author": "CompSync <danieljohnabrahamson@gmail.com>",
   "main": "./out/main/index.js",
@@ -72,7 +72,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "resources/icon.ico",
-      "uninstallerIcon": "resources/icon.ico"
+      "uninstallerIcon": "resources/icon.ico",
+      "warningOnOtherInstanceRunning": false
     }
   }
 }

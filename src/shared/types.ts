@@ -148,6 +148,7 @@ export interface AppSettings {
     syncLowerThird: boolean
     confirmBeforeOverwrite: boolean
     alwaysOnTop: boolean
+    zoomFactor: number
   }
 }
 
@@ -218,6 +219,13 @@ export const IPC_CHANNELS = {
   APP_COPY_DIAGNOSTICS: 'app:copy-diagnostics',
   APP_RENDERER_LOG: 'app:renderer-log',
   APP_TOGGLE_DEVTOOLS: 'app:toggle-devtools',
+  APP_SET_ZOOM: 'app:set-zoom',
+  APP_GET_ZOOM: 'app:get-zoom',
+
+  // Preview
+  PREVIEW_START: 'preview:start',
+  PREVIEW_STOP: 'preview:stop',
+  PREVIEW_FRAME: 'preview:frame',
 } as const
 
 // --- FFmpeg ---
@@ -247,6 +255,7 @@ export interface LowerThirdData {
   dancers: string[]
   studioName: string
   category: string
+  logoUrl: string
   visible: boolean
 }
 
@@ -308,5 +317,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     syncLowerThird: true,
     confirmBeforeOverwrite: true,
     alwaysOnTop: false,
+    zoomFactor: 1.25,
   },
 }

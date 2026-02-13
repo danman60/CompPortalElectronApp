@@ -220,6 +220,23 @@ export async function saveReplay(): Promise<void> {
   await obs.call('SaveReplayBuffer')
 }
 
+// --- Recording format ---
+
+export async function setRecordingFormat(format: string): Promise<void> {
+  try {
+    // Simple output mode — most common OBS config
+    await obs.call('SetProfileParameter', {
+      parameterCategory: 'SimpleOutput',
+      parameterName: 'RecFormat2',
+      parameterValue: format,
+    })
+    logger.obs.info(`Recording format set to ${format}`)
+  } catch (err) {
+    // May fail if OBS is in Advanced mode
+    logger.obs.warn(`Failed to set recording format (Advanced mode?): ${err instanceof Error ? err.message : err}`)
+  }
+}
+
 // --- Input list for meter mapping ---
 
 export async function getInputList(): Promise<string[]> {
@@ -253,9 +270,15 @@ obs.on('RecordStateChanged', (event) => {
 // Stream state changes
 obs.on('StreamStateChanged', (event) => {
   logger.obs.info('StreamStateChanged:', event.outputState)
-  state.isStreaming =
-    event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED' ||
-    event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTING'
+  if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED') {
+    state.isStreaming = true
+  } else if (
+    event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPED' ||
+    event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPING'
+  ) {
+    state.isStreaming = false
+  }
+  // STARTING state: don't change — wait for STARTED confirmation
   broadcastState()
 })
 
@@ -288,4 +311,44 @@ obs.on('ConnectionClosed', () => {
 
 export function getState(): OBSState {
   return { ...state }
+}
+
+// --- Preview Polling ---
+
+let previewTimer: NodeJS.Timeout | null = null
+
+export function startPreview(fps = 5): void {
+  stopPreview()
+  if (state.connectionStatus !== 'connected') return
+
+  const interval = Math.round(1000 / fps)
+  previewTimer = setInterval(async () => {
+    if (state.connectionStatus !== 'connected') {
+      stopPreview()
+      return
+    }
+    try {
+      // Get current program scene name
+      const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene')
+      const { imageData } = await obs.call('GetSourceScreenshot', {
+        sourceName: currentProgramSceneName,
+        imageFormat: 'jpg',
+        imageCompressionQuality: 40,
+        imageWidth: 640,
+        imageHeight: 360,
+      })
+      sendToRenderer(IPC_CHANNELS.PREVIEW_FRAME, imageData)
+    } catch {
+      // Scene may not exist or OBS disconnected
+    }
+  }, interval)
+  logger.obs.info(`Preview polling started at ${fps} FPS`)
+}
+
+export function stopPreview(): void {
+  if (previewTimer) {
+    clearInterval(previewTimer)
+    previewTimer = null
+    logger.obs.info('Preview polling stopped')
+  }
 }

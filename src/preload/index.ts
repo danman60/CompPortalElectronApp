@@ -63,6 +63,12 @@ const api = {
   crashRecovery: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CRASH_RECOVERY),
   getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
   toggleDevTools: () => ipcRenderer.invoke(IPC_CHANNELS.APP_TOGGLE_DEVTOOLS),
+  setZoom: (direction: string) => ipcRenderer.invoke(IPC_CHANNELS.APP_SET_ZOOM, direction),
+  getZoom: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_ZOOM),
+
+  // Preview
+  previewStart: (fps?: number) => ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_START, fps),
+  previewStop: () => ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_STOP),
   copyDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.APP_COPY_DIAGNOSTICS),
   rendererLog: (level: string, ...args: unknown[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_RENDERER_LOG, level, ...args),

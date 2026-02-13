@@ -177,9 +177,19 @@ export function registerAllHandlers(): void {
     return settings.getSettings()
   })
 
-  safeHandle(IPC_CHANNELS.SETTINGS_SET, (partial: unknown) => {
+  safeHandle(IPC_CHANNELS.SETTINGS_SET, async (partial: unknown) => {
     logIPC(IPC_CHANNELS.SETTINGS_SET, Object.keys(partial as object))
-    return settings.setSettings(partial as Partial<Record<string, unknown>>)
+    const result = settings.setSettings(partial as Partial<Record<string, unknown>>)
+
+    // Apply recording format to OBS if connected and format changed
+    const p = partial as Record<string, unknown>
+    if (p.obs && (p.obs as Record<string, unknown>).recordingFormat) {
+      if (obs.getState().connectionStatus === 'connected') {
+        obs.setRecordingFormat((p.obs as Record<string, unknown>).recordingFormat as string).catch(() => {})
+      }
+    }
+
+    return result
   })
 
   safeHandle(IPC_CHANNELS.SETTINGS_BROWSE_DIR, async () => {
@@ -255,9 +265,10 @@ export function registerAllHandlers(): void {
   })
 
   // --- App ---
-  safeHandle(IPC_CHANNELS.APP_TOGGLE_ALWAYS_ON_TOP, (_e: unknown, enabled: unknown) => {
+  safeHandle(IPC_CHANNELS.APP_TOGGLE_ALWAYS_ON_TOP, (enabled: unknown) => {
     const win = BrowserWindow.getAllWindows()[0]
     if (win) win.setAlwaysOnTop(enabled as boolean)
+    logger.ipc.info(`Always on top: ${enabled}`)
   })
 
   safeHandle(IPC_CHANNELS.APP_OPEN_PATH, async (filePath: unknown) => {
@@ -271,6 +282,47 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.APP_GET_VERSION, () => {
     const { app } = require('electron')
     return app.getVersion()
+  })
+
+  // Zoom
+  let zoomSaveTimer: NodeJS.Timeout | null = null
+  safeHandle(IPC_CHANNELS.APP_SET_ZOOM, (direction: unknown) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return
+    const current = win.webContents.getZoomFactor()
+    const step = 0.1
+    let newZoom: number
+    if (direction === 'in') {
+      newZoom = Math.min(current + step, 3.0)
+    } else if (direction === 'out') {
+      newZoom = Math.max(current - step, 0.5)
+    } else if (direction === 'reset') {
+      newZoom = 1.0
+    } else {
+      newZoom = current
+    }
+    win.webContents.setZoomFactor(newZoom)
+    // Debounce save to settings
+    if (zoomSaveTimer) clearTimeout(zoomSaveTimer)
+    zoomSaveTimer = setTimeout(() => {
+      settings.setSettings({ behavior: { ...settings.getSettings().behavior, zoomFactor: newZoom } })
+      zoomSaveTimer = null
+    }, 1000)
+    return newZoom
+  })
+
+  safeHandle(IPC_CHANNELS.APP_GET_ZOOM, () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    return win ? win.webContents.getZoomFactor() : 1.0
+  })
+
+  // Preview
+  safeHandle(IPC_CHANNELS.PREVIEW_START, (fps: unknown) => {
+    obs.startPreview((fps as number) || 5)
+  })
+
+  safeHandle(IPC_CHANNELS.PREVIEW_STOP, () => {
+    obs.stopPreview()
   })
 
   // Toggle DevTools (F12)

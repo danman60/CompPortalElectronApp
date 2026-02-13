@@ -11,6 +11,21 @@ export default function App(): React.ReactElement {
   const settingsOpen = useStore((s) => s.settingsOpen)
   const initialized = useRef(false)
 
+  // Ctrl+scroll zoom
+  useEffect(() => {
+    function handleWheel(e: WheelEvent): void {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        window.api?.setZoom('in')
+      } else if (e.deltaY > 0) {
+        window.api?.setZoom('out')
+      }
+    }
+    window.addEventListener('wheel', handleWheel, { passive: false })
+    return () => window.removeEventListener('wheel', handleWheel)
+  }, [])
+
   useEffect(() => {
     if (!window.api || initialized.current) return
     initialized.current = true

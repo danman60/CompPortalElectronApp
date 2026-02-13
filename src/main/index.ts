@@ -59,12 +59,31 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    // Apply initial zoom from settings
+    const s = getSettings()
+    const zoom = s.behavior.zoomFactor || 1.0
+    if (zoom !== 1.0) {
+      mainWindow?.webContents.setZoomFactor(zoom)
+    }
   })
 
-  // F12 toggles DevTools in both dev and production
+  // F12 toggles DevTools, Ctrl+=/- for zoom
   mainWindow.webContents.on('before-input-event', (_event, input) => {
-    if (input.key === 'F12' && input.type === 'keyDown') {
+    if (input.type !== 'keyDown') return
+    if (input.key === 'F12') {
       mainWindow?.webContents.toggleDevTools()
+    }
+    // Ctrl+= zoom in, Ctrl+- zoom out, Ctrl+0 reset
+    if (input.control && !input.alt && !input.meta) {
+      if (input.key === '=' || input.key === '+') {
+        const current = mainWindow?.webContents.getZoomFactor() || 1.0
+        mainWindow?.webContents.setZoomFactor(Math.min(current + 0.1, 3.0))
+      } else if (input.key === '-') {
+        const current = mainWindow?.webContents.getZoomFactor() || 1.0
+        mainWindow?.webContents.setZoomFactor(Math.max(current - 0.1, 0.5))
+      } else if (input.key === '0') {
+        mainWindow?.webContents.setZoomFactor(1.0)
+      }
     }
   })
 

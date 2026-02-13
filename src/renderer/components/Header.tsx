@@ -30,6 +30,17 @@ export default function Header(): React.ReactElement {
         ? 'dot small error'
         : 'dot small'
 
+  async function handleProcessVideo(): Promise<void> {
+    await window.api.ffmpegEncodeAll()
+  }
+
+  async function handleImportPhotos(): Promise<void> {
+    const folder = await window.api.photosBrowse()
+    if (folder) {
+      await window.api.photosImport(folder)
+    }
+  }
+
   return (
     <div className="app-header">
       <div className="app-logo">
@@ -64,10 +75,16 @@ export default function Header(): React.ReactElement {
             className="load-comp-btn"
             onClick={() => setLoadCompOpen(!loadCompOpen)}
           >
-            Load Competition
+            Load Comp
           </button>
           {loadCompOpen && <LoadCompetition />}
         </div>
+        <button className="action-btn primary" onClick={handleProcessVideo}>
+          Process Video
+        </button>
+        <button className="action-btn photos" onClick={handleImportPhotos}>
+          Import Photos
+        </button>
         <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
           Settings
         </button>

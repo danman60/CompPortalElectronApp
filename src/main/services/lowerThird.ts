@@ -11,6 +11,7 @@ let currentData: LowerThirdData = {
   dancers: [],
   studioName: '',
   category: '',
+  logoUrl: '',
   visible: false,
 }
 
@@ -42,6 +43,8 @@ const overlayHTML = `<!DOCTYPE html>
     min-width: 400px;
   }
   .lt-top { display: flex; align-items: center; gap: 12px; }
+  .lt-logo { height: 40px; width: auto; border-radius: 4px; display: none; }
+  .lt-logo.has-logo { display: block; }
   .lt-number {
     background: linear-gradient(135deg, #667eea, #764ba2);
     color: white; font-weight: 700; font-size: 24px;
@@ -57,6 +60,7 @@ const overlayHTML = `<!DOCTYPE html>
 <div class="lower-third" id="lt">
   <div class="lt-card">
     <div class="lt-top">
+      <img class="lt-logo" id="ltLogo" src="" alt="" />
       <div class="lt-number" id="ltNumber"></div>
       <div>
         <div class="lt-title" id="ltTitle"></div>
@@ -75,7 +79,10 @@ const overlayHTML = `<!DOCTYPE html>
       document.getElementById('ltNumber').textContent = data.entryNumber;
       document.getElementById('ltTitle').textContent = data.routineName;
       document.getElementById('ltDancers').textContent = data.dancers.join(', ');
-      document.getElementById('ltMeta').textContent = data.studioName + ' — ' + data.category;
+      document.getElementById('ltMeta').textContent = data.studioName + ' \u2014 ' + data.category;
+      var logo = document.getElementById('ltLogo');
+      if (data.logoUrl) { logo.src = data.logoUrl; logo.classList.add('has-logo'); }
+      else { logo.classList.remove('has-logo'); }
       if (data.visible) { el.classList.add('visible'); } else { el.classList.remove('visible'); }
     } catch {}
     setTimeout(poll, 500);

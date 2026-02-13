@@ -5,6 +5,7 @@ import '../styles/rightpanel.css'
 
 export default function RightPanel(): React.ReactElement {
   const competition = useStore((s) => s.competition)
+  const settings = useStore((s) => s.settings)
   const encodingCount = useStore((s) => s.encodingCount)
   const uploadingCount = useStore((s) => s.uploadingCount)
   const completeCount = useStore((s) => s.completeCount)
@@ -15,15 +16,25 @@ export default function RightPanel(): React.ReactElement {
     (r) => r.status !== 'pending' && r.status !== 'skipped',
   ).length ?? 0
   const remaining = total - recorded
+  const outputDir = settings?.fileNaming.outputDirectory || ''
 
-  async function handleEncodeNow(): Promise<void> {
-    await window.api.ffmpegEncodeAll()
+  async function handleOpenOutputDir(): Promise<void> {
+    if (outputDir) {
+      await window.api.openPath(outputDir)
+    }
   }
 
-  async function handleImportPhotos(): Promise<void> {
-    const folder = await window.api.photosBrowse()
-    if (folder) {
-      await window.api.photosImport(folder)
+  async function handleChangeOutputDir(): Promise<void> {
+    const dir = await window.api.settingsBrowseDir()
+    if (dir && settings) {
+      await window.api.settingsSet({
+        ...settings,
+        fileNaming: { ...settings.fileNaming, outputDirectory: dir },
+      })
+      useStore.getState().setSettings({
+        ...settings,
+        fileNaming: { ...settings.fileNaming, outputDirectory: dir },
+      })
     }
   }
 
@@ -31,7 +42,7 @@ export default function RightPanel(): React.ReactElement {
     <div className="right-panel">
       <div className="right-header">
         <div className="section-title" style={{ marginBottom: 0 }}>
-          Uploads &amp; Schedule
+          Schedule
         </div>
         <div className="right-actions">
           <div className="toggle-compact">
@@ -41,18 +52,33 @@ export default function RightPanel(): React.ReactElement {
               <span className="toggle-slider" />
             </label>
           </div>
-          <button className="action-btn primary" onClick={handleEncodeNow}>
-            Encode Now
-          </button>
-          <button className="action-btn photos" onClick={handleImportPhotos}>
-            Import Photos
-          </button>
         </div>
       </div>
 
       <RoutineTable />
 
       <div className="stats-bar">
+        {outputDir ? (
+          <div className="stat output-dir-stat">
+            <span
+              className="output-dir-path"
+              title={outputDir}
+              onClick={handleOpenOutputDir}
+            >
+              {outputDir.length > 40 ? '...' + outputDir.slice(-37) : outputDir}
+            </span>
+            <button className="output-dir-change" onClick={handleChangeOutputDir}>
+              Change
+            </button>
+          </div>
+        ) : (
+          <div className="stat">
+            <button className="output-dir-change" onClick={handleChangeOutputDir}>
+              Set Output Dir
+            </button>
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
         {encodingCount > 0 && (
           <div className="stat">
             <span className="stat-num" style={{ color: 'var(--warning)' }}>{encodingCount}</span> Encoding
@@ -68,16 +94,15 @@ export default function RightPanel(): React.ReactElement {
         </div>
         {photosPendingCount > 0 && (
           <div className="stat">
-            <span className="stat-num" style={{ color: '#c084fc' }}>{photosPendingCount}</span> Photos Pending
+            <span className="stat-num" style={{ color: '#c084fc' }}>{photosPendingCount}</span> Photos
           </div>
         )}
-        <div style={{ flex: 1 }} />
         <div className="stat">
           <span className="stat-num" style={{ color: 'var(--accent)' }}>{total}</span> Total
           &nbsp;&bull;&nbsp;
-          <span className="stat-num" style={{ color: 'var(--success)' }}>{recorded}</span> Recorded
+          <span className="stat-num" style={{ color: 'var(--success)' }}>{recorded}</span> Rec
           &nbsp;&bull;&nbsp;
-          <span className="stat-num" style={{ color: 'var(--warning)' }}>{remaining}</span> Remaining
+          <span className="stat-num" style={{ color: 'var(--warning)' }}>{remaining}</span> Left
         </div>
       </div>
     </div>

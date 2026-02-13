@@ -30,6 +30,10 @@ interface AppStore {
   settingsOpen: boolean
   loadCompOpen: boolean
 
+  // Preview
+  previewFrame: string | null // base64 data URL from OBS
+  previewActive: boolean
+
   // Status counts
   encodingCount: number
   uploadingCount: number
@@ -49,6 +53,8 @@ interface AppStore {
   setSettings: (s: AppSettings) => void
   setSettingsOpen: (open: boolean) => void
   setLoadCompOpen: (open: boolean) => void
+  setPreviewFrame: (frame: string | null) => void
+  setPreviewActive: (active: boolean) => void
   updateRoutine: (routineId: string, update: Partial<Routine>) => void
   updateFFmpegProgress: (progress: FFmpegProgress) => void
   updateUploadProgress: (routineId: string, progress: UploadProgress) => void
@@ -77,6 +83,9 @@ export const useStore = create<AppStore>((set, get) => ({
   settingsOpen: false,
   loadCompOpen: false,
 
+  previewFrame: null,
+  previewActive: false,
+
   encodingCount: 0,
   uploadingCount: 0,
   completeCount: 0,
@@ -97,6 +106,8 @@ export const useStore = create<AppStore>((set, get) => ({
   setSettings: (settings) => set({ settings }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setLoadCompOpen: (loadCompOpen) => set({ loadCompOpen }),
+  setPreviewFrame: (previewFrame) => set({ previewFrame }),
+  setPreviewActive: (previewActive) => set({ previewActive }),
 
   updateRoutine: (routineId, update) => {
     const comp = get().competition
@@ -220,6 +231,11 @@ export function initIPCListeners(): void {
   // FFmpeg progress
   api.on(IPC_CHANNELS.FFMPEG_PROGRESS, (data: unknown) => {
     useStore.getState().updateFFmpegProgress(data as FFmpegProgress)
+  })
+
+  // Preview frames
+  api.on(IPC_CHANNELS.PREVIEW_FRAME, (data: unknown) => {
+    useStore.getState().setPreviewFrame(data as string)
   })
 
   // Upload progress
