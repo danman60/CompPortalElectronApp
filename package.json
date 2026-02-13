@@ -72,8 +72,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "resources/icon.ico",
-      "uninstallerIcon": "resources/icon.ico",
-      "warningOnOtherInstanceRunning": false
+      "uninstallerIcon": "resources/icon.ico"
     }
   }
 }
