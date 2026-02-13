@@ -1,8 +1,10 @@
-import OBSWebSocket, { EventSubscription } from 'obs-websocket-js'
+import OBSWebSocketDefault, { EventSubscription } from 'obs-websocket-js'
 import { BrowserWindow } from 'electron'
 import { OBSState, AudioLevel, IPC_CHANNELS } from '../../shared/types'
 import { logger } from '../logger'
 
+// Handle CJS←ESM interop: externalized ESM package wraps default export
+const OBSWebSocket = (OBSWebSocketDefault as any).default || OBSWebSocketDefault
 const obs = new OBSWebSocket()
 
 // Callbacks for main-process event consumers (wired in index.ts)
