@@ -62,6 +62,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_PATH, filePath),
   crashRecovery: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CRASH_RECOVERY),
   getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
+  toggleDevTools: () => ipcRenderer.invoke(IPC_CHANNELS.APP_TOGGLE_DEVTOOLS),
+  copyDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.APP_COPY_DIAGNOSTICS),
+  rendererLog: (level: string, ...args: unknown[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_RENDERER_LOG, level, ...args),
 
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {

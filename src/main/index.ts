@@ -61,6 +61,26 @@ function createWindow(): void {
     mainWindow?.show()
   })
 
+  // F12 toggles DevTools in both dev and production
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.key === 'F12' && input.type === 'keyDown') {
+      mainWindow?.webContents.toggleDevTools()
+    }
+  })
+
+  // Forward renderer console errors to main process log
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    // level: 0=debug, 1=info, 2=warn, 3=error
+    if (level >= 2) {
+      const src = sourceId ? ` (${sourceId}:${line})` : ''
+      if (level === 3) {
+        logger.app.error(`[Renderer] ${message}${src}`)
+      } else {
+        logger.app.warn(`[Renderer] ${message}${src}`)
+      }
+    }
+  })
+
   // Open external links in browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)

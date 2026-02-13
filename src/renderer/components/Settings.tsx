@@ -9,6 +9,7 @@ export default function Settings(): React.ReactElement {
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [obsInputs, setObsInputs] = useState<string[]>([])
   const [namingPreview, setNamingPreview] = useState('')
+  const [diagCopied, setDiagCopied] = useState(false)
 
   useEffect(() => {
     if (currentSettings) {
@@ -421,6 +422,17 @@ export default function Settings(): React.ReactElement {
       </div>
 
       <div className="settings-footer">
+        <button
+          className="back-btn"
+          onClick={async () => {
+            await window.api?.copyDiagnostics()
+            setDiagCopied(true)
+            setTimeout(() => setDiagCopied(false), 3000)
+          }}
+          style={{ marginRight: 'auto' }}
+        >
+          {diagCopied ? 'Copied to clipboard!' : 'Copy Diagnostics'}
+        </button>
         <button className="btn-cancel" onClick={() => setSettingsOpen(false)}>
           Cancel
         </button>

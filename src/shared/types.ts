@@ -215,6 +215,9 @@ export const IPC_CHANNELS = {
   APP_GET_VERSION: 'app:get-version',
   APP_OPEN_PATH: 'app:open-path',
   APP_CRASH_RECOVERY: 'app:crash-recovery',
+  APP_COPY_DIAGNOSTICS: 'app:copy-diagnostics',
+  APP_RENDERER_LOG: 'app:renderer-log',
+  APP_TOGGLE_DEVTOOLS: 'app:toggle-devtools',
 } as const
 
 // --- FFmpeg ---

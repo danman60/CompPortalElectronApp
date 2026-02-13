@@ -1,5 +1,7 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
+import fs from 'fs'
+import path from 'path'
 import * as obs from './services/obs'
 import * as settings from './services/settings'
 import * as schedule from './services/schedule'
@@ -269,6 +271,67 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.APP_GET_VERSION, () => {
     const { app } = require('electron')
     return app.getVersion()
+  })
+
+  // Toggle DevTools (F12)
+  safeHandle(IPC_CHANNELS.APP_TOGGLE_DEVTOOLS, () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) win.webContents.toggleDevTools()
+  })
+
+  // Renderer → main log forwarding
+  safeHandle(IPC_CHANNELS.APP_RENDERER_LOG, (level: unknown, ...args: unknown[]) => {
+    const lvl = level as string
+    const msg = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+    if (lvl === 'error') logger.app.error('[Renderer]', msg)
+    else if (lvl === 'warn') logger.app.warn('[Renderer]', msg)
+    else logger.app.info('[Renderer]', msg)
+  })
+
+  // Copy diagnostics to clipboard
+  safeHandle(IPC_CHANNELS.APP_COPY_DIAGNOSTICS, async () => {
+    const { app } = require('electron')
+    const logPath = path.join(app.getPath('userData'), 'logs', 'main.log')
+    const obsState = obs.getState()
+    const comp = stateService.getCompetition()
+
+    // Read last 150 lines of log
+    let logTail = '(no log file found)'
+    try {
+      const content = fs.readFileSync(logPath, 'utf-8')
+      const lines = content.split('\n')
+      logTail = lines.slice(-150).join('\n')
+    } catch {
+      // file may not exist yet
+    }
+
+    const diagnostics = [
+      `=== CompSync Media Diagnostics ===`,
+      `Version: ${app.getVersion()}`,
+      `Platform: ${process.platform} ${process.arch}`,
+      `Electron: ${process.versions.electron}`,
+      `Node: ${process.versions.node}`,
+      `Time: ${new Date().toISOString()}`,
+      `User Data: ${app.getPath('userData')}`,
+      ``,
+      `--- OBS State ---`,
+      `Connection: ${obsState.connectionStatus}`,
+      `Recording: ${obsState.isRecording}`,
+      `Streaming: ${obsState.isStreaming}`,
+      `Record Time: ${obsState.recordTimeSec}s`,
+      ``,
+      `--- Competition ---`,
+      comp ? `Name: ${comp.name}` : '(none loaded)',
+      comp ? `Routines: ${comp.routines.length}` : '',
+      comp ? `Source: ${comp.source}` : '',
+      ``,
+      `--- Recent Logs (last 150 lines) ---`,
+      logTail,
+    ].join('\n')
+
+    clipboard.writeText(diagnostics)
+    logger.app.info('Diagnostics copied to clipboard')
+    return { copied: true, length: diagnostics.length }
   })
 
   logger.ipc.info('All IPC handlers registered')
