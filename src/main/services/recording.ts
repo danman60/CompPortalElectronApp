@@ -141,8 +141,12 @@ export async function next(): Promise<void> {
   const obsState = obs.getState()
 
   // If recording, stop first
-  if (obsState.isRecording) {
-    await obs.stopRecord()
+  if (obsState.isRecording && obsState.connectionStatus === 'connected') {
+    try {
+      await obs.stopRecord()
+    } catch (err) {
+      logger.app.error('Failed to stop recording on Next:', err instanceof Error ? err.message : err)
+    }
     // RecordStateChanged event will handle file rename and encoding
   }
 
@@ -171,8 +175,12 @@ export async function next(): Promise<void> {
   }
 
   // Auto-record if enabled
-  if (settings.behavior.autoRecordOnNext) {
-    await obs.startRecord()
+  if (settings.behavior.autoRecordOnNext && obsState.connectionStatus === 'connected') {
+    try {
+      await obs.startRecord()
+    } catch (err) {
+      logger.app.error('Auto-record failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   broadcastFullState()

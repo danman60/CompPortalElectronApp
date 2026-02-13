@@ -95,15 +95,8 @@ app.whenReady().then(async () => {
   // Register global hotkeys
   hotkeys.register()
 
-  // Auto-connect to OBS if configured
-  const settings = getSettings()
-  if (settings.obs.url) {
-    obs.connect(settings.obs.url, settings.obs.password).catch((err) => {
-      logger.obs.warn('Auto-connect failed:', err)
-    })
-  }
-
   // Load persisted state
+  // Note: OBS auto-connect is triggered by the renderer after loading settings
   loadState()
 
   // Check for crash recovery

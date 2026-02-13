@@ -8,20 +8,40 @@ export default function LoadCompetition(): React.ReactElement {
   const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
   const [dayFilter, setDayFilter] = useState('')
 
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
   async function handleBrowse(): Promise<void> {
+    setError('')
     const filePath = await window.api.scheduleBrowseFile()
-    if (filePath) {
+    if (!filePath) return
+    setLoading(true)
+    try {
       await window.api.scheduleLoadCSV(filePath)
       setLoadCompOpen(false)
+    } catch (err) {
+      setError(`Failed to load file: ${err instanceof Error ? err.message : err}`)
+    } finally {
+      setLoading(false)
     }
   }
 
   async function handleDrop(e: React.DragEvent): Promise<void> {
     e.preventDefault()
+    setError('')
     const file = e.dataTransfer.files[0]
-    if (file && /\.(csv|xls|xlsx)$/i.test(file.name)) {
+    if (!file || !/\.(csv|xls|xlsx)$/i.test(file.name)) {
+      setError('Please drop a CSV or XLS file')
+      return
+    }
+    setLoading(true)
+    try {
       await window.api.scheduleLoadCSV(file.path)
       setLoadCompOpen(false)
+    } catch (err) {
+      setError(`Failed to load file: ${err instanceof Error ? err.message : err}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -51,15 +71,17 @@ export default function LoadCompetition(): React.ReactElement {
           )}
           <div
             className="file-drop"
-            onClick={handleBrowse}
+            onClick={loading ? undefined : handleBrowse}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
+            onDrop={loading ? undefined : handleDrop}
+            style={loading ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
           >
-            <div className="file-icon">Drop CSV or XLS file here</div>
+            <div className="file-icon">{loading ? 'Loading...' : 'Drop CSV or XLS file here'}</div>
             <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
               or click to browse
             </span>
           </div>
+          {error && <div style={{ color: 'var(--danger)', fontSize: '10px', marginTop: '6px' }}>{error}</div>}
           {competition && competition.days.length > 0 && (
             <div className="field">
               <label>Day Filter</label>

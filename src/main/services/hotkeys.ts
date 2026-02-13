@@ -14,6 +14,10 @@ export function register(): void {
 
   registerKey(settings.hotkeys.toggleRecording, 'Toggle Recording', async () => {
     const state = obs.getState()
+    if (state.connectionStatus !== 'connected') {
+      logger.app.debug('Toggle Recording ignored — OBS not connected')
+      return
+    }
     if (state.isRecording) {
       await obs.stopRecord()
     } else {
@@ -35,6 +39,7 @@ export function register(): void {
   })
 
   registerKey(settings.hotkeys.saveReplay, 'Save Replay', async () => {
+    if (obs.getState().connectionStatus !== 'connected') return
     await obs.saveReplay()
   })
 

@@ -7,37 +7,46 @@ export default function Controls(): React.ReactElement {
   const settings = useStore((s) => s.settings)
   const currentRoutine = useStore((s) => s.currentRoutine)
 
+  const isConnected = obsState.connectionStatus === 'connected'
+
   async function handlePrev(): Promise<void> {
-    await window.api.recordingPrev()
+    try { await window.api.recordingPrev() } catch { /* handled server-side */ }
   }
 
   async function handleToggleRecord(): Promise<void> {
-    if (obsState.isRecording) {
-      await window.api.obsStopRecord()
-    } else {
-      await window.api.obsStartRecord()
-    }
+    if (!isConnected) return
+    try {
+      if (obsState.isRecording) {
+        await window.api.obsStopRecord()
+      } else {
+        await window.api.obsStartRecord()
+      }
+    } catch { /* handled server-side */ }
   }
 
   async function handleNext(): Promise<void> {
-    await window.api.recordingNext()
+    try { await window.api.recordingNext() } catch { /* handled server-side */ }
   }
 
   async function handleToggleStream(): Promise<void> {
-    if (obsState.isStreaming) {
-      await window.api.obsStopStream()
-    } else {
-      await window.api.obsStartStream()
-    }
+    if (!isConnected) return
+    try {
+      if (obsState.isStreaming) {
+        await window.api.obsStopStream()
+      } else {
+        await window.api.obsStartStream()
+      }
+    } catch { /* handled server-side */ }
   }
 
   async function handleSaveReplay(): Promise<void> {
-    await window.api.obsSaveReplay()
+    if (!isConnected) return
+    try { await window.api.obsSaveReplay() } catch { /* handled server-side */ }
   }
 
   async function handleSkip(): Promise<void> {
     if (currentRoutine) {
-      await window.api.recordingSkip(currentRoutine.id)
+      try { await window.api.recordingSkip(currentRoutine.id) } catch { /* handled server-side */ }
     }
   }
 
@@ -52,6 +61,7 @@ export default function Controls(): React.ReactElement {
         <button
           className={`ctrl-btn record ${obsState.isRecording ? 'is-recording' : ''}`}
           onClick={handleToggleRecord}
+          disabled={!isConnected}
         >
           {obsState.isRecording ? 'Stop Rec' : 'Record'}
           <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
@@ -65,6 +75,7 @@ export default function Controls(): React.ReactElement {
         <button
           className={`ctrl-btn stream ${obsState.isStreaming ? 'is-live' : ''}`}
           onClick={handleToggleStream}
+          disabled={!isConnected}
         >
           {obsState.isStreaming ? (
             <>
@@ -77,6 +88,7 @@ export default function Controls(): React.ReactElement {
         <button
           className="ctrl-btn"
           onClick={handleSaveReplay}
+          disabled={!isConnected}
           style={{ color: 'var(--warning)' }}
         >
           Save Replay

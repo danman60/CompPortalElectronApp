@@ -110,8 +110,13 @@ export function startServer(): void {
     logger.app.info(`Lower third server running on http://localhost:${PORT}`)
   })
 
-  server.on('error', (err) => {
-    logger.app.error('Lower third server error:', err)
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.app.warn(`Lower third port ${PORT} already in use — another instance may be running`)
+    } else {
+      logger.app.error(`Lower third server error: ${err.message}`)
+    }
+    server = null
   })
 }
 

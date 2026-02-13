@@ -21,6 +21,8 @@ export function onRecordStopped(cb: RecordingCallback): void {
 }
 
 let reconnectTimer: NodeJS.Timeout | null = null
+let reconnectAttempts = 0
+
 let state: OBSState = {
   connectionStatus: 'disconnected',
   isRecording: false,
@@ -69,6 +71,7 @@ export async function connect(url: string, password: string): Promise<void> {
 
     logger.obs.info(`Connected in ${Date.now() - start}ms`)
     state.connectionStatus = 'connected'
+    reconnectAttempts = 0
 
     // Sync initial state
     await syncState()
@@ -79,7 +82,12 @@ export async function connect(url: string, password: string): Promise<void> {
       reconnectTimer = null
     }
   } catch (err) {
-    logger.obs.error('Connection failed:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    if (reconnectAttempts === 0) {
+      logger.obs.warn(`Connection failed: ${msg}`)
+    } else {
+      logger.obs.debug(`Reconnect attempt ${reconnectAttempts} failed`)
+    }
     state.connectionStatus = 'error'
     broadcastState()
     scheduleReconnect(url, password)
@@ -88,9 +96,10 @@ export async function connect(url: string, password: string): Promise<void> {
 
 export async function disconnect(): Promise<void> {
   if (reconnectTimer) {
-    clearInterval(reconnectTimer)
+    clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  reconnectAttempts = 0
   if (recordingTimer) {
     clearInterval(recordingTimer)
     recordingTimer = null
@@ -115,20 +124,21 @@ export async function disconnect(): Promise<void> {
 
 function scheduleReconnect(url: string, password: string): void {
   if (reconnectTimer) return
-  logger.obs.info('Scheduling reconnect in 5s')
-  reconnectTimer = setInterval(async () => {
-    if (state.connectionStatus === 'connected') {
-      clearInterval(reconnectTimer!)
-      reconnectTimer = null
-      return
-    }
-    logger.obs.info('Attempting reconnect...')
+  // Backoff: 5s, 10s, 15s, max 30s
+  const delay = Math.min(5000 + reconnectAttempts * 5000, 30000)
+  reconnectAttempts++
+  if (reconnectAttempts <= 3) {
+    logger.obs.info(`Will retry in ${delay / 1000}s (attempt ${reconnectAttempts})`)
+  }
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null
+    if (state.connectionStatus === 'connected') return
     try {
       await connect(url, password)
     } catch {
       // connect() handles the error
     }
-  }, 5000)
+  }, delay)
 }
 
 async function syncState(): Promise<void> {
@@ -266,7 +276,9 @@ obs.on('InputVolumeMeters', (event) => {
 
 // Connection closed
 obs.on('ConnectionClosed', () => {
-  logger.obs.warn('Connection closed')
+  if (state.connectionStatus === 'connected') {
+    logger.obs.warn('Connection lost')
+  }
   state.connectionStatus = 'disconnected'
   state.isRecording = false
   state.isStreaming = false

@@ -11,25 +11,25 @@ export default function App(): React.ReactElement {
   const settingsOpen = useStore((s) => s.settingsOpen)
 
   useEffect(() => {
+    if (!window.api) return
+
     // Initialize IPC listeners
     initIPCListeners()
 
-    // Load initial settings
+    // Load initial settings and auto-connect OBS
     window.api.settingsGet().then((settings) => {
       useStore.getState().setSettings(settings)
-
-      // Auto-connect OBS
       if (settings.obs.url) {
-        window.api.obsConnect(settings.obs.url, settings.obs.password)
+        window.api.obsConnect(settings.obs.url, settings.obs.password).catch(() => {})
       }
-    })
+    }).catch(() => {})
 
     // Load persisted competition
     window.api.scheduleGet().then((comp) => {
       if (comp) {
         useStore.getState().setCompetition(comp)
       }
-    })
+    }).catch(() => {})
   }, [])
 
   return (

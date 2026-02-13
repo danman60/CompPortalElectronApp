@@ -153,6 +153,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
 // --- IPC Event Subscriptions ---
 export function initIPCListeners(): void {
+  if (!window.api) return
   const api = window.api
 
   // OBS state updates

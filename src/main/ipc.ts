@@ -20,7 +20,11 @@ export function registerAllHandlers(): void {
   // --- OBS ---
   ipcMain.handle(IPC_CHANNELS.OBS_CONNECT, async (_e, url: string, password: string) => {
     logIPC(IPC_CHANNELS.OBS_CONNECT, { url })
-    await obs.connect(url, password)
+    try {
+      await obs.connect(url, password)
+    } catch {
+      // connect() handles logging and reconnect internally
+    }
     return obs.getState()
   })
 
@@ -31,26 +35,31 @@ export function registerAllHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.OBS_START_RECORD, async () => {
     logIPC(IPC_CHANNELS.OBS_START_RECORD)
+    if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
     await obs.startRecord()
   })
 
   ipcMain.handle(IPC_CHANNELS.OBS_STOP_RECORD, async () => {
     logIPC(IPC_CHANNELS.OBS_STOP_RECORD)
+    if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
     return await obs.stopRecord()
   })
 
   ipcMain.handle(IPC_CHANNELS.OBS_START_STREAM, async () => {
     logIPC(IPC_CHANNELS.OBS_START_STREAM)
+    if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
     await obs.startStream()
   })
 
   ipcMain.handle(IPC_CHANNELS.OBS_STOP_STREAM, async () => {
     logIPC(IPC_CHANNELS.OBS_STOP_STREAM)
+    if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
     await obs.stopStream()
   })
 
   ipcMain.handle(IPC_CHANNELS.OBS_SAVE_REPLAY, async () => {
     logIPC(IPC_CHANNELS.OBS_SAVE_REPLAY)
+    if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
     await obs.saveReplay()
   })
 
@@ -62,12 +71,22 @@ export function registerAllHandlers(): void {
   // --- Recording Pipeline ---
   ipcMain.handle(IPC_CHANNELS.RECORDING_NEXT, async () => {
     logIPC(IPC_CHANNELS.RECORDING_NEXT)
-    await recording.next()
+    try {
+      await recording.next()
+    } catch (err) {
+      logger.app.error('recording:next failed:', err instanceof Error ? err.message : err)
+      return { error: String(err) }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.RECORDING_PREV, async () => {
     logIPC(IPC_CHANNELS.RECORDING_PREV)
-    await recording.prev()
+    try {
+      await recording.prev()
+    } catch (err) {
+      logger.app.error('recording:prev failed:', err instanceof Error ? err.message : err)
+      return { error: String(err) }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.RECORDING_SKIP, async (_e, routineId: string) => {
