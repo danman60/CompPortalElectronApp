@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useStore, initIPCListeners } from './store/useStore'
 import Header from './components/Header'
 import LeftPanel from './components/LeftPanel'
@@ -9,9 +9,11 @@ import './styles/app.css'
 
 export default function App(): React.ReactElement {
   const settingsOpen = useStore((s) => s.settingsOpen)
+  const initialized = useRef(false)
 
   useEffect(() => {
-    if (!window.api) return
+    if (!window.api || initialized.current) return
+    initialized.current = true
 
     // Initialize IPC listeners
     initIPCListeners()

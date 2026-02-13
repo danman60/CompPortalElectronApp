@@ -61,7 +61,7 @@ export async function connect(url: string, password: string): Promise<void> {
   broadcastState()
 
   try {
-    logger.obs.info(`Connecting to ${url}`)
+    logger.obs.info(`Connecting to ${url} (auth: ${password ? 'yes' : 'no'})`)
     const start = Date.now()
 
     await obs.connect(url, password, {

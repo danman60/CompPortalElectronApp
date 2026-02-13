@@ -15,7 +15,7 @@ export default function Settings(): React.ReactElement {
       setDraft({ ...currentSettings })
       updatePreview(currentSettings.fileNaming.pattern)
     }
-    window.api.obsGetInputList().then(setObsInputs)
+    window.api?.obsGetInputList().then(setObsInputs).catch(() => {})
   }, [currentSettings])
 
   function updatePreview(pattern: string): void {
