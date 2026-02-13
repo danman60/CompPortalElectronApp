@@ -44,7 +44,15 @@ function rowToRoutine(row: CSVRow, index: number): Routine {
 
 export function parseCSV(filePath: string): Competition {
   logger.schedule.info(`Parsing CSV: ${filePath}`)
-  const content = fs.readFileSync(filePath, 'utf-8')
+
+  let content: string
+  try {
+    content = fs.readFileSync(filePath, 'utf-8')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.schedule.error(`Failed to read CSV file: ${msg}`)
+    throw new Error(`Cannot read file: ${msg}`)
+  }
 
   const result = Papa.parse<CSVRow>(content, {
     header: true,
@@ -54,6 +62,11 @@ export function parseCSV(filePath: string): Competition {
 
   if (result.errors.length > 0) {
     logger.schedule.warn('CSV parse warnings:', result.errors)
+  }
+
+  if (result.data.length === 0) {
+    logger.schedule.warn('CSV file is empty or has no valid rows')
+    throw new Error('CSV file contains no data rows')
   }
 
   const routines = result.data.map((row, i) => rowToRoutine(row, i))
@@ -87,7 +100,15 @@ export function parseCSV(filePath: string): Competition {
 
 export function parseXLSX(filePath: string): Competition {
   logger.schedule.info(`Parsing XLSX: ${filePath}`)
-  const workbook = XLSX.readFile(filePath)
+
+  let workbook: XLSX.WorkBook
+  try {
+    workbook = XLSX.readFile(filePath)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.schedule.error(`Failed to read XLSX file: ${msg}`)
+    throw new Error(`Cannot read file: ${msg}`)
+  }
   const sheetName = workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
 

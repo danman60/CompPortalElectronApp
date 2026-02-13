@@ -11,6 +11,15 @@ import * as hotkeys from './services/hotkeys'
 import { checkAndRecover } from './services/crashRecovery'
 import { loadState } from './services/state'
 
+// --- Global error handlers ---
+process.on('uncaughtException', (error) => {
+  logger.app.error('Uncaught exception:', error.message, error.stack)
+})
+
+process.on('unhandledRejection', (reason) => {
+  logger.app.error('Unhandled rejection:', reason instanceof Error ? reason.message : String(reason))
+})
+
 let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {

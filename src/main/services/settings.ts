@@ -29,7 +29,20 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 export function getSettings(): AppSettings {
-  const settings = store.store as unknown as AppSettings
+  let settings: AppSettings
+  try {
+    settings = store.store as unknown as AppSettings
+    // Sanity check: if critical nested objects are missing, reset
+    if (!settings.obs || !settings.behavior || !settings.competition) {
+      logger.settings.warn('Settings corrupted (missing sections), resetting to defaults')
+      store.clear()
+      settings = store.store as unknown as AppSettings
+    }
+  } catch (err) {
+    logger.settings.error('Failed to read settings, resetting to defaults:', err)
+    store.clear()
+    settings = store.store as unknown as AppSettings
+  }
 
   // Decrypt sensitive values
   for (const key of SENSITIVE_KEYS) {

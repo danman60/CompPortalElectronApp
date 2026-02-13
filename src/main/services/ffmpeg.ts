@@ -13,10 +13,19 @@ let isProcessing = false
 function getFFmpegPath(): string {
   const settings = getSettings()
   if (settings.ffmpeg.path && settings.ffmpeg.path !== '(bundled)') {
-    return settings.ffmpeg.path
+    if (fs.existsSync(settings.ffmpeg.path)) {
+      return settings.ffmpeg.path
+    }
+    logger.ffmpeg.warn(`Custom ffmpeg path not found: ${settings.ffmpeg.path}, falling back to bundled`)
   }
 
-  // Try bundled ffmpeg-static
+  // Check extraResources (primary location in packaged app)
+  const resourcePath = path.join(process.resourcesPath || '.', 'ffmpeg.exe')
+  if (fs.existsSync(resourcePath)) {
+    return resourcePath
+  }
+
+  // Dev fallback: try ffmpeg-static npm package
   try {
     const ffmpegStatic = require('ffmpeg-static') as string
     if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
@@ -26,13 +35,8 @@ function getFFmpegPath(): string {
     // Not available
   }
 
-  // Fallback: check extraResources
-  const resourcePath = path.join(process.resourcesPath || '.', 'ffmpeg.exe')
-  if (fs.existsSync(resourcePath)) {
-    return resourcePath
-  }
-
   // Last resort: assume on PATH
+  logger.ffmpeg.warn('No bundled ffmpeg found, assuming ffmpeg is on PATH')
   return 'ffmpeg'
 }
 
