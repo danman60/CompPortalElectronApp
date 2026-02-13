@@ -1,6 +1,6 @@
 import OBSWebSocketDefault, { EventSubscription } from 'obs-websocket-js'
-import { BrowserWindow } from 'electron'
 import { OBSState, AudioLevel, IPC_CHANNELS } from '../../shared/types'
+import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 
 // Handle CJS←ESM interop: externalized ESM package wraps default export
@@ -32,18 +32,6 @@ let state: OBSState = {
 }
 
 let recordingTimer: NodeJS.Timeout | null = null
-
-function getMainWindow(): BrowserWindow | null {
-  const windows = BrowserWindow.getAllWindows()
-  return windows[0] || null
-}
-
-function sendToRenderer(channel: string, data: unknown): void {
-  const win = getMainWindow()
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(channel, data)
-  }
-}
 
 function broadcastState(): void {
   sendToRenderer(IPC_CHANNELS.OBS_STATE, state)

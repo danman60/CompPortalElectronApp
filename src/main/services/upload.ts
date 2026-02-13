@@ -3,8 +3,8 @@ import path from 'path'
 import https from 'https'
 import http from 'http'
 import { URL } from 'url'
-import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS, UploadProgress, Routine } from '../../shared/types'
+import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getSettings } from './settings'
 
@@ -34,17 +34,7 @@ let currentRoutineId: string | null = null
 let uploadingCount = 0
 
 function sendProgress(routineId: string, progress: UploadProgress): void {
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { routineId, progress })
-  }
-}
-
-function sendUploadCount(): void {
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(IPC_CHANNELS.UPLOAD_COUNT, uploadingCount)
-  }
+  sendToRenderer(IPC_CHANNELS.UPLOAD_PROGRESS, { routineId, progress })
 }
 
 function getApiBase(): string {
@@ -106,7 +96,6 @@ export function enqueueRoutine(routine: Routine): void {
 
   queue.push(state)
   uploadingCount++
-  sendUploadCount()
 
   logger.upload.info(
     `Queued ${state.jobs.length} files for routine ${routine.entryNumber}`,
@@ -219,7 +208,6 @@ async function processNextRoutine(): Promise<void> {
   // Remove completed/failed routine from queue
   queue.shift()
   uploadingCount = Math.max(0, uploadingCount - 1)
-  sendUploadCount()
   currentRoutineId = null
   processNextRoutine()
 }

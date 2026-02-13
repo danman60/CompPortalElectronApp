@@ -4,6 +4,7 @@ import { dialog, BrowserWindow } from 'electron'
 import ExifReader from 'exifreader'
 import sharp from 'sharp'
 import { Routine, PhotoMatch, IPC_CHANNELS } from '../../shared/types'
+import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 
 interface RecordingWindow {
@@ -19,13 +20,6 @@ interface ImportResult {
   unmatched: number
   clockOffsetMs: number
   matches: PhotoMatch[]
-}
-
-function sendToRenderer(channel: string, data: unknown): void {
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(channel, data)
-  }
 }
 
 export async function browseForFolder(): Promise<string | null> {

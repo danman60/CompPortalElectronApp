@@ -214,9 +214,19 @@ export default function Settings(): React.ReactElement {
                 type="password"
                 value={draft.compsync.pluginApiKey}
                 onChange={(e) => update('compsync', { pluginApiKey: e.target.value })}
-                placeholder="sk_plugin_..."
+                placeholder="csm_..."
               />
               <span className="hint">Generate in CompSync &gt; Settings &gt; Integrations</span>
+            </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label>Upload Endpoint (optional)</label>
+              <input
+                type="text"
+                value={draft.compsync.uploadEndpoint}
+                onChange={(e) => update('compsync', { uploadEndpoint: e.target.value })}
+                placeholder={`https://${draft.compsync.tenant || 'tenant'}.compsync.net`}
+              />
+              <span className="hint">Leave blank to auto-derive from tenant name</span>
             </div>
           </div>
         </div>
@@ -236,16 +246,7 @@ export default function Settings(): React.ReactElement {
                 <option value="3">3 Judges</option>
                 <option value="4">4 Judges</option>
               </select>
-            </div>
-            <div className="field">
-              <label>Data Source</label>
-              <select
-                value={draft.competition.dataSource}
-                onChange={(e) => update('competition', { dataSource: e.target.value as 'csv' | 'api' })}
-              >
-                <option value="csv">CSV File (offline)</option>
-                <option value="api">CompSync API (live)</option>
-              </select>
+              <span className="hint">Controls audio tracks, meters, and FFmpeg outputs</span>
             </div>
           </div>
         </div>
@@ -421,16 +422,6 @@ export default function Settings(): React.ReactElement {
         <div className="settings-section">
           <div className="settings-section-title">Lower Third Overlay</div>
           <div className="settings-grid">
-            <div className="field">
-              <label>Communication Mode</label>
-              <select
-                value={draft.lowerThird.mode}
-                onChange={(e) => update('lowerThird', { mode: e.target.value as 'http' | 'broadcast' })}
-              >
-                <option value="http">Local HTTP server (port 9876)</option>
-                <option value="broadcast">BroadcastChannel (same CEF only)</option>
-              </select>
-            </div>
             <div className="field">
               <label>Auto-hide After (seconds)</label>
               <input

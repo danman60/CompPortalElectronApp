@@ -71,6 +71,7 @@ export function setCompetition(comp: Competition): void {
   const existing = loadState()
   if (existing?.competition?.competitionId === comp.competitionId) {
     // Merge statuses from persisted state
+    let matchedCount = 0
     for (const routine of comp.routines) {
       const persisted = existing.competition.routines.find((r) => r.id === routine.id)
       if (persisted) {
@@ -81,10 +82,16 @@ export function setCompetition(comp: Competition): void {
         routine.encodedFiles = persisted.encodedFiles
         routine.photos = persisted.photos
         routine.uploadProgress = persisted.uploadProgress
+        matchedCount++
       }
     }
     currentRoutineIndex = existing.currentRoutineIndex
-    logger.app.info(`Restored state for ${comp.name}, index ${currentRoutineIndex}`)
+    logger.app.info(`Restored state for ${comp.name}, index ${currentRoutineIndex}, ${matchedCount}/${comp.routines.length} routines matched`)
+    if (matchedCount === 0 && existing.competition.routines.length > 0) {
+      logger.app.warn(`No routine IDs matched — routine IDs may have changed. All progress reset to pending.`)
+    } else if (matchedCount < comp.routines.length) {
+      logger.app.warn(`${comp.routines.length - matchedCount} routines had no persisted state (new or changed IDs)`)
+    }
   }
 
   saveState()

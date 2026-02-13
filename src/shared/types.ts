@@ -115,10 +115,7 @@ export interface AppSettings {
   }
   competition: {
     judgeCount: number // 1-4
-    dataSource: 'csv' | 'api'
-    csvFilePath: string
     dayFilter: string
-    apiRefreshInterval: 'manual' | '5m' | '15m'
   }
   audioTrackMapping: Record<string, string> // "track1" -> "performance" | "judge1" etc
   audioInputMapping: Record<string, string> // "performance" -> "Desktop Audio" etc
@@ -137,7 +134,6 @@ export interface AppSettings {
     saveReplay: string
   }
   lowerThird: {
-    mode: 'http' | 'broadcast'
     autoHideSeconds: number // 0 = never
     overlayUrl: string
   }
@@ -215,7 +211,6 @@ export const IPC_CHANNELS = {
 
   // Upload
   UPLOAD_ALL: 'upload:all',
-  UPLOAD_COUNT: 'upload:count',
 
   // App
   APP_TOGGLE_ALWAYS_ON_TOP: 'app:toggle-always-on-top',
@@ -280,10 +275,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   competition: {
     judgeCount: 3,
-    dataSource: 'csv',
-    csvFilePath: '',
     dayFilter: '',
-    apiRefreshInterval: 'manual',
   },
   audioTrackMapping: {
     track1: 'performance',
@@ -296,6 +288,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     judge1: '',
     judge2: '',
     judge3: '',
+    judge4: '',
   },
   fileNaming: {
     pattern: '{entry_number}_{routine_title}_{studio_code}',
@@ -312,7 +305,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     saveReplay: 'F10',
   },
   lowerThird: {
-    mode: 'http',
     autoHideSeconds: 8,
     overlayUrl: 'http://localhost:9876/overlay',
   },

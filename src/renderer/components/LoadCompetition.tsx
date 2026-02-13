@@ -8,7 +8,7 @@ export default function LoadCompetition(): React.ReactElement {
   const settings = useStore((s) => s.settings)
   const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
   const [dayFilter, setDayFilter] = useState('')
-  const [compId, setCompId] = useState('')
+  const [compId, setCompId] = useState(settings?.compsync.competition || '')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -58,6 +58,9 @@ export default function LoadCompetition(): React.ReactElement {
     setLoading(true)
     try {
       await window.api.scheduleLoadAPI(compId.trim())
+      // Persist competition ID to settings
+      await window.api.settingsSet({ compsync: { ...settings!.compsync, competition: compId.trim() } })
+      useStore.getState().setSettings({ ...settings!, compsync: { ...settings!.compsync, competition: compId.trim() } })
       setLoadCompOpen(false)
     } catch (err) {
       setError(`API load failed: ${err instanceof Error ? err.message : err}`)

@@ -1,6 +1,5 @@
 import fs from 'fs'
 import path from 'path'
-import { BrowserWindow } from 'electron'
 import * as obs from './obs'
 import * as state from './state'
 import * as ffmpegService from './ffmpeg'
@@ -8,6 +7,7 @@ import * as lowerThird from './lowerThird'
 import * as uploadService from './upload'
 import { getSettings } from './settings'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
+import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 
 // --- Auto-fire lower third ---
@@ -40,13 +40,6 @@ function scheduleAutoFire(): void {
     autoFireTimer = null
     logger.app.info('Lower third auto-fired (3s delay)')
   }, 3000)
-}
-
-function sendToRenderer(channel: string, data: unknown): void {
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(channel, data)
-  }
 }
 
 function buildFileName(routine: Routine): string {

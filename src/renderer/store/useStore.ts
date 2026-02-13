@@ -179,7 +179,10 @@ export function initIPCListeners(): void {
     if (!pendingLevels) return
   })
 
-  // Process audio levels at animation frame rate
+  // Process audio levels at animation frame rate (with threshold to avoid unnecessary re-renders)
+  let lastMeterData: AudioMeterData | null = null
+  const DB_THRESHOLD = 0.5 // Only update if any channel changed by more than 0.5 dB
+
   function processAudioLevels(): void {
     if (pendingLevels) {
       const settings = useStore.getState().settings
@@ -205,7 +208,19 @@ export function initIPCListeners(): void {
           }
         }
 
-        useStore.getState().setAudioMeters(meterData)
+        // Only update store if levels changed meaningfully
+        let changed = !lastMeterData
+        if (lastMeterData) {
+          if (Math.abs(meterData.performance - lastMeterData.performance) > DB_THRESHOLD) changed = true
+          for (let i = 0; i < 4; i++) {
+            if (Math.abs(meterData.judges[i] - lastMeterData.judges[i]) > DB_THRESHOLD) changed = true
+          }
+        }
+
+        if (changed) {
+          lastMeterData = meterData
+          useStore.getState().setAudioMeters(meterData)
+        }
       }
       pendingLevels = null
     }
