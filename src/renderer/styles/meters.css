@@ -1,0 +1,39 @@
+.audio-meters {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 3px 8px;
+  align-items: center;
+  font-size: 10px;
+}
+
+.meter-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.meter-bar {
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.1s;
+}
+
+.meter-fill.good { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.meter-fill.medium { background: linear-gradient(90deg, #22c55e, #fbbf24); }
+.meter-fill.hot { background: linear-gradient(90deg, #22c55e, #fbbf24, #ef4444); }
+.meter-fill.silent { background: var(--text-muted); opacity: 0.3; }
+
+.meter-db {
+  color: var(--text-muted);
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 9px;
+  min-width: 32px;
+  text-align: right;
+}

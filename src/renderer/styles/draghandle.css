@@ -1,0 +1,29 @@
+.drag-handle {
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background 0.15s;
+  position: relative;
+}
+
+.drag-handle:hover,
+.drag-handle.dragging {
+  background: var(--accent);
+}
+
+.drag-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 30px;
+  border-left: 1px solid var(--text-muted);
+  border-right: 1px solid var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.drag-handle:hover::after { opacity: 0.5; }

@@ -1,0 +1,78 @@
+.controls-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.control-row {
+  display: flex;
+  gap: 4px;
+}
+
+.ctrl-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.ctrl-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+
+.ctrl-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: 600;
+}
+.ctrl-btn.primary:hover { background: var(--accent-hover); }
+
+.ctrl-btn.record {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.ctrl-btn.record.is-recording {
+  background: var(--recording);
+  border-color: var(--recording);
+  color: white;
+  font-weight: 600;
+  animation: pulse-border 1.5s infinite;
+}
+.ctrl-btn.record.is-recording:hover { background: #dc2626; }
+
+.ctrl-btn.stream {
+  background: var(--stream-purple);
+  border-color: var(--stream-purple);
+  color: white;
+  font-weight: 600;
+}
+.ctrl-btn.stream:hover { filter: brightness(1.15); }
+.ctrl-btn.stream.is-live {
+  background: var(--recording);
+  border-color: var(--recording);
+  animation: pulse-border 1.5s infinite;
+}
+
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: white;
+  animation: pulse 1.5s infinite;
+}
+
+.hotkey-hint {
+  opacity: 0.5;
+  font-size: 9px;
+  margin-left: 2px;
+}

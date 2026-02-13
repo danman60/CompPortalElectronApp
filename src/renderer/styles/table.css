@@ -1,0 +1,99 @@
+.table-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.upload-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.upload-table th {
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  z-index: 1;
+}
+
+.upload-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.upload-table tbody tr:hover td { background: var(--bg-hover); }
+
+.entry-num { font-weight: 700; color: var(--accent); font-size: 11px; }
+.r-name { font-weight: 500; color: var(--text-primary); font-size: 11px; }
+.r-sub { font-size: 9px; color: var(--text-muted); }
+
+.live-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--recording);
+  animation: pulse 1.5s infinite;
+  flex-shrink: 0;
+}
+
+.live-badge {
+  font-size: 8px;
+  color: var(--recording);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.status-progress { min-width: 100px; }
+
+.bar-track {
+  height: 3px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.bar-fill.processing { background: var(--warning); }
+.bar-fill.uploading { background: var(--upload-blue); }
+.bar-fill.complete { background: var(--success); }
+
+.status-label { font-size: 9px; font-weight: 500; }
+.status-label.processing { color: var(--warning); }
+.status-label.uploading { color: var(--upload-blue); }
+.status-label.complete { color: var(--success); }
+.status-label.waiting { color: var(--text-muted); }
+.status-label.recording { color: var(--recording); font-weight: 700; }
+.status-label.failed { color: var(--danger); }
+
+.view-btn {
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.view-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}

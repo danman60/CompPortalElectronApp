@@ -1,0 +1,12 @@
+/* ===== App Layout ===== */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.main-split {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}

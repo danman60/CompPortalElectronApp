@@ -1,0 +1,87 @@
+.routine-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.routine-card.is-recording {
+  border-color: var(--recording);
+  box-shadow: 0 0 0 1px var(--recording-pulse), inset 0 0 20px var(--recording-pulse);
+}
+
+.routine-top { display: flex; align-items: flex-start; gap: 8px; }
+
+.routine-number {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  font-weight: 700;
+  font-size: 16px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.routine-details { flex: 1; min-width: 0; }
+.routine-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.routine-dancers { font-size: 12px; color: #a5b4fc; margin-top: 1px; }
+
+.routine-meta {
+  font-size: 10px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin-top: 4px;
+}
+
+.routine-studio {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+
+.recording-timer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: var(--danger-bg);
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--recording);
+  animation: pulse 1.5s infinite;
+  flex-shrink: 0;
+}
+
+.next-up {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  opacity: 0.7;
+}
+
+.next-up-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.next-up-title { font-size: 12px; font-weight: 600; }
+.next-up-detail { font-size: 10px; color: var(--text-secondary); }

@@ -1,0 +1,76 @@
+{
+  "name": "compsync-media",
+  "version": "1.0.0",
+  "description": "CompSync Media — OBS recording control, audio splitting, photo import, and upload for dance competitions",
+  "author": "CompSync <danieljohnabrahamson@gmail.com>",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps",
+    "dist": "electron-vite build && electron-builder --win --dir",
+    "dist:installer": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "electron-log": "^5.1.1",
+    "electron-store": "^6.0.1",
+    "electron-window-state": "^5.0.3",
+    "express": "^4.21.0",
+    "exifreader": "^4.23.0",
+    "ffmpeg-static": "^5.2.0",
+    "obs-websocket-js": "^5.0.6",
+    "papaparse": "^5.4.1",
+    "sharp": "^0.33.2",
+    "tus-js-client": "^4.1.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/papaparse": "^5.3.14",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.3.3"
+  },
+  "build": {
+    "appId": "net.compsync.media",
+    "productName": "CompSync Media",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "!node_modules/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/sharp/**/*",
+      "node_modules/@img/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+        "to": "ffmpeg.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "dir"
+      ],
+      "icon": "resources/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico"
+    }
+  }
+}

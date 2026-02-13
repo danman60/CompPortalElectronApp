@@ -1,0 +1,8 @@
+.left-panel {
+  width: 380px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}

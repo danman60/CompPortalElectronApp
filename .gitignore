@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+out/
+release/
+.vite/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
