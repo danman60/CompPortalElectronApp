@@ -210,6 +210,11 @@ export const IPC_CHANNELS = {
   // Lower Third
   LT_FIRE: 'lt:fire',
   LT_HIDE: 'lt:hide',
+  LT_AUTO_FIRE_TOGGLE: 'lt:auto-fire-toggle',
+  LT_AUTO_FIRE_STATE: 'lt:auto-fire-state',
+
+  // Upload
+  UPLOAD_ALL: 'upload:all',
 
   // App
   APP_TOGGLE_ALWAYS_ON_TOP: 'app:toggle-always-on-top',

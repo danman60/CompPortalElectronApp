@@ -43,6 +43,7 @@ const api = {
   // Upload
   uploadStart: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_START),
   uploadStop: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_STOP),
+  uploadAll: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ALL),
   uploadRoutine: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ROUTINE, routineId),
 
@@ -54,6 +55,7 @@ const api = {
   // Lower Third
   ltFire: () => ipcRenderer.invoke(IPC_CHANNELS.LT_FIRE),
   ltHide: () => ipcRenderer.invoke(IPC_CHANNELS.LT_HIDE),
+  ltAutoFireToggle: () => ipcRenderer.invoke(IPC_CHANNELS.LT_AUTO_FIRE_TOGGLE),
 
   // App
   toggleAlwaysOnTop: (enabled: boolean) =>

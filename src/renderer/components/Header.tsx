@@ -82,6 +82,9 @@ export default function Header(): React.ReactElement {
         <button className="action-btn primary" onClick={handleProcessVideo}>
           Process Video
         </button>
+        <button className="action-btn" style={{ background: 'var(--upload-blue)', borderColor: 'var(--upload-blue)', color: 'white' }} onClick={() => window.api.uploadAll()}>
+          Upload All
+        </button>
         <button className="action-btn photos" onClick={handleImportPhotos}>
           Import Photos
         </button>

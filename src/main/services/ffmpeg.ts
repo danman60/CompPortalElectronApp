@@ -2,9 +2,11 @@ import { spawn, ChildProcess } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import { BrowserWindow } from 'electron'
-import { FFmpegJob, FFmpegProgress, IPC_CHANNELS } from '../../shared/types'
+import { FFmpegJob, FFmpegProgress, IPC_CHANNELS, EncodedFile } from '../../shared/types'
 import { logger } from '../logger'
 import { getSettings } from './settings'
+import * as state from './state'
+import * as uploadService from './upload'
 
 let ffmpegProcess: ChildProcess | null = null
 const queue: FFmpegJob[] = []
@@ -78,6 +80,38 @@ async function processNext(): Promise<void> {
   try {
     await runFFmpeg(job)
     logger.ffmpeg.info(`Encoding complete for routine ${job.routineId}`)
+
+    // Build encodedFiles list from output directory
+    const encodedFiles: EncodedFile[] = []
+    const perfPath = path.join(job.outputDir, 'performance.mp4')
+    if (fs.existsSync(perfPath)) {
+      encodedFiles.push({ role: 'performance', filePath: perfPath, uploaded: false })
+    }
+    for (let i = 1; i <= job.judgeCount; i++) {
+      const judgePath = path.join(job.outputDir, `judge${i}_commentary.mp4`)
+      if (fs.existsSync(judgePath)) {
+        encodedFiles.push({ role: `judge${i}` as EncodedFile['role'], filePath: judgePath, uploaded: false })
+      }
+    }
+
+    // Update routine with encoded files and status
+    state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles })
+
+    // Broadcast updated state to renderer
+    const { broadcastFullState } = require('./recording')
+    broadcastFullState()
+
+    // Auto-upload if enabled
+    const settings = getSettings()
+    if (settings.behavior.autoUploadAfterEncoding) {
+      const comp = state.getCompetition()
+      const routine = comp?.routines.find((r) => r.id === job.routineId)
+      if (routine) {
+        uploadService.enqueueRoutine(routine)
+        uploadService.startUploads()
+      }
+    }
+
     sendProgress({
       routineId: job.routineId,
       state: 'done',

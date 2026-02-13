@@ -108,10 +108,11 @@ export default function RoutineTable(): React.ReactElement {
     )
   }
 
-  function handleViewMedia(routine: Routine): void {
+  async function handleViewMedia(routine: Routine): Promise<void> {
     if (routine.outputPath) {
+      // outputPath is the renamed file; open its parent directory
       const dir = routine.outputPath.replace(/[/\\][^/\\]+$/, '')
-      window.api.openPath(dir)
+      await window.api.openPath(dir)
     }
   }
 

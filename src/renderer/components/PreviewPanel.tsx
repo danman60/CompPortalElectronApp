@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import '../styles/preview.css'
 
@@ -7,22 +7,21 @@ export default function PreviewPanel(): React.ReactElement {
   const previewFrame = useStore((s) => s.previewFrame)
   const previewActive = useStore((s) => s.previewActive)
   const setPreviewActive = useStore((s) => s.setPreviewActive)
+  const [visible, setVisible] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
 
   const isConnected = obsState.connectionStatus === 'connected'
 
   useEffect(() => {
-    // Auto-start preview when OBS connects, stop when disconnects
-    if (isConnected && !previewActive) {
+    if (visible && isConnected && !previewActive) {
       window.api?.previewStart(5)
       setPreviewActive(true)
-    } else if (!isConnected && previewActive) {
+    } else if ((!visible || !isConnected) && previewActive) {
       window.api?.previewStop()
       setPreviewActive(false)
     }
-  }, [isConnected, previewActive, setPreviewActive])
+  }, [isConnected, visible, previewActive, setPreviewActive])
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (useStore.getState().previewActive) {
@@ -31,14 +30,8 @@ export default function PreviewPanel(): React.ReactElement {
     }
   }, [])
 
-  function handleTogglePreview(): void {
-    if (previewActive) {
-      window.api?.previewStop()
-      setPreviewActive(false)
-    } else if (isConnected) {
-      window.api?.previewStart(5)
-      setPreviewActive(true)
-    }
+  function handleToggle(): void {
+    setVisible((v) => !v)
   }
 
   return (
@@ -49,33 +42,35 @@ export default function PreviewPanel(): React.ReactElement {
         </span>
         <button
           className="preview-toggle"
-          onClick={handleTogglePreview}
+          onClick={handleToggle}
           disabled={!isConnected}
         >
-          {previewActive ? 'Pause' : 'Resume'}
+          {visible ? 'Hide' : 'Show'}
         </button>
       </div>
-      <div className="preview-container">
-        {!isConnected ? (
-          <div className="preview-placeholder">
-            OBS not connected
-          </div>
-        ) : previewFrame ? (
-          <img
-            ref={imgRef}
-            className="preview-image"
-            src={previewFrame}
-            alt="OBS Preview"
-          />
-        ) : (
-          <div className="preview-placeholder">
-            {previewActive ? 'Waiting for frame...' : 'Preview paused'}
-          </div>
-        )}
-        {obsState.isRecording && (
-          <div className="preview-rec-badge">REC</div>
-        )}
-      </div>
+      {visible && (
+        <div className="preview-container">
+          {!isConnected ? (
+            <div className="preview-placeholder">
+              OBS not connected
+            </div>
+          ) : previewFrame ? (
+            <img
+              ref={imgRef}
+              className="preview-image"
+              src={previewFrame}
+              alt="OBS Preview"
+            />
+          ) : (
+            <div className="preview-placeholder">
+              Waiting for frame...
+            </div>
+          )}
+          {obsState.isRecording && (
+            <div className="preview-rec-badge">REC</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -5,9 +5,42 @@ import * as obs from './obs'
 import * as state from './state'
 import * as ffmpegService from './ffmpeg'
 import * as lowerThird from './lowerThird'
+import * as uploadService from './upload'
 import { getSettings } from './settings'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
 import { logger } from '../logger'
+
+// --- Auto-fire lower third ---
+let autoFireEnabled = false
+let autoFireTimer: NodeJS.Timeout | null = null
+
+export function setAutoFire(enabled: boolean): void {
+  autoFireEnabled = enabled
+  if (!enabled && autoFireTimer) {
+    clearTimeout(autoFireTimer)
+    autoFireTimer = null
+  }
+  logger.app.info(`Lower third auto-fire: ${enabled ? 'ON' : 'OFF'}`)
+}
+
+export function getAutoFire(): boolean {
+  return autoFireEnabled
+}
+
+function scheduleAutoFire(): void {
+  if (!autoFireEnabled) return
+  if (autoFireTimer) clearTimeout(autoFireTimer)
+  autoFireTimer = setTimeout(() => {
+    const settings = getSettings()
+    if (settings.lowerThird.autoHideSeconds > 0) {
+      lowerThird.fireWithAutoHide(settings.lowerThird.autoHideSeconds)
+    } else {
+      lowerThird.fire()
+    }
+    autoFireTimer = null
+    logger.app.info('Lower third auto-fired (3s delay)')
+  }, 3000)
+}
 
 function sendToRenderer(channel: string, data: unknown): void {
   const win = BrowserWindow.getAllWindows()[0]
@@ -80,8 +113,17 @@ export async function handleRecordingStopped(
   })
 
   const settings = getSettings()
+
+  if (!settings.fileNaming.outputDirectory) {
+    logger.app.warn('No output directory set — skipping file rename/organization')
+    broadcastFullState()
+    return
+  }
+
   const routineDir = getRoutineOutputDir(routine)
   const fileName = buildFileName(routine)
+
+  logger.app.info(`Routine dir: ${routineDir}`)
 
   // Check if we need to archive existing files (re-recording)
   if (fs.existsSync(routineDir) && settings.behavior.confirmBeforeOverwrite) {
@@ -91,24 +133,26 @@ export async function handleRecordingStopped(
   // Create routine directory
   if (!fs.existsSync(routineDir)) {
     fs.mkdirSync(routineDir, { recursive: true })
+    logger.app.info(`Created routine directory: ${routineDir}`)
   }
 
   // Rename the MKV file
   const ext = path.extname(outputPath)
   const newPath = path.join(routineDir, `${fileName}${ext}`)
 
-  // Wait for file lock release
-  await new Promise((resolve) => setTimeout(resolve, 1500))
+  // Wait for file lock release (OBS may still be writing)
+  await new Promise((resolve) => setTimeout(resolve, 2000))
 
   try {
     fs.renameSync(outputPath, newPath)
-    logger.app.info(`Renamed: ${path.basename(outputPath)} → ${path.basename(newPath)}`)
+    logger.app.info(`Renamed: ${outputPath} → ${newPath}`)
 
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath })
 
     // Auto-encode if enabled
     if (settings.behavior.autoEncodeRecordings) {
       state.updateRoutineStatus(routine.id, 'encoding')
+      broadcastFullState()
       ffmpegService.enqueueJob({
         routineId: routine.id,
         inputPath: newPath,
@@ -157,7 +201,7 @@ export async function next(): Promise<void> {
     return
   }
 
-  // Update lower third
+  // Update lower third data
   if (settings.behavior.syncLowerThird) {
     lowerThird.updateLowerThird({
       entryNumber: nextRoutine.entryNumber,
@@ -166,12 +210,11 @@ export async function next(): Promise<void> {
       studioName: nextRoutine.studioName,
       category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
     })
+  }
 
-    if (settings.lowerThird.autoHideSeconds > 0) {
-      lowerThird.fireWithAutoHide(settings.lowerThird.autoHideSeconds)
-    } else {
-      lowerThird.fire()
-    }
+  // Auto-fire: schedule 3s delay. Manual fire still works independently.
+  if (autoFireEnabled) {
+    scheduleAutoFire()
   }
 
   // Auto-record if enabled

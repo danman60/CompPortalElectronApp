@@ -224,6 +224,22 @@ export function registerAllHandlers(): void {
     uploadService.stopUploads()
   })
 
+  safeHandle(IPC_CHANNELS.UPLOAD_ALL, () => {
+    logIPC(IPC_CHANNELS.UPLOAD_ALL)
+    const comp = stateService.getCompetition()
+    if (!comp) return { error: 'No competition loaded' }
+    let queued = 0
+    for (const routine of comp.routines) {
+      if (routine.encodedFiles && routine.status !== 'uploaded' && routine.status !== 'confirmed' && routine.status !== 'uploading') {
+        uploadService.enqueueRoutine(routine)
+        queued++
+      }
+    }
+    if (queued > 0) uploadService.startUploads()
+    logger.ipc.info(`Upload all: queued ${queued} routines`)
+    return { queued }
+  })
+
   safeHandle(IPC_CHANNELS.UPLOAD_ROUTINE, (routineId: unknown) => {
     logIPC(IPC_CHANNELS.UPLOAD_ROUTINE, { routineId })
     const comp = stateService.getCompetition()
@@ -264,6 +280,12 @@ export function registerAllHandlers(): void {
     lowerThird.hide()
   })
 
+  safeHandle(IPC_CHANNELS.LT_AUTO_FIRE_TOGGLE, () => {
+    const newState = !recording.getAutoFire()
+    recording.setAutoFire(newState)
+    return newState
+  })
+
   // --- App ---
   safeHandle(IPC_CHANNELS.APP_TOGGLE_ALWAYS_ON_TOP, (enabled: unknown) => {
     const win = BrowserWindow.getAllWindows()[0]
@@ -272,7 +294,26 @@ export function registerAllHandlers(): void {
   })
 
   safeHandle(IPC_CHANNELS.APP_OPEN_PATH, async (filePath: unknown) => {
-    await shell.openPath(filePath as string)
+    const p = filePath as string
+    // Check if the path exists; if it's a file, open its parent folder
+    const fsStat = await import('fs').then((m) => m.promises.stat(p).catch(() => null))
+    if (fsStat) {
+      if (fsStat.isFile()) {
+        shell.showItemInFolder(p)
+      } else {
+        await shell.openPath(p)
+      }
+    } else {
+      // Path doesn't exist — try parent directory
+      const dir = require('path').dirname(p)
+      const dirStat = await import('fs').then((m) => m.promises.stat(dir).catch(() => null))
+      if (dirStat) {
+        await shell.openPath(dir)
+      } else {
+        logger.ipc.warn(`Path does not exist: ${p}`)
+        return { error: `Path not found: ${p}` }
+      }
+    }
   })
 
   safeHandle(IPC_CHANNELS.APP_CRASH_RECOVERY, async () => {

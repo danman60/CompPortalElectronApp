@@ -24,8 +24,8 @@ const overlayHTML = `<!DOCTYPE html>
   body { background: transparent; overflow: hidden; width: 1920px; height: 1080px; font-family: -apple-system, 'Segoe UI', sans-serif; }
   .lower-third {
     position: absolute;
-    bottom: 80px;
-    left: 60px;
+    bottom: 40px;
+    left: 40px;
     opacity: 0;
     transform: translateY(20px);
     transition: opacity 0.5s ease, transform 0.5s ease;
