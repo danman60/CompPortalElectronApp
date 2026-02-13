@@ -1,7 +1,9 @@
 import fs from 'fs'
 import path from 'path'
+import https from 'https'
+import http from 'http'
+import { URL } from 'url'
 import { BrowserWindow } from 'electron'
-import { Upload } from 'tus-js-client'
 import { IPC_CHANNELS, UploadProgress, Routine } from '../../shared/types'
 import { logger } from '../logger'
 import { getSettings } from './settings'
@@ -11,13 +13,25 @@ interface UploadJob {
   filePath: string
   objectName: string
   contentType: string
+  type: 'videos' | 'photos'
 }
 
-const queue: UploadJob[] = []
+interface RoutineUploadState {
+  routineId: string
+  entryId: string
+  competitionId: string
+  jobs: UploadJob[]
+  completedJobs: number
+  storagePaths: Record<string, string> // role -> storagePath
+  photoStoragePaths: string[]
+}
+
+const queue: RoutineUploadState[] = []
 let isUploading = false
 let isPaused = false
-let currentUpload: Upload | null = null
+let currentAbortController: AbortController | null = null
 let currentRoutineId: string | null = null
+let uploadingCount = 0
 
 function sendProgress(routineId: string, progress: UploadProgress): void {
   const win = BrowserWindow.getAllWindows()[0]
@@ -26,22 +40,51 @@ function sendProgress(routineId: string, progress: UploadProgress): void {
   }
 }
 
+function sendUploadCount(): void {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC_CHANNELS.UPLOAD_COUNT, uploadingCount)
+  }
+}
+
+function getApiBase(): string {
+  const settings = getSettings()
+  if (settings.compsync.uploadEndpoint) {
+    return settings.compsync.uploadEndpoint
+  }
+  const tenant = settings.compsync.tenant
+  if (!tenant) throw new Error('No tenant configured')
+  return `https://${tenant}.compsync.net`
+}
+
 export function enqueueRoutine(routine: Routine): void {
   const settings = getSettings()
-  const { tenantId, competitionId } = { tenantId: settings.compsync.tenant, competitionId: settings.compsync.competition }
+  const competitionId = settings.compsync.competition
 
   if (!routine.encodedFiles) return
 
-  const basePath = `${tenantId}/${competitionId}/${routine.id}`
+  // Check if already queued
+  if (queue.some((q) => q.routineId === routine.id)) return
+
+  const state: RoutineUploadState = {
+    routineId: routine.id,
+    entryId: routine.id,
+    competitionId,
+    jobs: [],
+    completedJobs: 0,
+    storagePaths: {},
+    photoStoragePaths: [],
+  }
 
   // Queue video files
   for (const file of routine.encodedFiles) {
     if (file.uploaded) continue
-    queue.push({
+    state.jobs.push({
       routineId: routine.id,
       filePath: file.filePath,
-      objectName: `${basePath}/videos/${path.basename(file.filePath)}`,
+      objectName: `${file.role}.mp4`,
       contentType: 'video/mp4',
+      type: 'videos',
     })
   }
 
@@ -49,40 +92,46 @@ export function enqueueRoutine(routine: Routine): void {
   if (routine.photos) {
     for (const photo of routine.photos) {
       if (photo.uploaded) continue
-      queue.push({
+      state.jobs.push({
         routineId: routine.id,
         filePath: photo.filePath,
-        objectName: `${basePath}/photos/${path.basename(photo.filePath)}`,
+        objectName: path.basename(photo.filePath),
         contentType: 'image/jpeg',
+        type: 'photos',
       })
     }
   }
 
-  const totalFiles = routine.encodedFiles.length + (routine.photos?.length || 0)
+  if (state.jobs.length === 0) return
+
+  queue.push(state)
+  uploadingCount++
+  sendUploadCount()
+
   logger.upload.info(
-    `Queued ${queue.length} files for routine ${routine.entryNumber}, total queue: ${queue.length}`,
+    `Queued ${state.jobs.length} files for routine ${routine.entryNumber}`,
   )
 
   sendProgress(routine.id, {
     state: 'queued',
     percent: 0,
     filesCompleted: 0,
-    filesTotal: totalFiles,
+    filesTotal: state.jobs.length,
   })
 }
 
 export function startUploads(): void {
   if (isUploading && !isPaused) return
   isPaused = false
-  logger.upload.info(`Starting upload queue, ${queue.length} files pending`)
-  processNext()
+  logger.upload.info(`Starting upload queue, ${queue.length} routines pending`)
+  processNextRoutine()
 }
 
 export function stopUploads(): void {
   isPaused = true
-  if (currentUpload) {
-    currentUpload.abort()
-    currentUpload = null
+  if (currentAbortController) {
+    currentAbortController.abort()
+    currentAbortController = null
     logger.upload.info('Upload paused')
   }
   if (currentRoutineId) {
@@ -95,120 +144,213 @@ export function stopUploads(): void {
   }
 }
 
-async function processNext(): Promise<void> {
+async function processNextRoutine(): Promise<void> {
   if (isPaused || queue.length === 0) {
     isUploading = false
     return
   }
 
   isUploading = true
-  const job = queue.shift()!
-  currentRoutineId = job.routineId
+  const routineState = queue[0]
+  currentRoutineId = routineState.routineId
 
   try {
-    await uploadFile(job)
-    logger.upload.info(`Upload complete: ${job.objectName}`)
+    // Upload each file
+    for (let i = routineState.completedJobs; i < routineState.jobs.length; i++) {
+      if (isPaused) return
+
+      const job = routineState.jobs[i]
+      sendProgress(routineState.routineId, {
+        state: 'uploading',
+        percent: Math.round((i / routineState.jobs.length) * 100),
+        currentFile: path.basename(job.filePath),
+        filesCompleted: i,
+        filesTotal: routineState.jobs.length,
+      })
+
+      // Step 1: Get signed upload URL from our API
+      const { signedUrl, storagePath } = await getSignedUploadUrl(
+        routineState.entryId,
+        routineState.competitionId,
+        job.type,
+        job.objectName,
+        job.contentType,
+      )
+
+      // Track storage path for the complete call
+      if (job.type === 'videos') {
+        // Extract role from filename (performance.mp4, judge1.mp4, etc.)
+        const role = job.objectName.replace('.mp4', '')
+        routineState.storagePaths[role] = storagePath
+      } else {
+        routineState.photoStoragePaths.push(storagePath)
+      }
+
+      // Step 2: Upload file to the signed URL
+      await uploadFileToSignedUrl(signedUrl, job)
+
+      routineState.completedJobs = i + 1
+      logger.upload.info(`Uploaded ${i + 1}/${routineState.jobs.length}: ${job.objectName}`)
+    }
+
+    // Step 3: Call plugin/complete to register in database
+    await callPluginComplete(routineState)
+
+    sendProgress(routineState.routineId, {
+      state: 'complete',
+      percent: 100,
+      filesCompleted: routineState.jobs.length,
+      filesTotal: routineState.jobs.length,
+    })
+
+    logger.upload.info(`All uploads complete for routine ${routineState.routineId}`)
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    logger.upload.error(`Upload failed: ${job.objectName}:`, errMsg)
-    sendProgress(job.routineId, {
+    logger.upload.error(`Upload failed for routine ${routineState.routineId}:`, errMsg)
+    sendProgress(routineState.routineId, {
       state: 'failed',
       percent: 0,
-      filesCompleted: 0,
-      filesTotal: 0,
+      filesCompleted: routineState.completedJobs,
+      filesTotal: routineState.jobs.length,
       error: errMsg,
     })
   }
 
+  // Remove completed/failed routine from queue
+  queue.shift()
+  uploadingCount = Math.max(0, uploadingCount - 1)
+  sendUploadCount()
   currentRoutineId = null
-  processNext()
+  processNextRoutine()
 }
 
-function uploadFile(job: UploadJob): Promise<void> {
+async function getSignedUploadUrl(
+  entryId: string,
+  competitionId: string,
+  type: 'videos' | 'photos',
+  filename: string,
+  contentType: string,
+): Promise<{ signedUrl: string; storagePath: string }> {
+  const settings = getSettings()
+  const apiKey = settings.compsync.pluginApiKey
+
+  if (!apiKey) throw new Error('No plugin API key configured')
+
+  const apiBase = getApiBase()
+  const response = await fetch(`${apiBase}/api/plugin/upload-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      entryId,
+      competitionId,
+      type,
+      filename,
+      contentType,
+    }),
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Failed to get upload URL: ${response.status} ${text}`)
+  }
+
+  return response.json()
+}
+
+function uploadFileToSignedUrl(
+  signedUrl: string,
+  job: UploadJob,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const settings = getSettings()
-    const apiKey = settings.compsync.pluginApiKey
-
-    if (!apiKey) {
-      reject(new Error('No plugin API key configured'))
-      return
-    }
-
-    const fileStream = fs.createReadStream(job.filePath)
     const fileSize = fs.statSync(job.filePath).size
-
+    const fileStream = fs.createReadStream(job.filePath)
+    let bytesUploaded = 0
     let lastLoggedMilestone = 0
 
-    currentUpload = new Upload(fileStream as unknown as Blob, {
-      endpoint: settings.compsync.uploadEndpoint || `https://${settings.compsync.tenant}.supabase.co/storage/v1/upload/resumable`,
-      chunkSize: 6 * 1024 * 1024,
-      retryDelays: [0, 3000, 5000, 10000, 20000],
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-      },
-      metadata: {
-        bucketName: 'media',
-        objectName: job.objectName,
-        contentType: job.contentType,
-      },
-      uploadSize: fileSize,
-      onProgress: (bytesUploaded: number, bytesTotal: number) => {
-        const percent = Math.round((bytesUploaded / bytesTotal) * 100)
+    const url = new URL(signedUrl)
+    const httpModule = url.protocol === 'https:' ? https : http
 
-        // Log at 25% milestones
-        const milestone = Math.floor(percent / 25) * 25
-        if (milestone > lastLoggedMilestone) {
-          lastLoggedMilestone = milestone
-          logger.upload.info(`Upload ${job.objectName}: ${percent}%`)
+    const req = httpModule.request(
+      signedUrl,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Length': fileSize,
+          'Content-Type': job.contentType,
+        },
+      },
+      (res) => {
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          resolve()
+        } else {
+          let body = ''
+          res.on('data', (chunk) => (body += chunk))
+          res.on('end', () => {
+            reject(new Error(`Upload failed: ${res.statusCode} ${body}`))
+          })
         }
+      },
+    )
 
-        sendProgress(job.routineId, {
-          state: 'uploading',
-          percent,
-          currentFile: path.basename(job.filePath),
-          filesCompleted: 0,
-          filesTotal: 1,
-        })
-      },
-      onSuccess: () => {
-        currentUpload = null
-        resolve()
-      },
-      onError: (error: Error) => {
-        currentUpload = null
-        reject(error)
-      },
+    currentAbortController = new AbortController()
+    currentAbortController.signal.addEventListener('abort', () => {
+      req.destroy()
+      fileStream.destroy()
     })
 
-    currentUpload.start()
+    req.on('error', (err) => {
+      fileStream.destroy()
+      reject(err)
+    })
+
+    fileStream.on('data', (chunk) => {
+      bytesUploaded += chunk.length
+      const percent = Math.round((bytesUploaded / fileSize) * 100)
+
+      const milestone = Math.floor(percent / 25) * 25
+      if (milestone > lastLoggedMilestone) {
+        lastLoggedMilestone = milestone
+        logger.upload.info(`Upload ${job.objectName}: ${percent}%`)
+      }
+
+      sendProgress(job.routineId, {
+        state: 'uploading',
+        percent,
+        currentFile: path.basename(job.filePath),
+        filesCompleted: 0,
+        filesTotal: 1,
+      })
+    })
+
+    fileStream.pipe(req)
   })
 }
 
-export async function callPluginComplete(
-  routine: Routine,
-  tenantId: string,
-  competitionId: string,
+async function callPluginComplete(
+  state: RoutineUploadState,
 ): Promise<void> {
   const settings = getSettings()
   const apiKey = settings.compsync.pluginApiKey
-  const endpoint = settings.compsync.uploadEndpoint || `https://${settings.compsync.tenant}.compsync.net/api/media/plugin/complete`
+  const apiBase = getApiBase()
 
   const body = {
-    entryId: routine.id,
-    competitionId,
-    tenantId,
+    entryId: state.entryId,
+    competitionId: state.competitionId,
     files: {
-      performance: routine.encodedFiles?.find((f) => f.role === 'performance')?.uploadUrl,
-      judge1: routine.encodedFiles?.find((f) => f.role === 'judge1')?.uploadUrl,
-      judge2: routine.encodedFiles?.find((f) => f.role === 'judge2')?.uploadUrl,
-      judge3: routine.encodedFiles?.find((f) => f.role === 'judge3')?.uploadUrl,
-      judge4: routine.encodedFiles?.find((f) => f.role === 'judge4')?.uploadUrl,
-      photos: routine.photos?.map((p) => p.filePath) || [],
+      performance: state.storagePaths['performance'] || undefined,
+      judge1: state.storagePaths['judge1'] || undefined,
+      judge2: state.storagePaths['judge2'] || undefined,
+      judge3: state.storagePaths['judge3'] || undefined,
+      judge4: state.storagePaths['judge4'] || undefined,
+      photos: state.photoStoragePaths.length > 0 ? state.photoStoragePaths : undefined,
     },
   }
 
-  logger.upload.info(`Calling plugin/complete for routine ${routine.entryNumber}`)
-  const response = await fetch(endpoint, {
+  logger.upload.info(`Calling plugin/complete for routine ${state.routineId}`)
+  const response = await fetch(`${apiBase}/api/plugin/complete`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -218,17 +360,21 @@ export async function callPluginComplete(
   })
 
   if (!response.ok) {
-    throw new Error(`Plugin complete failed: ${response.status} ${response.statusText}`)
+    const text = await response.text()
+    throw new Error(`Plugin complete failed: ${response.status} ${text}`)
   }
 
-  logger.upload.info(`Plugin complete success for routine ${routine.entryNumber}`)
+  logger.upload.info(`Plugin complete success for routine ${state.routineId}`)
 }
 
 export function getQueueLength(): number {
-  return queue.length + (isUploading ? 1 : 0)
+  return queue.length
 }
 
-// Persist queue state for resume on restart
-export function getQueueState(): UploadJob[] {
+export function getUploadingCount(): number {
+  return uploadingCount
+}
+
+export function getQueueState(): RoutineUploadState[] {
   return [...queue]
 }

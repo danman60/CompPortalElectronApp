@@ -215,6 +215,7 @@ export const IPC_CHANNELS = {
 
   // Upload
   UPLOAD_ALL: 'upload:all',
+  UPLOAD_COUNT: 'upload:count',
 
   // App
   APP_TOGGLE_ALWAYS_ON_TOP: 'app:toggle-always-on-top',

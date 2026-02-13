@@ -29,6 +29,8 @@ const api = {
   // Schedule
   scheduleLoadCSV: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_LOAD_CSV, filePath),
+  scheduleLoadAPI: (competitionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_LOAD_API, competitionId),
   scheduleGet: () => ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_GET),
   scheduleBrowseFile: () => ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_BROWSE_FILE),
 

@@ -153,6 +153,14 @@ export function registerAllHandlers(): void {
     return comp
   })
 
+  safeHandle(IPC_CHANNELS.SCHEDULE_LOAD_API, async (competitionId: unknown) => {
+    logIPC(IPC_CHANNELS.SCHEDULE_LOAD_API, { competitionId })
+    const comp = await schedule.loadFromAPI(competitionId as string)
+    stateService.setCompetition(comp)
+    recording.broadcastFullState()
+    return comp
+  })
+
   safeHandle(IPC_CHANNELS.SCHEDULE_GET, async () => {
     return stateService.getCompetition()
   })

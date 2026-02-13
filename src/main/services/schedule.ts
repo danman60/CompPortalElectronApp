@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { Competition, Routine } from '../../shared/types'
 import { logger } from '../logger'
+import { getSettings } from './settings'
 
 interface CSVRow {
   tenant_id?: string
@@ -156,4 +157,32 @@ export function loadSchedule(filePath: string): Competition {
     return parseXLSX(filePath)
   }
   throw new Error(`Unsupported file format: ${ext}`)
+}
+
+export async function loadFromAPI(competitionId: string): Promise<Competition> {
+  const settings = getSettings()
+  const apiKey = settings.compsync.pluginApiKey
+  const tenant = settings.compsync.tenant
+
+  if (!apiKey) throw new Error('No plugin API key configured')
+  if (!tenant) throw new Error('No tenant configured')
+
+  const apiBase = settings.compsync.uploadEndpoint || `https://${tenant}.compsync.net`
+
+  logger.schedule.info(`Loading schedule from API: ${apiBase}/api/plugin/schedule/${competitionId}`)
+
+  const response = await fetch(`${apiBase}/api/plugin/schedule/${competitionId}`, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`API schedule load failed: ${response.status} ${text}`)
+  }
+
+  const data = await response.json()
+  logger.schedule.info(`Loaded ${data.routines.length} routines from API`)
+  return data as Competition
 }
