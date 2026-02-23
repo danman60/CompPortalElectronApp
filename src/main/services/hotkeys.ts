@@ -1,7 +1,7 @@
 import { globalShortcut } from 'electron'
 import * as obs from './obs'
 import * as recording from './recording'
-import * as lowerThird from './lowerThird'
+import * as overlay from './overlay'
 import { getSettings } from './settings'
 import { logger } from '../logger'
 
@@ -30,12 +30,7 @@ export function register(): void {
   })
 
   registerKey(settings.hotkeys.fireLowerThird, 'Fire Lower Third', () => {
-    const s = getSettings()
-    if (s.lowerThird.autoHideSeconds > 0) {
-      lowerThird.fireWithAutoHide(s.lowerThird.autoHideSeconds)
-    } else {
-      lowerThird.fire()
-    }
+    overlay.fireLowerThird()
   })
 
   registerKey(settings.hotkeys.saveReplay, 'Save Replay', async () => {

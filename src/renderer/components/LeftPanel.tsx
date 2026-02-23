@@ -4,7 +4,7 @@ import PreviewPanel from './PreviewPanel'
 import CurrentRoutine from './CurrentRoutine'
 import AudioMeters from './AudioMeters'
 import Controls from './Controls'
-import LowerThirdControls from './LowerThirdControls'
+import OverlayControls from './OverlayControls'
 import '../styles/leftpanel.css'
 
 export default function LeftPanel(): React.ReactElement {
@@ -14,7 +14,7 @@ export default function LeftPanel(): React.ReactElement {
       <CurrentRoutine />
       <AudioMeters />
       <Controls />
-      <LowerThirdControls />
+      <OverlayControls />
     </div>
   )
 }

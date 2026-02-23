@@ -428,8 +428,8 @@ export default function Settings(): React.ReactElement {
                 type="number"
                 min="0"
                 max="120"
-                value={draft.lowerThird.autoHideSeconds}
-                onChange={(e) => update('lowerThird', { autoHideSeconds: parseInt(e.target.value) || 0 })}
+                value={draft.overlay.autoHideSeconds}
+                onChange={(e) => update('overlay', { autoHideSeconds: parseInt(e.target.value) || 0 })}
                 style={{ width: '80px' }}
               />
               <span className="hint">0 = never auto-hide (manual only)</span>
@@ -439,14 +439,14 @@ export default function Settings(): React.ReactElement {
               <div className="field-row">
                 <input
                   type="text"
-                  value={draft.lowerThird.overlayUrl}
+                  value={draft.overlay.overlayUrl}
                   readOnly
                   style={{ flex: 1, opacity: 0.8 }}
                 />
                 <button
                   className="back-btn"
                   onClick={() => {
-                    navigator.clipboard.writeText(draft.lowerThird.overlayUrl)
+                    navigator.clipboard.writeText(draft.overlay.overlayUrl)
                     setOverlayCopied(true)
                     setTimeout(() => setOverlayCopied(false), 2000)
                   }}
