@@ -16,12 +16,13 @@
     "electron-log": "^5.1.1",
     "electron-store": "^6.0.1",
     "electron-window-state": "^5.0.3",
-    "express": "^4.21.0",
     "exifreader": "^4.23.0",
+    "express": "^4.21.0",
     "ffmpeg-static": "^5.2.0",
     "obs-websocket-js": "^5.0.6",
     "papaparse": "^5.4.1",
     "sharp": "^0.33.2",
+    "ws": "^8.19.0",
     "xlsx": "^0.18.5",
     "zustand": "^4.5.0"
   },
@@ -30,6 +31,7 @@
     "@types/papaparse": "^5.3.14",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.2.1",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
@@ -66,7 +68,9 @@
       "icon": "resources/icon.ico",
       "signAndEditExecutable": false
     },
-    "electronLanguages": ["en-US"],
+    "electronLanguages": [
+      "en-US"
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
