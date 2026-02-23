@@ -44,6 +44,24 @@ export function getSettings(): AppSettings {
     settings = store.store as unknown as AppSettings
   }
 
+  // Migrate old lowerThird settings key to overlay
+  const raw = settings as unknown as Record<string, unknown>
+  if (raw.lowerThird && !raw.overlay) {
+    const old = raw.lowerThird as Record<string, unknown>
+    raw.overlay = {
+      autoHideSeconds: old.autoHideSeconds ?? 8,
+      overlayUrl: old.overlayUrl ?? 'http://localhost:9876/overlay',
+      logoUrl: '',
+      defaultCounter: true,
+      defaultClock: false,
+      defaultLogo: true,
+    }
+    delete raw.lowerThird
+    store.set('overlay', raw.overlay)
+    store.delete('lowerThird' as never)
+    logger.settings.info('Migrated lowerThird settings to overlay')
+  }
+
   // Decrypt sensitive values
   for (const key of SENSITIVE_KEYS) {
     const encrypted = getNestedValue(settings as unknown as Record<string, unknown>, key + '_encrypted') as string | undefined
