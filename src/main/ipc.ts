@@ -10,7 +10,8 @@ import * as recording from './services/recording'
 import * as ffmpegService from './services/ffmpeg'
 import * as uploadService from './services/upload'
 import * as photoService from './services/photos'
-import * as lowerThird from './services/lowerThird'
+import * as overlay from './services/overlay'
+import * as wsHub from './services/wsHub'
 import { checkAndRecover } from './services/crashRecovery'
 import { logger } from './logger'
 
@@ -103,6 +104,11 @@ export function registerAllHandlers(): void {
     logIPC(IPC_CHANNELS.RECORDING_UNSKIP, { routineId })
     stateService.unskipRoutine(routineId as string)
     recording.broadcastFullState()
+  })
+
+  safeHandle(IPC_CHANNELS.RECORDING_NEXT_FULL, async () => {
+    logIPC(IPC_CHANNELS.RECORDING_NEXT_FULL)
+    await recording.nextFull()
   })
 
   // --- FFmpeg ---
@@ -272,20 +278,39 @@ export function registerAllHandlers(): void {
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
   })
 
-  // --- Lower Third ---
+  // --- Overlay ---
+  safeHandle(IPC_CHANNELS.OVERLAY_TOGGLE, (element: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_TOGGLE, { element })
+    return overlay.toggleElement(element as 'counter' | 'clock' | 'logo' | 'lowerThird')
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_FIRE_LT, () => {
+    logIPC(IPC_CHANNELS.OVERLAY_FIRE_LT)
+    overlay.fireLowerThird()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_HIDE_LT, () => {
+    logIPC(IPC_CHANNELS.OVERLAY_HIDE_LT)
+    overlay.hideLowerThird()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_GET_STATE, () => {
+    return overlay.getOverlayState()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_AUTO_FIRE_TOGGLE, () => {
+    const newState = !recording.getAutoFire()
+    recording.setAutoFire(newState)
+    return newState
+  })
+
+  // Legacy LT compat
   safeHandle(IPC_CHANNELS.LT_FIRE, () => {
-    logIPC(IPC_CHANNELS.LT_FIRE)
-    const s = settings.getSettings()
-    if (s.lowerThird.autoHideSeconds > 0) {
-      lowerThird.fireWithAutoHide(s.lowerThird.autoHideSeconds)
-    } else {
-      lowerThird.fire()
-    }
+    overlay.fireLowerThird()
   })
 
   safeHandle(IPC_CHANNELS.LT_HIDE, () => {
-    logIPC(IPC_CHANNELS.LT_HIDE)
-    lowerThird.hide()
+    overlay.hideLowerThird()
   })
 
   safeHandle(IPC_CHANNELS.LT_AUTO_FIRE_TOGGLE, () => {

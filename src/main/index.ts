@@ -6,7 +6,8 @@ import { registerAllHandlers } from './ipc'
 import { getSettings } from './services/settings'
 import * as obs from './services/obs'
 import * as recording from './services/recording'
-import * as lowerThird from './services/lowerThird'
+import * as overlay from './services/overlay'
+import * as wsHub from './services/wsHub'
 import * as hotkeys from './services/hotkeys'
 import { checkAndRecover } from './services/crashRecovery'
 import { loadState } from './services/state'
@@ -137,8 +138,9 @@ app.whenReady().then(async () => {
   // Create window
   createWindow()
 
-  // Start lower third server
-  lowerThird.startServer()
+  // Start overlay + WebSocket hub
+  overlay.startServer()
+  wsHub.start()
 
   // Register global hotkeys
   hotkeys.register()
@@ -156,7 +158,8 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   logger.app.info('All windows closed')
   hotkeys.unregister()
-  lowerThird.stopServer()
+  wsHub.stop()
+  overlay.stopServer()
   obs.disconnect()
   app.quit()
 })

@@ -59,6 +59,17 @@ const api = {
   ltHide: () => ipcRenderer.invoke(IPC_CHANNELS.LT_HIDE),
   ltAutoFireToggle: () => ipcRenderer.invoke(IPC_CHANNELS.LT_AUTO_FIRE_TOGGLE),
 
+  // Overlay
+  overlayToggle: (element: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_TOGGLE, element),
+  overlayFireLT: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_FIRE_LT),
+  overlayHideLT: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_HIDE_LT),
+  overlayGetState: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_GET_STATE),
+  overlayAutoFireToggle: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_AUTO_FIRE_TOGGLE),
+
+  // Next Full
+  recordingNextFull: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_NEXT_FULL),
+
   // App
   toggleAlwaysOnTop: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_TOGGLE_ALWAYS_ON_TOP, enabled),
