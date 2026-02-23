@@ -1,0 +1,131 @@
+{
+  "UUID": "com.compsync.streamdeck",
+  "Name": "CompSync Media",
+  "Version": "1.0.0.0",
+  "Author": "Stream Stage",
+  "Description": "Control CompSync Media competition workflow from Stream Deck",
+  "Icon": "imgs/plugin-icon",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.5"
+  },
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "10" }
+  ],
+  "Nodejs": {
+    "Version": "20",
+    "Debug": "enabled"
+  },
+  "ApplicationsToMonitor": {
+    "windows": ["CompSync Media.exe"]
+  },
+  "Actions": [
+    {
+      "UUID": "com.compsync.streamdeck.next-full",
+      "Name": "NEXT",
+      "Tooltip": "Full pipeline: advance + record + overlay",
+      "Icon": "imgs/actions/next-full",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/next-full", "Title": "NEXT" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.next-routine",
+      "Name": "Next Routine",
+      "Tooltip": "Advance to next routine (no auto-actions)",
+      "Icon": "imgs/actions/next-routine",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/next-routine", "Title": "Next" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.prev",
+      "Name": "Prev",
+      "Tooltip": "Go to previous routine",
+      "Icon": "imgs/actions/prev",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/prev", "Title": "Prev" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.skip",
+      "Name": "Skip",
+      "Tooltip": "Skip or unskip current routine",
+      "Icon": "imgs/actions/skip",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/skip", "Title": "Skip" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.record",
+      "Name": "Record",
+      "Tooltip": "Toggle OBS recording",
+      "Icon": "imgs/actions/record",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/record", "Title": "REC" },
+        { "Image": "imgs/actions/record-active", "Title": "STOP" }
+      ]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.stream",
+      "Name": "Stream",
+      "Tooltip": "Toggle OBS streaming",
+      "Icon": "imgs/actions/stream",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/stream", "Title": "OFF" },
+        { "Image": "imgs/actions/stream-active", "Title": "LIVE" }
+      ]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.save-replay",
+      "Name": "Save Replay",
+      "Tooltip": "Save OBS replay buffer",
+      "Icon": "imgs/actions/replay",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/replay", "Title": "Replay" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.overlay-lower-third",
+      "Name": "Lower Third",
+      "Tooltip": "Fire or hide lower third overlay",
+      "Icon": "imgs/actions/lower-third",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/lower-third", "Title": "LT" },
+        { "Image": "imgs/actions/lower-third-active", "Title": "LT" }
+      ]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.overlay-counter",
+      "Name": "Counter",
+      "Tooltip": "Toggle entry counter overlay",
+      "Icon": "imgs/actions/counter",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/counter", "Title": "CTR" },
+        { "Image": "imgs/actions/counter-active", "Title": "CTR" }
+      ]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.overlay-clock",
+      "Name": "Clock",
+      "Tooltip": "Toggle time of day overlay",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/clock", "Title": "CLK" },
+        { "Image": "imgs/actions/clock-active", "Title": "CLK" }
+      ]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.overlay-logo",
+      "Name": "Logo",
+      "Tooltip": "Toggle client logo overlay",
+      "Icon": "imgs/actions/logo",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/logo", "Title": "LOGO" },
+        { "Image": "imgs/actions/logo-active", "Title": "LOGO" }
+      ]
+    }
+  ]
+}
