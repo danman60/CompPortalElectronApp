@@ -133,9 +133,13 @@ export interface AppSettings {
     fireLowerThird: string
     saveReplay: string
   }
-  lowerThird: {
-    autoHideSeconds: number // 0 = never
+  overlay: {
+    autoHideSeconds: number
     overlayUrl: string
+    logoUrl: string
+    defaultCounter: boolean
+    defaultClock: boolean
+    defaultLogo: boolean
   }
   behavior: {
     autoRecordOnNext: boolean
@@ -209,6 +213,16 @@ export const IPC_CHANNELS = {
   LT_AUTO_FIRE_TOGGLE: 'lt:auto-fire-toggle',
   LT_AUTO_FIRE_STATE: 'lt:auto-fire-state',
 
+  // Overlay
+  OVERLAY_TOGGLE: 'overlay:toggle',
+  OVERLAY_FIRE_LT: 'overlay:fire-lt',
+  OVERLAY_HIDE_LT: 'overlay:hide-lt',
+  OVERLAY_GET_STATE: 'overlay:get-state',
+  OVERLAY_AUTO_FIRE_TOGGLE: 'overlay:auto-fire-toggle',
+
+  // Recording
+  RECORDING_NEXT_FULL: 'recording:next-full',
+
   // Upload
   UPLOAD_ALL: 'upload:all',
 
@@ -260,6 +274,76 @@ export interface LowerThirdData {
   visible: boolean
 }
 
+// --- Overlay ---
+
+export interface OverlayElementState {
+  visible: boolean
+}
+
+export interface OverlayCounterState extends OverlayElementState {
+  current: number
+  total: number
+  entryNumber: string
+}
+
+export interface OverlayLogoState extends OverlayElementState {
+  url: string
+}
+
+export interface OverlayLowerThirdState extends OverlayElementState {
+  entryNumber: string
+  routineTitle: string
+  dancers: string
+  studioName: string
+  category: string
+  autoHideSeconds: number
+}
+
+export interface OverlayState {
+  counter: OverlayCounterState
+  clock: OverlayElementState
+  logo: OverlayLogoState
+  lowerThird: OverlayLowerThirdState
+}
+
+// --- WebSocket Hub ---
+
+export interface WSStateMessage {
+  type: 'state'
+  routine: {
+    entryNumber: string
+    routineTitle: string
+    dancers: string
+    studioName: string
+    category: string
+  } | null
+  nextRoutine: {
+    entryNumber: string
+    routineTitle: string
+  } | null
+  index: number
+  total: number
+  recording: { active: boolean; elapsed: number }
+  streaming: boolean
+  skippedCount: number
+  overlay: OverlayState
+}
+
+export interface WSCommandMessage {
+  type: 'command'
+  action: 'nextFull' | 'nextRoutine' | 'prev' | 'skip'
+    | 'toggleRecord' | 'toggleStream' | 'saveReplay'
+    | 'toggleOverlay'
+  element?: 'counter' | 'clock' | 'logo' | 'lowerThird'
+}
+
+export interface WSIdentifyMessage {
+  type: 'identify'
+  client: 'overlay' | 'streamdeck'
+}
+
+export type WSMessage = WSStateMessage | WSCommandMessage | WSIdentifyMessage
+
 // Default settings
 export const DEFAULT_SETTINGS: AppSettings = {
   obs: {
@@ -304,9 +388,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fireLowerThird: 'F9',
     saveReplay: 'F10',
   },
-  lowerThird: {
+  overlay: {
     autoHideSeconds: 8,
     overlayUrl: 'http://localhost:9876/overlay',
+    logoUrl: '',
+    defaultCounter: true,
+    defaultClock: false,
+    defaultLogo: true,
   },
   behavior: {
     autoRecordOnNext: true,
