@@ -38,6 +38,21 @@ function scheduleAutoFire(): void {
   }, 3000)
 }
 
+/** Calculate human-readable offset between scheduled time (HH:MM) and actual time */
+function calcOffset(scheduledTime: string, actual: Date): string {
+  const [h, m] = scheduledTime.split(':').map(Number)
+  if (isNaN(h) || isNaN(m)) return 'invalid schedule time'
+  const scheduled = new Date(actual)
+  scheduled.setHours(h, m, 0, 0)
+  const diffMs = actual.getTime() - scheduled.getTime()
+  const absDiffMin = Math.abs(Math.round(diffMs / 60000))
+  const sign = diffMs >= 0 ? '+' : '-'
+  if (absDiffMin < 1) return 'on time'
+  const hours = Math.floor(absDiffMin / 60)
+  const mins = absDiffMin % 60
+  return hours > 0 ? `${sign}${hours}h ${mins}m` : `${sign}${mins}m`
+}
+
 function buildFileName(routine: Routine): string {
   const settings = getSettings()
   let name = settings.fileNaming.pattern
@@ -101,6 +116,26 @@ export async function handleRecordingStopped(
     outputPath,
   })
 
+  const stopTime = new Date(timestamp)
+  const stopStr = stopTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const startTime = routine.recordingStartedAt ? new Date(routine.recordingStartedAt) : null
+  const durationSec = startTime ? Math.round((stopTime.getTime() - startTime.getTime()) / 1000) : 0
+  const durationStr = durationSec > 0 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : '?'
+
+  logger.app.info([
+    `──── RECORDING STOPPED ────`,
+    `  Entry #${routine.entryNumber} — "${routine.routineTitle}"`,
+    `  Studio: ${routine.studioName} (${routine.studioCode})`,
+    `  Category: ${routine.ageGroup} ${routine.category} ${routine.sizeCategory}`,
+    `  Scheduled: Day ${routine.scheduledDay || '?'}, Position ${routine.position}${routine.scheduledTime ? `, Time ${routine.scheduledTime}` : ''}`,
+    startTime ? `  Recording started: ${startTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '',
+    `  Recording stopped: ${stopStr} (${timestamp})`,
+    `  Actual duration: ${durationStr} (expected ${routine.durationMinutes} min)`,
+    routine.scheduledTime ? `  Offset from schedule: ${calcOffset(routine.scheduledTime, startTime || stopTime)}` : '',
+    `  Raw file: ${outputPath}`,
+    `────────────────────────────`,
+  ].filter(Boolean).join('\n'))
+
   const settings = getSettings()
 
   if (!settings.fileNaming.outputDirectory) {
@@ -134,7 +169,8 @@ export async function handleRecordingStopped(
 
   try {
     fs.renameSync(outputPath, newPath)
-    logger.app.info(`Renamed: ${outputPath} → ${newPath}`)
+    const fileSizeMB = (fs.statSync(newPath).size / (1024 * 1024)).toFixed(1)
+    logger.app.info(`Renamed: ${outputPath} → ${newPath} (${fileSizeMB} MB)`)
 
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath })
 
@@ -166,6 +202,22 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,
   })
+
+  const now = new Date(timestamp)
+  const timeStr = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+  logger.app.info([
+    `──── RECORDING STARTED ────`,
+    `  Entry #${routine.entryNumber} — "${routine.routineTitle}"`,
+    `  Studio: ${routine.studioName} (${routine.studioCode})`,
+    `  Category: ${routine.ageGroup} ${routine.category} ${routine.sizeCategory}`,
+    `  Scheduled: Day ${routine.scheduledDay || '?'}, Position ${routine.position}${routine.scheduledTime ? `, Time ${routine.scheduledTime}` : ''}`,
+    `  Recording started: ${timeStr} (${timestamp})`,
+    routine.scheduledTime ? `  Offset from schedule: ${calcOffset(routine.scheduledTime, now)}` : '',
+    `  Duration expected: ${routine.durationMinutes} min`,
+    `───────────────────────────`,
+  ].filter(Boolean).join('\n'))
+
   broadcastFullState()
 }
 

@@ -86,3 +86,26 @@
 .action-btn.primary:hover { filter: brightness(1.15); }
 .action-btn.photos { background: linear-gradient(135deg, #7c3aed, #a855f7); border-color: #7c3aed; color: white; }
 .action-btn.photos:hover { filter: brightness(1.15); }
+
+/* Compact mode toggle */
+.compact-toggle-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: all 0.15s;
+}
+.compact-toggle-btn:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--text-primary); }
+.compact-toggle-btn.active {
+  background: rgba(34,197,94,0.15);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+/* Compact mode header adjustments */
+.compact .app-header { padding: 4px 8px; }
+.compact .header-right { gap: 6px; }

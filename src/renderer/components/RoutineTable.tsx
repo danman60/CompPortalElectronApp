@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
 import '../styles/table.css'
@@ -83,12 +83,61 @@ function getVideoText(routine: Routine, judgeCount: number): string {
   return '0/' + total
 }
 
+function NoteEditor({ routine }: { routine: Routine }): React.ReactElement {
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState(routine.notes || '')
+
+  function handleSave(): void {
+    window.api.setRoutineNote(routine.id, text.trim())
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="note-editor" onClick={(e) => e.stopPropagation()}>
+        <textarea
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              handleSave()
+            }
+            if (e.key === 'Escape') {
+              setText(routine.notes || '')
+              setEditing(false)
+            }
+          }}
+          placeholder="Add note..."
+          rows={2}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <button
+      className={`note-btn${routine.notes ? ' has-note' : ''}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        setEditing(true)
+      }}
+      title={routine.notes || 'Add note'}
+    >
+      {routine.notes ? '\u270E' : '\u270E'}
+    </button>
+  )
+}
+
 export default function RoutineTable(): React.ReactElement {
   const competition = useStore((s) => s.competition)
   const currentRoutine = useStore((s) => s.currentRoutine)
   const settings = useStore((s) => s.settings)
   const dayFilter = useStore((s) => s.dayFilter)
   const searchQuery = useStore((s) => s.searchQuery)
+  const compactMode = useStore((s) => s.compactMode)
   const judgeCount = settings?.competition.judgeCount ?? 3
 
   let routines = competition?.routines ?? []
@@ -108,9 +157,12 @@ export default function RoutineTable(): React.ReactElement {
     )
   }
 
+  async function handleJumpTo(routine: Routine): Promise<void> {
+    await window.api.jumpToRoutine(routine.id)
+  }
+
   async function handleViewMedia(routine: Routine): Promise<void> {
     if (routine.outputPath) {
-      // outputPath is the renamed file; open its parent directory
       const dir = routine.outputPath.replace(/[/\\][^/\\]+$/, '')
       await window.api.openPath(dir)
     }
@@ -123,8 +175,8 @@ export default function RoutineTable(): React.ReactElement {
           <tr>
             <th style={{ paddingLeft: '10px' }}>#</th>
             <th>Routine</th>
-            <th>Videos</th>
-            <th>Photos</th>
+            {!compactMode && <th>Videos</th>}
+            {!compactMode && <th>Photos</th>}
             <th>Status</th>
             <th></th>
           </tr>
@@ -141,14 +193,20 @@ export default function RoutineTable(): React.ReactElement {
             return (
               <tr
                 key={routine.id}
+                className={isCurrent ? 'current-row' : ''}
+                onClick={() => handleJumpTo(routine)}
                 style={{
+                  cursor: 'pointer',
                   ...(isLive
                     ? { background: 'rgba(239,68,68,0.06)', borderLeft: '3px solid var(--recording)' }
+                    : {}),
+                  ...(isCurrent && !isLive
+                    ? { background: 'rgba(99,102,241,0.08)', borderLeft: '3px solid var(--accent)' }
                     : {}),
                   ...(isNotRecorded && !isCurrent ? { opacity: 0.35 } : {}),
                 }}
               >
-                <td style={{ paddingLeft: isLive ? '7px' : '10px' }}>
+                <td style={{ paddingLeft: isLive || isCurrent ? '7px' : '10px' }}>
                   <span
                     className="entry-num"
                     style={isLive ? { color: 'var(--recording)' } : undefined}
@@ -166,25 +224,29 @@ export default function RoutineTable(): React.ReactElement {
                     {routine.studioCode} &bull; {routine.ageGroup} {routine.category}
                   </div>
                 </td>
-                <td>
-                  <span
-                    style={{
-                      color:
-                        routine.status === 'uploaded' || routine.status === 'confirmed'
-                          ? 'var(--success)'
-                          : routine.status === 'uploading'
-                            ? 'var(--upload-blue)'
-                            : routine.status === 'encoding'
-                              ? 'var(--warning)'
-                              : 'var(--text-muted)',
-                    }}
-                  >
-                    {getVideoText(routine, judgeCount)}
-                  </span>
-                </td>
-                <td style={{ color: routine.photos?.length ? 'var(--success)' : 'var(--text-muted)' }}>
-                  {routine.photos?.length || '\u2014'}
-                </td>
+                {!compactMode && (
+                  <td>
+                    <span
+                      style={{
+                        color:
+                          routine.status === 'uploaded' || routine.status === 'confirmed'
+                            ? 'var(--success)'
+                            : routine.status === 'uploading'
+                              ? 'var(--upload-blue)'
+                              : routine.status === 'encoding'
+                                ? 'var(--warning)'
+                                : 'var(--text-muted)',
+                      }}
+                    >
+                      {getVideoText(routine, judgeCount)}
+                    </span>
+                  </td>
+                )}
+                {!compactMode && (
+                  <td style={{ color: routine.photos?.length ? 'var(--success)' : 'var(--text-muted)' }}>
+                    {routine.photos?.length || '\u2014'}
+                  </td>
+                )}
                 <td>
                   {isNotRecorded ? (
                     <span className={`status-label ${statusInfo.className}`}>{statusInfo.text}</span>
@@ -205,13 +267,17 @@ export default function RoutineTable(): React.ReactElement {
                     </div>
                   )}
                 </td>
-                <td>
+                <td style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+                  <NoteEditor routine={routine} />
                   {!isNotRecorded && (
                     <button
                       className="view-btn"
-                      onClick={() => handleViewMedia(routine)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleViewMedia(routine)
+                      }}
                     >
-                      View Media
+                      View
                     </button>
                   )}
                 </td>

@@ -9,7 +9,7 @@ const store = new Store({
 })
 
 // Keys that should be encrypted
-const SENSITIVE_KEYS = ['obs.password', 'compsync.pluginApiKey']
+const SENSITIVE_KEYS = ['obs.password']
 
 function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
   return path.split('.').reduce((acc: unknown, key) => {
@@ -60,6 +60,29 @@ export function getSettings(): AppSettings {
     store.set('overlay', raw.overlay)
     store.delete('lowerThird' as never)
     logger.settings.info('Migrated lowerThird settings to overlay')
+  }
+
+  // Migrate old compsync fields to shareCode format
+  const cs = raw.compsync as Record<string, unknown> | undefined
+  if (cs && ('tenant' in cs || 'pluginApiKey' in cs)) {
+    const shareCode = (cs.shareCode as string) || ''
+    raw.compsync = { shareCode }
+    store.set('compsync', raw.compsync)
+    logger.settings.info('Migrated compsync settings to shareCode format')
+  }
+
+  // Migrate ffmpeg: add cpuPriority if missing
+  const ff = raw.ffmpeg as Record<string, unknown> | undefined
+  if (ff && !('cpuPriority' in ff)) {
+    ff.cpuPriority = 'below-normal'
+    store.set('ffmpeg', ff)
+  }
+
+  // Migrate behavior: add compactMode if missing
+  const beh = raw.behavior as Record<string, unknown> | undefined
+  if (beh && !('compactMode' in beh)) {
+    beh.compactMode = false
+    store.set('behavior', beh)
   }
 
   // Decrypt sensitive values

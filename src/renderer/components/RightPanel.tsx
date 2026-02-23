@@ -10,6 +10,8 @@ export default function RightPanel(): React.ReactElement {
   const uploadingCount = useStore((s) => s.uploadingCount)
   const completeCount = useStore((s) => s.completeCount)
   const photosPendingCount = useStore((s) => s.photosPendingCount)
+  const searchQuery = useStore((s) => s.searchQuery)
+  const setSearchQuery = useStore.getState().setSearchQuery
 
   const total = competition?.routines.length ?? 0
   const recorded = competition?.routines.filter(
@@ -38,21 +40,33 @@ export default function RightPanel(): React.ReactElement {
     }
   }
 
+  async function handleExportReport(): Promise<void> {
+    await window.api.exportReport()
+  }
+
   return (
     <div className="right-panel">
       <div className="right-header">
         <div className="section-title" style={{ marginBottom: 0 }}>
           Schedule
         </div>
-        <div className="right-actions">
-          <div className="toggle-compact">
-            <span>Auto</span>
-            <label className="toggle-switch">
-              <input type="checkbox" defaultChecked />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-        </div>
+        <input
+          type="text"
+          className="search-input"
+          placeholder="Search # / name / studio..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{
+            flex: 1,
+            maxWidth: '200px',
+            padding: '3px 8px',
+            fontSize: '10px',
+            border: '1px solid var(--border)',
+            borderRadius: '3px',
+            background: 'var(--bg-primary)',
+            color: 'var(--text-primary)',
+          }}
+        />
       </div>
 
       <RoutineTable />
@@ -79,6 +93,14 @@ export default function RightPanel(): React.ReactElement {
           </div>
         )}
         <div style={{ flex: 1 }} />
+        <button
+          className="output-dir-change"
+          onClick={handleExportReport}
+          title="Export session report (CSV)"
+          style={{ fontSize: '9px' }}
+        >
+          Export
+        </button>
         {encodingCount > 0 && (
           <div className="stat">
             <span className="stat-num" style={{ color: 'var(--warning)' }}>{encodingCount}</span> Encoding

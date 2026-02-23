@@ -25,13 +25,11 @@ function HotkeyInput({
         return
       }
 
-      // Build accelerator string
       const parts: string[] = []
       if (e.ctrlKey) parts.push('Ctrl')
       if (e.shiftKey) parts.push('Shift')
       if (e.altKey) parts.push('Alt')
 
-      // Map key names to Electron accelerator format
       const key = e.key
       if (!['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
         if (key.length === 1) {
@@ -108,7 +106,6 @@ export default function Settings(): React.ReactElement {
     await window.api.settingsSet(draft)
     useStore.getState().setSettings(draft)
 
-    // Apply always-on-top if changed
     if (currentSettings && draft.behavior.alwaysOnTop !== currentSettings.behavior.alwaysOnTop) {
       await window.api.toggleAlwaysOnTop(draft.behavior.alwaysOnTop)
     }
@@ -116,7 +113,6 @@ export default function Settings(): React.ReactElement {
     setSettingsOpen(false)
   }
 
-  // Build inverted track mapping: role -> trackN
   function getRoleToTrack(): Record<string, string> {
     if (!draft) return {}
     const result: Record<string, string> = {}
@@ -130,12 +126,10 @@ export default function Settings(): React.ReactElement {
 
   function setRoleTrack(role: string, track: string): void {
     if (!draft) return
-    // Clear old mapping for this role
     const newMapping = { ...draft.audioTrackMapping }
     for (const [k, v] of Object.entries(newMapping)) {
       if (v === role) newMapping[k] = 'unused'
     }
-    // Set new
     if (track) newMapping[track] = role
     setDraft({ ...draft, audioTrackMapping: newMapping })
   }
@@ -195,38 +189,20 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
-        {/* CompSync Connection */}
+        {/* CompSync Connection — simplified to share code */}
         <div className="settings-section">
           <div className="settings-section-title">CompSync Connection</div>
-          <div className="settings-grid">
+          <div className="settings-grid single">
             <div className="field">
-              <label>Tenant</label>
+              <label>Share Code</label>
               <input
                 type="text"
-                value={draft.compsync.tenant}
-                onChange={(e) => update('compsync', { tenant: e.target.value })}
-                placeholder="Tenant name or ID"
+                value={draft.compsync.shareCode}
+                onChange={(e) => update('compsync', { shareCode: e.target.value.toUpperCase() })}
+                placeholder="e.g. EMPWR-SPRING-26"
+                style={{ letterSpacing: '1px', fontWeight: 600 }}
               />
-            </div>
-            <div className="field">
-              <label>Plugin API Key</label>
-              <input
-                type="password"
-                value={draft.compsync.pluginApiKey}
-                onChange={(e) => update('compsync', { pluginApiKey: e.target.value })}
-                placeholder="csm_..."
-              />
-              <span className="hint">Generate in CompSync &gt; Settings &gt; Integrations</span>
-            </div>
-            <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label>Upload Endpoint (optional)</label>
-              <input
-                type="text"
-                value={draft.compsync.uploadEndpoint}
-                onChange={(e) => update('compsync', { uploadEndpoint: e.target.value })}
-                placeholder={`https://${draft.compsync.tenant || 'tenant'}.compsync.net`}
-              />
-              <span className="hint">Leave blank to auto-derive from tenant name</span>
+              <span className="hint">Enter the share code provided by your competition director. This replaces manual tenant/API key setup.</span>
             </div>
           </div>
         </div>
@@ -379,6 +355,18 @@ export default function Settings(): React.ReactElement {
                 <option value="1080p">Re-encode to 1080p H.264</option>
               </select>
             </div>
+            <div className="field">
+              <label>CPU Priority</label>
+              <select
+                value={draft.ffmpeg.cpuPriority}
+                onChange={(e) => update('ffmpeg', { cpuPriority: e.target.value as 'normal' | 'below-normal' | 'idle' })}
+              >
+                <option value="normal">Normal (full speed)</option>
+                <option value="below-normal">Below Normal (recommended — OBS gets priority)</option>
+                <option value="idle">Idle (slowest — minimal impact on OBS)</option>
+              </select>
+              <span className="hint">Lower priority prevents FFmpeg from affecting OBS/streaming performance.</span>
+            </div>
           </div>
         </div>
 
@@ -456,7 +444,6 @@ export default function Settings(): React.ReactElement {
               </div>
               <span className="hint">
                 Add this URL as a Browser Source in OBS (1920x1080, transparent background).
-                The overlay shows entry #, routine title, studio name, and dancers.
               </span>
             </div>
           </div>
@@ -470,7 +457,7 @@ export default function Settings(): React.ReactElement {
             { key: 'autoUploadAfterEncoding', label: 'Auto-upload after processing', desc: 'Queue uploads immediately after FFmpeg completes' },
             { key: 'autoEncodeRecordings', label: 'Auto-process recordings', desc: 'Run FFmpeg track split automatically after each recording' },
             { key: 'syncLowerThird', label: 'Sync lower third overlay', desc: 'Update overlay data when advancing routines' },
-            { key: 'confirmBeforeOverwrite', label: 'Confirm before overwrite', desc: 'Ask before re-recording a routine that already has files' },
+            { key: 'confirmBeforeOverwrite', label: 'Archive before re-record', desc: 'Move existing files to _archive folder when re-recording a routine' },
             { key: 'alwaysOnTop', label: 'Always on top', desc: 'Keep plugin window above other windows' },
           ].map(({ key, label, desc }) => (
             <div className="toggle-row" key={key}>

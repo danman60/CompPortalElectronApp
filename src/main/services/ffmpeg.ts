@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, ChildProcess, SpawnOptions } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import { FFmpegJob, FFmpegProgress, IPC_CHANNELS, EncodedFile } from '../../shared/types'
@@ -41,6 +41,49 @@ function getFFmpegPath(): string {
   // Last resort: assume on PATH
   logger.ffmpeg.warn('No bundled ffmpeg found, assuming ffmpeg is on PATH')
   return 'ffmpeg'
+}
+
+function getSpawnOptions(): SpawnOptions {
+  const settings = getSettings()
+  const priority = settings.ffmpeg.cpuPriority
+
+  const opts: SpawnOptions = { stdio: ['pipe', 'pipe', 'pipe'] }
+
+  // On Windows, use priority class flags
+  if (process.platform === 'win32' && priority !== 'normal') {
+    // Node.js spawn on Windows supports windowsHide + we use wmic to set priority after spawn
+    // But the cleanest way is using CREATE_SUSPENDED isn't available.
+    // Instead we'll use 'start /LOW' wrapper or set priority post-spawn.
+    // For simplicity, we spawn normally and set priority via child PID.
+    opts.windowsHide = true
+  }
+
+  return opts
+}
+
+/** Set process priority on Windows after spawn */
+function setPriority(pid: number): void {
+  const settings = getSettings()
+  if (process.platform !== 'win32' || settings.ffmpeg.cpuPriority === 'normal') return
+
+  const priorityMap: Record<string, string> = {
+    'below-normal': 'belownormal',
+    'idle': 'idle',
+  }
+  const level = priorityMap[settings.ffmpeg.cpuPriority]
+  if (!level) return
+
+  try {
+    // Use wmic to set priority (works without elevation)
+    const wmic = spawn('wmic', ['process', 'where', `ProcessId=${pid}`, 'CALL', 'setpriority', level], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    wmic.on('error', () => {}) // ignore errors
+    logger.ffmpeg.info(`Set FFmpeg PID ${pid} priority to ${level}`)
+  } catch {
+    logger.ffmpeg.warn(`Failed to set FFmpeg priority to ${level}`)
+  }
 }
 
 function sendProgress(progress: FFmpegProgress): void {
@@ -175,7 +218,13 @@ function runFFmpeg(job: FFmpegJob): Promise<void> {
 
     logger.ffmpeg.info(`FFmpeg command: ${ffmpegPath} ${args.join(' ')}`)
 
-    ffmpegProcess = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    const spawnOpts = getSpawnOptions()
+    ffmpegProcess = spawn(ffmpegPath, args, spawnOpts)
+
+    // Set CPU priority after spawn
+    if (ffmpegProcess.pid) {
+      setPriority(ffmpegProcess.pid)
+    }
 
     ffmpegProcess.stdout?.on('data', (data: Buffer) => {
       logger.ffmpeg.debug(`stdout: ${data.toString().trim()}`)

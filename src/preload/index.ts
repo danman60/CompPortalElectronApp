@@ -29,10 +29,17 @@ const api = {
   // Schedule
   scheduleLoadCSV: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_LOAD_CSV, filePath),
-  scheduleLoadAPI: (competitionId: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_LOAD_API, competitionId),
+  scheduleLoadShareCode: (shareCode: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_LOAD_SHARE_CODE, shareCode),
   scheduleGet: () => ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_GET),
   scheduleBrowseFile: () => ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_BROWSE_FILE),
+
+  // State
+  jumpToRoutine: (routineId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.STATE_JUMP_TO, routineId),
+  setRoutineNote: (routineId: string, note: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.STATE_SET_NOTE, routineId, note),
+  exportReport: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_EXPORT_REPORT),
 
   // Settings
   settingsGet: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),

@@ -29,6 +29,7 @@ export interface Routine {
   sizeCategory: string
   durationMinutes: number
   scheduledDay: string
+  scheduledTime?: string // e.g. "14:30" from schedule — for logging/offset calculation
   position: number
   status: RoutineStatus
   recordingStartedAt?: string // ISO timestamp
@@ -38,6 +39,7 @@ export interface Routine {
   photos?: PhotoMatch[]
   uploadProgress?: UploadProgress
   error?: string
+  notes?: string // operator notes (e.g. "wrong music", "re-do requested")
 }
 
 export interface EncodedFile {
@@ -99,6 +101,14 @@ export interface AudioMeterData {
   judges: number[] // dB per judge
 }
 
+// --- System Monitor ---
+
+export interface SystemStats {
+  cpuPercent: number // 0-100
+  diskFreeGB: number // GB free on output drive
+  diskTotalGB: number
+}
+
 // --- Settings ---
 
 export interface AppSettings {
@@ -108,10 +118,7 @@ export interface AppSettings {
     recordingFormat: 'mkv' | 'mp4' | 'flv'
   }
   compsync: {
-    tenant: string
-    pluginApiKey: string
-    competition: string
-    uploadEndpoint: string
+    shareCode: string // replaces tenant/apiKey/competition/uploadEndpoint
   }
   competition: {
     judgeCount: number // 1-4
@@ -126,6 +133,7 @@ export interface AppSettings {
   ffmpeg: {
     path: string // "(bundled)" or custom path
     processingMode: 'copy' | '720p' | '1080p'
+    cpuPriority: 'normal' | 'below-normal' | 'idle'
   }
   hotkeys: {
     toggleRecording: string
@@ -149,6 +157,7 @@ export interface AppSettings {
     confirmBeforeOverwrite: boolean
     alwaysOnTop: boolean
     zoomFactor: number
+    compactMode: boolean
   }
 }
 
@@ -181,6 +190,7 @@ export const IPC_CHANNELS = {
   // Schedule
   SCHEDULE_LOAD_CSV: 'schedule:load-csv',
   SCHEDULE_LOAD_API: 'schedule:load-api',
+  SCHEDULE_LOAD_SHARE_CODE: 'schedule:load-share-code',
   SCHEDULE_GET: 'schedule:get',
   SCHEDULE_BROWSE_FILE: 'schedule:browse-file',
 
@@ -188,6 +198,9 @@ export const IPC_CHANNELS = {
   STATE_GET: 'state:get',
   STATE_UPDATE: 'state:update',
   STATE_ROUTINE_UPDATE: 'state:routine-update',
+  STATE_JUMP_TO: 'state:jump-to',
+  STATE_SET_NOTE: 'state:set-note',
+  STATE_EXPORT_REPORT: 'state:export-report',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -225,6 +238,9 @@ export const IPC_CHANNELS = {
 
   // Upload
   UPLOAD_ALL: 'upload:all',
+
+  // System monitor
+  SYSTEM_STATS: 'system:stats',
 
   // App
   APP_TOGGLE_ALWAYS_ON_TOP: 'app:toggle-always-on-top',
@@ -352,10 +368,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     recordingFormat: 'mkv',
   },
   compsync: {
-    tenant: '',
-    pluginApiKey: '',
-    competition: '',
-    uploadEndpoint: '',
+    shareCode: '',
   },
   competition: {
     judgeCount: 3,
@@ -381,6 +394,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ffmpeg: {
     path: '(bundled)',
     processingMode: 'copy',
+    cpuPriority: 'below-normal',
   },
   hotkeys: {
     toggleRecording: 'F5',
@@ -404,5 +418,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     confirmBeforeOverwrite: true,
     alwaysOnTop: false,
     zoomFactor: 1.25,
+    compactMode: false,
   },
 }

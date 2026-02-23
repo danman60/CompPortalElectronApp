@@ -4,7 +4,6 @@ import fs from 'fs'
 import path from 'path'
 import { Competition, Routine } from '../../shared/types'
 import { logger } from '../logger'
-import { getSettings } from './settings'
 
 interface CSVRow {
   tenant_id?: string
@@ -21,6 +20,7 @@ interface CSVRow {
   size_category: string
   duration_minutes: string
   scheduled_day: string
+  scheduled_time?: string
   position: string
 }
 
@@ -38,6 +38,7 @@ function rowToRoutine(row: CSVRow, index: number): Routine {
     sizeCategory: row.size_category || '',
     durationMinutes: parseFloat(row.duration_minutes) || 3,
     scheduledDay: row.scheduled_day || '',
+    scheduledTime: row.scheduled_time || undefined,
     position: parseInt(row.position) || index + 1,
     status: 'pending',
   }
@@ -159,21 +160,38 @@ export function loadSchedule(filePath: string): Competition {
   throw new Error(`Unsupported file format: ${ext}`)
 }
 
-export async function loadFromAPI(competitionId: string): Promise<Competition> {
-  const settings = getSettings()
-  const apiKey = settings.compsync.pluginApiKey
-  const tenant = settings.compsync.tenant
+/** Resolve a share code to tenant + competition details */
+export async function resolveShareCode(shareCode: string): Promise<{
+  tenant: string
+  competitionId: string
+  apiBase: string
+  name: string
+  apiKey: string
+}> {
+  const code = shareCode.trim().toUpperCase()
+  logger.schedule.info(`Resolving share code: ${code}`)
 
-  if (!apiKey) throw new Error('No plugin API key configured')
-  if (!tenant) throw new Error('No tenant configured')
+  const response = await fetch(`https://api.compsync.net/plugin/resolve/${encodeURIComponent(code)}`)
 
-  const apiBase = settings.compsync.uploadEndpoint || `https://${tenant}.compsync.net`
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Share code resolution failed: ${response.status} ${text}`)
+  }
 
-  logger.schedule.info(`Loading schedule from API: ${apiBase}/api/plugin/schedule/${competitionId}`)
+  const data = await response.json()
+  logger.schedule.info(`Share code resolved: ${data.name} (${data.tenant})`)
+  return data
+}
 
-  const response = await fetch(`${apiBase}/api/plugin/schedule/${competitionId}`, {
+/** Load schedule via share code — resolves code then fetches schedule */
+export async function loadFromShareCode(shareCode: string): Promise<Competition> {
+  const resolved = await resolveShareCode(shareCode)
+
+  logger.schedule.info(`Loading schedule from ${resolved.apiBase}/api/plugin/schedule/${resolved.competitionId}`)
+
+  const response = await fetch(`${resolved.apiBase}/api/plugin/schedule/${resolved.competitionId}`, {
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${resolved.apiKey}`,
     },
   })
 
@@ -183,6 +201,12 @@ export async function loadFromAPI(competitionId: string): Promise<Competition> {
   }
 
   const data = await response.json()
-  logger.schedule.info(`Loaded ${data.routines.length} routines from API`)
+  logger.schedule.info(`Loaded ${data.routines.length} routines from share code`)
   return data as Competition
+}
+
+/** Legacy: load from API with explicit credentials (kept for backwards compat) */
+export async function loadFromAPI(competitionId: string): Promise<Competition> {
+  // This is now a no-op since we removed tenant/apiKey from settings
+  throw new Error('Direct API loading removed. Use a share code instead.')
 }

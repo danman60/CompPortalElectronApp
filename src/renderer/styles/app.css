@@ -10,3 +10,13 @@
   flex: 1;
   overflow: hidden;
 }
+
+/* Compact mode — narrower left panel, hide drag handle */
+.app-layout.compact .left-panel {
+  width: 220px;
+  min-width: 180px;
+}
+
+.app-layout.compact .drag-handle {
+  display: none;
+}

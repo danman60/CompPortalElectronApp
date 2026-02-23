@@ -31,6 +31,7 @@
 }
 
 .upload-table tbody tr:hover td { background: var(--bg-hover); }
+.upload-table tbody tr.current-row:hover td { background: rgba(99,102,241,0.12); }
 
 .entry-num { font-weight: 700; color: var(--accent); font-size: 11px; }
 .r-name { font-weight: 500; color: var(--text-primary); font-size: 11px; }
@@ -96,4 +97,49 @@
   background: var(--bg-hover);
   border-color: var(--accent);
   color: var(--text-primary);
+}
+
+/* Note editor */
+.note-btn {
+  padding: 1px 4px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: all 0.15s;
+}
+
+.note-btn:hover {
+  opacity: 1;
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+}
+
+.note-btn.has-note {
+  opacity: 1;
+  color: var(--warning);
+}
+
+.note-editor {
+  position: relative;
+}
+
+.note-editor textarea {
+  width: 160px;
+  padding: 4px 6px;
+  font-size: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  resize: none;
+  font-family: inherit;
+}
+
+.note-editor textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
 }

@@ -1,34 +1,64 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import LoadCompetition from './LoadCompetition'
 import '../styles/header.css'
 
+function SystemMonitor(): React.ReactElement | null {
+  const stats = useStore((s) => s.systemStats)
+  if (!stats) return null
+
+  const cpuColor = stats.cpuPercent > 95 ? 'var(--danger)' : stats.cpuPercent > 80 ? 'var(--warning)' : 'var(--text-muted)'
+  const diskColor = stats.diskFreeGB >= 0
+    ? (stats.diskFreeGB < 2 ? 'var(--danger)' : stats.diskFreeGB < 10 ? 'var(--warning)' : 'var(--text-muted)')
+    : 'var(--text-muted)'
+
+  return (
+    <div className="header-status" style={{ gap: '6px' }}>
+      <span className="si" style={{ color: cpuColor }}>
+        CPU {stats.cpuPercent}%
+      </span>
+      {stats.diskFreeGB >= 0 && (
+        <span className="si" style={{ color: diskColor }}>
+          Disk {stats.diskFreeGB}GB
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function Header(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
-  const settings = useStore((s) => s.settings)
-  const encodingCount = useStore((s) => s.encodingCount)
-  const uploadingCount = useStore((s) => s.uploadingCount)
+  const competition = useStore((s) => s.competition)
   const loadCompOpen = useStore((s) => s.loadCompOpen)
   const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const compactMode = useStore((s) => s.compactMode)
+  const setCompactMode = useStore((s) => s.setCompactMode)
   const popoverRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    function handleClick(e: MouseEvent): void {
+    function handleClickOutside(e: MouseEvent): void {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         setLoadCompOpen(false)
       }
     }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [setLoadCompOpen])
+    if (loadCompOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [loadCompOpen, setLoadCompOpen])
 
-  const obsDotClass =
-    obsState.connectionStatus === 'connected'
-      ? 'dot small connected'
-      : obsState.connectionStatus === 'error'
-        ? 'dot small error'
-        : 'dot small'
+  // Ctrl+Shift+C to toggle compact mode
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent): void {
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault()
+        setCompactMode(!useStore.getState().compactMode)
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [setCompactMode])
 
   async function handleProcessVideo(): Promise<void> {
     await window.api.ffmpegEncodeAll()
@@ -41,52 +71,58 @@ export default function Header(): React.ReactElement {
     }
   }
 
+  const obsColor =
+    obsState.connectionStatus === 'connected'
+      ? 'var(--success)'
+      : obsState.connectionStatus === 'connecting'
+        ? 'var(--warning)'
+        : 'var(--text-muted)'
+
   return (
     <div className="app-header">
       <div className="app-logo">
-        <span
-          className={
-            obsState.isRecording ? 'dot recording' : obsState.connectionStatus === 'connected' ? 'dot connected' : 'dot'
-          }
-        />
-        CompSync Media
+        {compactMode ? 'CS' : 'CompSync Media'}
       </div>
-      <div className="header-right">
-        <div className="header-status">
+
+      <div className="header-status">
+        <span className="si" style={{ color: obsColor }}>
+          OBS {obsState.connectionStatus === 'connected' ? 'ON' : 'OFF'}
+        </span>
+        {competition && (
           <span className="si">
-            <span className={obsDotClass} /> OBS
+            {competition.routines.length} routines
           </span>
-          <span className="si">
-            <span className={settings?.compsync.pluginApiKey ? 'dot small connected' : 'dot small'} /> API
-          </span>
-          {encodingCount > 0 && (
-            <span className="si">
-              <span className="dot small" style={{ background: 'var(--warning)' }} /> {encodingCount} encoding
-            </span>
-          )}
-          {uploadingCount > 0 && (
-            <span className="si">
-              <span className="dot small" style={{ background: 'var(--upload-blue)' }} /> {uploadingCount} uploading
-            </span>
-          )}
-        </div>
-        <div style={{ position: 'relative' }} ref={popoverRef}>
-          <button
-            className="load-comp-btn"
-            onClick={() => setLoadCompOpen(!loadCompOpen)}
-          >
-            Load Comp
+        )}
+      </div>
+
+      <SystemMonitor />
+
+      <div className="header-right" ref={popoverRef}>
+        <div style={{ position: 'relative' }}>
+          <button className="load-comp-btn" onClick={() => setLoadCompOpen(!loadCompOpen)}>
+            {compactMode ? 'Load' : 'Load Competition'}
           </button>
           {loadCompOpen && <LoadCompetition />}
         </div>
-        <button className="action-btn primary" onClick={handleProcessVideo}>
-          Process Video
-        </button>
-        <button className="action-btn" style={{ background: 'var(--upload-blue)', borderColor: 'var(--upload-blue)', color: 'white' }} onClick={() => window.api.uploadAll()}>
-          Upload All
-        </button>
-        <button className="action-btn photos" onClick={handleImportPhotos}>
-          Import Photos
+        {!compactMode && (
+          <>
+            <button className="action-btn primary" onClick={handleProcessVideo}>
+              Process Video
+            </button>
+            <button className="action-btn" style={{ background: 'var(--upload-blue)', borderColor: 'var(--upload-blue)', color: 'white' }} onClick={() => window.api.uploadAll()}>
+              Upload All
+            </button>
+            <button className="action-btn photos" onClick={handleImportPhotos}>
+              Import Photos
+            </button>
+          </>
+        )}
+        <button
+          className={`compact-toggle-btn${compactMode ? ' active' : ''}`}
+          onClick={() => setCompactMode(!compactMode)}
+          title={compactMode ? 'Switch to full mode (Ctrl+Shift+C)' : 'Switch to production mode (Ctrl+Shift+C)'}
+        >
+          {compactMode ? 'Full' : 'Compact'}
         </button>
         <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
           Settings

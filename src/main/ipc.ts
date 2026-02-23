@@ -12,6 +12,7 @@ import * as uploadService from './services/upload'
 import * as photoService from './services/photos'
 import * as overlay from './services/overlay'
 import * as wsHub from './services/wsHub'
+import * as systemMonitor from './services/systemMonitor'
 import { checkAndRecover } from './services/crashRecovery'
 import { logger } from './logger'
 
@@ -159,9 +160,9 @@ export function registerAllHandlers(): void {
     return comp
   })
 
-  safeHandle(IPC_CHANNELS.SCHEDULE_LOAD_API, async (competitionId: unknown) => {
-    logIPC(IPC_CHANNELS.SCHEDULE_LOAD_API, { competitionId })
-    const comp = await schedule.loadFromAPI(competitionId as string)
+  safeHandle(IPC_CHANNELS.SCHEDULE_LOAD_SHARE_CODE, async (shareCode: unknown) => {
+    logIPC(IPC_CHANNELS.SCHEDULE_LOAD_SHARE_CODE, { shareCode })
+    const comp = await schedule.loadFromShareCode(shareCode as string)
     stateService.setCompetition(comp)
     recording.broadcastFullState()
     return comp
@@ -183,6 +184,43 @@ export function registerAllHandlers(): void {
     })
     if (result.canceled) return null
     return result.filePaths[0]
+  })
+
+  // --- State ---
+  safeHandle(IPC_CHANNELS.STATE_JUMP_TO, async (routineId: unknown) => {
+    logIPC(IPC_CHANNELS.STATE_JUMP_TO, { routineId })
+    const routine = stateService.jumpToRoutine(routineId as string)
+    if (routine) {
+      recording.broadcastFullState()
+    }
+    return routine
+  })
+
+  safeHandle(IPC_CHANNELS.STATE_SET_NOTE, async (routineId: unknown, note: unknown) => {
+    logIPC(IPC_CHANNELS.STATE_SET_NOTE, { routineId })
+    stateService.setRoutineNote(routineId as string, note as string)
+    recording.broadcastFullState()
+  })
+
+  safeHandle(IPC_CHANNELS.STATE_EXPORT_REPORT, async () => {
+    logIPC(IPC_CHANNELS.STATE_EXPORT_REPORT)
+    const report = stateService.exportReport()
+    if (!report) return { error: 'No competition loaded' }
+
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return { error: 'No window' }
+
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Export Session Report',
+      defaultPath: `compsync-report-${new Date().toISOString().split('T')[0]}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+
+    if (result.canceled || !result.filePath) return { cancelled: true }
+
+    fs.writeFileSync(result.filePath, report, 'utf-8')
+    logger.app.info(`Report exported to ${result.filePath}`)
+    return { path: result.filePath }
   })
 
   // --- Settings ---
@@ -328,7 +366,6 @@ export function registerAllHandlers(): void {
 
   safeHandle(IPC_CHANNELS.APP_OPEN_PATH, async (filePath: unknown) => {
     const p = filePath as string
-    // Check if the path exists; if it's a file, open its parent folder
     const fsStat = await import('fs').then((m) => m.promises.stat(p).catch(() => null))
     if (fsStat) {
       if (fsStat.isFile()) {
@@ -337,7 +374,6 @@ export function registerAllHandlers(): void {
         await shell.openPath(p)
       }
     } else {
-      // Path doesn't exist — try parent directory
       const dir = require('path').dirname(p)
       const dirStat = await import('fs').then((m) => m.promises.stat(dir).catch(() => null))
       if (dirStat) {
@@ -376,7 +412,6 @@ export function registerAllHandlers(): void {
       newZoom = current
     }
     win.webContents.setZoomFactor(newZoom)
-    // Debounce save to settings
     if (zoomSaveTimer) clearTimeout(zoomSaveTimer)
     zoomSaveTimer = setTimeout(() => {
       settings.setSettings({ behavior: { ...settings.getSettings().behavior, zoomFactor: newZoom } })
@@ -421,7 +456,6 @@ export function registerAllHandlers(): void {
     const obsState = obs.getState()
     const comp = stateService.getCompetition()
 
-    // Read last 150 lines of log
     let logTail = '(no log file found)'
     try {
       const content = fs.readFileSync(logPath, 'utf-8')
@@ -459,6 +493,9 @@ export function registerAllHandlers(): void {
     logger.app.info('Diagnostics copied to clipboard')
     return { copied: true, length: diagnostics.length }
   })
+
+  // Start system monitor
+  systemMonitor.startMonitoring()
 
   logger.ipc.info('All IPC handlers registered')
 }

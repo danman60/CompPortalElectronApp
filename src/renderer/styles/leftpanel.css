@@ -6,3 +6,8 @@
   overflow-y: auto;
   flex-shrink: 0;
 }
+
+.left-panel.compact {
+  width: 280px;
+  min-width: 220px;
+}

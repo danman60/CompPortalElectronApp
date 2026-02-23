@@ -9,6 +9,7 @@ import './styles/app.css'
 
 export default function App(): React.ReactElement {
   const settingsOpen = useStore((s) => s.settingsOpen)
+  const compactMode = useStore((s) => s.compactMode)
   const initialized = useRef(false)
 
   // Ctrl+scroll zoom
@@ -50,7 +51,7 @@ export default function App(): React.ReactElement {
   }, [])
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout${compactMode ? ' compact' : ''}`}>
       <Header />
       <div className="main-split">
         <LeftPanel />

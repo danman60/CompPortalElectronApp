@@ -1,38 +1,42 @@
 import { create } from 'zustand'
 import type {
-  OBSState,
   Competition,
   Routine,
+  OBSState,
   AppSettings,
-  AudioMeterData,
-  AudioLevel,
   FFmpegProgress,
   UploadProgress,
+  SystemStats,
+  IPC_CHANNELS,
 } from '../../shared/types'
-import { IPC_CHANNELS } from '../../shared/types'
+
+interface FFmpegProgressMap {
+  [routineId: string]: FFmpegProgress
+}
 
 interface AppStore {
-  // OBS
-  obsState: OBSState
-  audioMeters: AudioMeterData
-  obsInputs: string[]
-
-  // Competition
+  // Data
   competition: Competition | null
   currentRoutine: Routine | null
   nextRoutine: Routine | null
   currentIndex: number
-  dayFilter: string
-  searchQuery: string
-
-  // Settings
   settings: AppSettings | null
+  obsState: OBSState
+  ffmpegProgress: FFmpegProgressMap
+
+  // UI state
   settingsOpen: boolean
   loadCompOpen: boolean
-
-  // Preview
+  dayFilter: string
+  searchQuery: string
   previewFrame: string | null // base64 data URL from OBS
   previewActive: boolean
+
+  // UI modes
+  compactMode: boolean
+
+  // System stats
+  systemStats: SystemStats | null
 
   // Status counts
   encodingCount: number
@@ -41,27 +45,32 @@ interface AppStore {
   photosPendingCount: number
 
   // Actions
-  setOBSState: (state: OBSState) => void
-  setAudioMeters: (data: AudioMeterData) => void
-  setOBSInputs: (inputs: string[]) => void
-  setCompetition: (comp: Competition | null) => void
-  setCurrentRoutine: (r: Routine | null) => void
-  setNextRoutine: (r: Routine | null) => void
-  setCurrentIndex: (i: number) => void
-  setDayFilter: (day: string) => void
-  setSearchQuery: (q: string) => void
-  setSettings: (s: AppSettings) => void
+  setCompetition: (comp: Competition) => void
+  setCurrentRoutine: (routine: Routine | null) => void
+  setNextRoutine: (routine: Routine | null) => void
+  setCurrentIndex: (index: number) => void
+  setSettings: (settings: AppSettings) => void
+  setOBSState: (state: Partial<OBSState>) => void
   setSettingsOpen: (open: boolean) => void
   setLoadCompOpen: (open: boolean) => void
   setPreviewFrame: (frame: string | null) => void
   setPreviewActive: (active: boolean) => void
+  setCompactMode: (compact: boolean) => void
+  setDayFilter: (filter: string) => void
+  setSearchQuery: (query: string) => void
+  setSystemStats: (stats: SystemStats) => void
   updateRoutine: (routineId: string, update: Partial<Routine>) => void
   updateFFmpegProgress: (progress: FFmpegProgress) => void
   updateUploadProgress: (routineId: string, progress: UploadProgress) => void
-  recalculateCounts: () => void
+  recalcCounts: () => void
 }
 
 export const useStore = create<AppStore>((set, get) => ({
+  competition: null,
+  currentRoutine: null,
+  nextRoutine: null,
+  currentIndex: 0,
+  settings: null,
   obsState: {
     connectionStatus: 'disconnected',
     isRecording: false,
@@ -69,45 +78,48 @@ export const useStore = create<AppStore>((set, get) => ({
     isReplayBufferActive: false,
     recordTimeSec: 0,
   },
-  audioMeters: { performance: -Infinity, judges: [-Infinity, -Infinity, -Infinity, -Infinity] },
-  obsInputs: [],
+  ffmpegProgress: {},
 
-  competition: null,
-  currentRoutine: null,
-  nextRoutine: null,
-  currentIndex: 0,
-  dayFilter: '',
-  searchQuery: '',
-
-  settings: null,
   settingsOpen: false,
   loadCompOpen: false,
-
+  dayFilter: '',
+  searchQuery: '',
   previewFrame: null,
   previewActive: false,
+
+  compactMode: false,
+
+  systemStats: null,
 
   encodingCount: 0,
   uploadingCount: 0,
   completeCount: 0,
   photosPendingCount: 0,
 
-  setOBSState: (obsState) => set({ obsState }),
-  setAudioMeters: (audioMeters) => set({ audioMeters }),
-  setOBSInputs: (obsInputs) => set({ obsInputs }),
   setCompetition: (competition) => {
     set({ competition })
-    get().recalculateCounts()
+    get().recalcCounts()
   },
   setCurrentRoutine: (currentRoutine) => set({ currentRoutine }),
   setNextRoutine: (nextRoutine) => set({ nextRoutine }),
   setCurrentIndex: (currentIndex) => set({ currentIndex }),
-  setDayFilter: (dayFilter) => set({ dayFilter }),
-  setSearchQuery: (searchQuery) => set({ searchQuery }),
-  setSettings: (settings) => set({ settings }),
+  setSettings: (settings) => {
+    set({ settings, compactMode: settings.behavior?.compactMode ?? false })
+  },
+  setOBSState: (partial) =>
+    set((s) => ({ obsState: { ...s.obsState, ...partial } })),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setLoadCompOpen: (loadCompOpen) => set({ loadCompOpen }),
   setPreviewFrame: (previewFrame) => set({ previewFrame }),
   setPreviewActive: (previewActive) => set({ previewActive }),
+  setCompactMode: (compactMode) => {
+    set({ compactMode })
+    // Persist to settings
+    window.api?.settingsSet({ behavior: { ...get().settings!.behavior, compactMode } }).catch(() => {})
+  },
+  setDayFilter: (dayFilter) => set({ dayFilter }),
+  setSearchQuery: (searchQuery) => set({ searchQuery }),
+  setSystemStats: (systemStats) => set({ systemStats }),
 
   updateRoutine: (routineId, update) => {
     const comp = get().competition
@@ -116,146 +128,89 @@ export const useStore = create<AppStore>((set, get) => ({
       r.id === routineId ? { ...r, ...update } : r,
     )
     set({ competition: { ...comp, routines } })
-    get().recalculateCounts()
+    get().recalcCounts()
   },
 
   updateFFmpegProgress: (progress) => {
-    const comp = get().competition
-    if (!comp) return
-    const routines = comp.routines.map((r) => {
-      if (r.id !== progress.routineId) return r
-      if (progress.state === 'done') return { ...r, status: 'encoded' as const }
-      if (progress.state === 'encoding') return { ...r, status: 'encoding' as const }
-      if (progress.state === 'error') return { ...r, status: 'failed' as const, error: progress.error }
-      return r
-    })
-    set({ competition: { ...comp, routines } })
-    get().recalculateCounts()
+    set((s) => ({
+      ffmpegProgress: { ...s.ffmpegProgress, [progress.routineId]: progress },
+    }))
   },
 
   updateUploadProgress: (routineId, progress) => {
-    const comp = get().competition
-    if (!comp) return
-    const routines = comp.routines.map((r) => {
-      if (r.id !== routineId) return r
-      const newStatus = progress.state === 'complete' ? 'uploaded' as const : 'uploading' as const
-      return { ...r, status: newStatus, uploadProgress: progress }
-    })
-    set({ competition: { ...comp, routines } })
-    get().recalculateCounts()
+    get().updateRoutine(routineId, { uploadProgress: progress })
   },
 
-  recalculateCounts: () => {
+  recalcCounts: () => {
     const comp = get().competition
     if (!comp) {
       set({ encodingCount: 0, uploadingCount: 0, completeCount: 0, photosPendingCount: 0 })
       return
     }
+    let encoding = 0,
+      uploading = 0,
+      complete = 0,
+      photos = 0
+    for (const r of comp.routines) {
+      if (r.status === 'encoding') encoding++
+      if (r.status === 'uploading') uploading++
+      if (r.status === 'uploaded' || r.status === 'confirmed') complete++
+      if (r.photos && r.photos.length > 0) photos += r.photos.length
+    }
     set({
-      encodingCount: comp.routines.filter((r) => r.status === 'encoding').length,
-      uploadingCount: comp.routines.filter((r) => r.status === 'uploading').length,
-      completeCount: comp.routines.filter((r) => r.status === 'uploaded' || r.status === 'confirmed').length,
-      photosPendingCount: comp.routines.filter(
-        (r) => (r.status === 'uploaded' || r.status === 'encoded') && (!r.photos || r.photos.length === 0),
-      ).length,
+      encodingCount: encoding,
+      uploadingCount: uploading,
+      completeCount: complete,
+      photosPendingCount: photos,
     })
   },
 }))
 
-// --- IPC Event Subscriptions ---
+// Initialize IPC listeners
 export function initIPCListeners(): void {
-  if (!window.api) return
-  const api = window.api
+  const { IPC_CHANNELS } = require('../../shared/types')
+  const store = useStore.getState
 
-  // OBS state updates
-  api.on(IPC_CHANNELS.OBS_STATE, (data: unknown) => {
-    useStore.getState().setOBSState(data as OBSState)
-  })
-
-  // Audio levels — throttle to rAF
-  let pendingLevels: AudioLevel[] | null = null
-  api.on(IPC_CHANNELS.OBS_AUDIO_LEVELS, (data: unknown) => {
-    pendingLevels = data as AudioLevel[]
-    if (!pendingLevels) return
-  })
-
-  // Process audio levels at animation frame rate (with threshold to avoid unnecessary re-renders)
-  let lastMeterData: AudioMeterData | null = null
-  const DB_THRESHOLD = 0.5 // Only update if any channel changed by more than 0.5 dB
-
-  function processAudioLevels(): void {
-    if (pendingLevels) {
-      const settings = useStore.getState().settings
-      if (settings) {
-        const mapping = settings.audioInputMapping
-        const meterData: AudioMeterData = {
-          performance: -Infinity,
-          judges: [-Infinity, -Infinity, -Infinity, -Infinity],
-        }
-
-        for (const level of pendingLevels) {
-          // Convert linear to dB
-          const maxLevel = Math.max(...level.levels, 0.00001)
-          const dB = 20 * Math.log10(maxLevel)
-
-          if (mapping.performance === level.inputName) {
-            meterData.performance = dB
-          }
-          for (let i = 0; i < 4; i++) {
-            if (mapping[`judge${i + 1}`] === level.inputName) {
-              meterData.judges[i] = dB
-            }
-          }
-        }
-
-        // Only update store if levels changed meaningfully
-        let changed = !lastMeterData
-        if (lastMeterData) {
-          if (Math.abs(meterData.performance - lastMeterData.performance) > DB_THRESHOLD) changed = true
-          for (let i = 0; i < 4; i++) {
-            if (Math.abs(meterData.judges[i] - lastMeterData.judges[i]) > DB_THRESHOLD) changed = true
-          }
-        }
-
-        if (changed) {
-          lastMeterData = meterData
-          useStore.getState().setAudioMeters(meterData)
-        }
-      }
-      pendingLevels = null
-    }
-    requestAnimationFrame(processAudioLevels)
-  }
-  requestAnimationFrame(processAudioLevels)
-
-  // Full state updates
-  api.on(IPC_CHANNELS.STATE_UPDATE, (data: unknown) => {
-    const { competition, currentRoutine, nextRoutine, currentIndex } = data as {
+  // State updates from main
+  window.api.on(IPC_CHANNELS.STATE_UPDATE, (data: unknown) => {
+    const d = data as {
       competition: Competition
       currentRoutine: Routine | null
       nextRoutine: Routine | null
       currentIndex: number
     }
-    const store = useStore.getState()
-    store.setCompetition(competition)
-    store.setCurrentRoutine(currentRoutine)
-    store.setNextRoutine(nextRoutine)
-    store.setCurrentIndex(currentIndex)
+    useStore.setState({
+      competition: d.competition,
+      currentRoutine: d.currentRoutine,
+      nextRoutine: d.nextRoutine,
+      currentIndex: d.currentIndex,
+    })
+    store().recalcCounts()
+  })
+
+  // OBS state
+  window.api.on(IPC_CHANNELS.OBS_STATE, (data: unknown) => {
+    useStore.setState({ obsState: data as OBSState })
   })
 
   // FFmpeg progress
-  api.on(IPC_CHANNELS.FFMPEG_PROGRESS, (data: unknown) => {
-    useStore.getState().updateFFmpegProgress(data as FFmpegProgress)
-  })
-
-  // Preview frames
-  api.on(IPC_CHANNELS.PREVIEW_FRAME, (data: unknown) => {
-    useStore.getState().setPreviewFrame(data as string)
+  window.api.on(IPC_CHANNELS.FFMPEG_PROGRESS, (data: unknown) => {
+    store().updateFFmpegProgress(data as FFmpegProgress)
   })
 
   // Upload progress
-  api.on(IPC_CHANNELS.UPLOAD_PROGRESS, (data: unknown) => {
-    const { routineId, progress } = data as { routineId: string; progress: UploadProgress }
-    useStore.getState().updateUploadProgress(routineId, progress)
+  window.api.on(IPC_CHANNELS.UPLOAD_PROGRESS, (data: unknown) => {
+    const d = data as { routineId: string; progress: UploadProgress }
+    store().updateUploadProgress(d.routineId, d.progress)
+  })
+
+  // Preview frame
+  window.api.on(IPC_CHANNELS.PREVIEW_FRAME, (data: unknown) => {
+    useStore.setState({ previewFrame: data as string })
+  })
+
+  // System stats
+  window.api.on(IPC_CHANNELS.SYSTEM_STATS, (data: unknown) => {
+    useStore.setState({ systemStats: data as SystemStats })
   })
 }

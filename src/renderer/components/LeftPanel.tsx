@@ -8,13 +8,15 @@ import OverlayControls from './OverlayControls'
 import '../styles/leftpanel.css'
 
 export default function LeftPanel(): React.ReactElement {
+  const compactMode = useStore((s) => s.compactMode)
+
   return (
-    <div className="left-panel">
-      <PreviewPanel />
+    <div className={`left-panel${compactMode ? ' compact' : ''}`}>
+      {!compactMode && <PreviewPanel />}
       <CurrentRoutine />
-      <AudioMeters />
+      {!compactMode && <AudioMeters />}
       <Controls />
-      <OverlayControls />
+      {!compactMode && <OverlayControls />}
     </div>
   )
 }
