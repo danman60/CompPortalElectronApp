@@ -3,7 +3,8 @@ import path from 'path'
 import * as obs from './obs'
 import * as state from './state'
 import * as ffmpegService from './ffmpeg'
-import * as lowerThird from './lowerThird'
+import * as overlay from './overlay'
+import * as wsHub from './wsHub'
 import * as uploadService from './upload'
 import { getSettings } from './settings'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
@@ -31,14 +32,9 @@ function scheduleAutoFire(): void {
   if (!autoFireEnabled) return
   if (autoFireTimer) clearTimeout(autoFireTimer)
   autoFireTimer = setTimeout(() => {
-    const settings = getSettings()
-    if (settings.lowerThird.autoHideSeconds > 0) {
-      lowerThird.fireWithAutoHide(settings.lowerThird.autoHideSeconds)
-    } else {
-      lowerThird.fire()
-    }
+    overlay.fireLowerThird()
     autoFireTimer = null
-    logger.app.info('Lower third auto-fired (3s delay)')
+    logger.app.info('Overlay lower third auto-fired (3s delay)')
   }, 3000)
 }
 
@@ -194,14 +190,18 @@ export async function next(): Promise<void> {
     return
   }
 
-  // Update lower third data
+  // Update overlay data
   if (settings.behavior.syncLowerThird) {
-    lowerThird.updateLowerThird({
+    const comp = state.getCompetition()
+    const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
+    overlay.updateRoutineData({
       entryNumber: nextRoutine.entryNumber,
-      routineName: nextRoutine.routineTitle,
-      dancers: nextRoutine.dancers.split(',').map((d) => d.trim()),
+      routineTitle: nextRoutine.routineTitle,
+      dancers: nextRoutine.dancers,
       studioName: nextRoutine.studioName,
       category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
+      current: state.getCurrentRoutineIndex() + 1,
+      total: visibleCount,
     })
   }
 
@@ -220,6 +220,52 @@ export async function next(): Promise<void> {
   }
 
   broadcastFullState()
+}
+
+export async function nextFull(): Promise<void> {
+  const settings = getSettings()
+  const obsState = obs.getState()
+
+  if (obsState.isRecording && obsState.connectionStatus === 'connected') {
+    try {
+      await obs.stopRecord()
+    } catch (err) {
+      logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  const nextRoutine = state.advanceToNext()
+  if (!nextRoutine) {
+    logger.app.info('nextFull: no more routines')
+    return
+  }
+
+  const comp = state.getCompetition()
+  const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
+  overlay.updateRoutineData({
+    entryNumber: nextRoutine.entryNumber,
+    routineTitle: nextRoutine.routineTitle,
+    dancers: nextRoutine.dancers,
+    studioName: nextRoutine.studioName,
+    category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
+    current: state.getCurrentRoutineIndex() + 1,
+    total: visibleCount,
+  })
+
+  if (obsState.connectionStatus === 'connected') {
+    try {
+      await obs.startRecord()
+    } catch (err) {
+      logger.app.error('nextFull: start recording failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  setTimeout(() => {
+    overlay.fireLowerThird()
+  }, 5000)
+
+  broadcastFullState()
+  logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
 }
 
 export async function prev(): Promise<void> {
@@ -242,6 +288,8 @@ function broadcastFullState(): void {
     nextRoutine: nextR,
     currentIndex: state.getCurrentRoutineIndex(),
   })
+
+  wsHub.broadcastState()
 }
 
 export { broadcastFullState }
