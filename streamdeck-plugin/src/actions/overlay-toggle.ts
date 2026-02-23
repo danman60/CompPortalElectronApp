@@ -8,7 +8,6 @@ export class OverlayLowerThirdAction extends SingletonAction {
     conn.onState(async (state) => {
       const img = svg.overlayToggle('LT', state.overlay.lowerThird.visible)
       await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(img).toString('base64')}`)
-      await ev.action.setState(state.overlay.lowerThird.visible ? 1 : 0)
     })
   }
   override async onKeyDown(_ev: KeyDownEvent): Promise<void> {
@@ -22,7 +21,6 @@ export class OverlayCounterAction extends SingletonAction {
     conn.onState(async (state) => {
       const img = svg.overlayToggle('CTR', state.overlay.counter.visible)
       await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(img).toString('base64')}`)
-      await ev.action.setState(state.overlay.counter.visible ? 1 : 0)
     })
   }
   override async onKeyDown(_ev: KeyDownEvent): Promise<void> {
@@ -36,7 +34,6 @@ export class OverlayClockAction extends SingletonAction {
     conn.onState(async (state) => {
       const img = svg.overlayToggle('CLK', state.overlay.clock.visible)
       await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(img).toString('base64')}`)
-      await ev.action.setState(state.overlay.clock.visible ? 1 : 0)
     })
   }
   override async onKeyDown(_ev: KeyDownEvent): Promise<void> {
@@ -50,7 +47,6 @@ export class OverlayLogoAction extends SingletonAction {
     conn.onState(async (state) => {
       const img = svg.overlayToggle('LOGO', state.overlay.logo.visible)
       await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(img).toString('base64')}`)
-      await ev.action.setState(state.overlay.logo.visible ? 1 : 0)
     })
   }
   override async onKeyDown(_ev: KeyDownEvent): Promise<void> {

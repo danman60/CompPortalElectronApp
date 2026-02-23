@@ -8,6 +8,7 @@ export default {
     format: 'es',
     sourcemap: true,
   },
+  external: ['ws'],
   plugins: [
     resolve(),
     typescript(),
