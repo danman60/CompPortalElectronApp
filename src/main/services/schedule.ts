@@ -171,7 +171,7 @@ export async function resolveShareCode(shareCode: string): Promise<{
   const code = shareCode.trim().toUpperCase()
   logger.schedule.info(`Resolving share code: ${code}`)
 
-  const response = await fetch(`https://api.compsync.net/plugin/resolve/${encodeURIComponent(code)}`)
+  const response = await fetch(`https://www.compsync.net/api/plugin/resolve/${encodeURIComponent(code)}`)
 
   if (!response.ok) {
     const text = await response.text()
