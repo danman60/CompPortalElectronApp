@@ -160,14 +160,29 @@ export function loadSchedule(filePath: string): Competition {
   throw new Error(`Unsupported file format: ${ext}`)
 }
 
-/** Resolve a share code to tenant + competition details */
-export async function resolveShareCode(shareCode: string): Promise<{
+/** Resolved connection data — stored after share code resolution for use by upload service */
+export interface ResolvedConnection {
   tenant: string
   competitionId: string
   apiBase: string
   name: string
   apiKey: string
-}> {
+}
+
+let resolvedConnection: ResolvedConnection | null = null
+
+/** Get the current resolved connection (from share code or null if offline/CSV) */
+export function getResolvedConnection(): ResolvedConnection | null {
+  return resolvedConnection
+}
+
+/** Clear resolved connection (e.g. when loading a new competition) */
+export function clearResolvedConnection(): void {
+  resolvedConnection = null
+}
+
+/** Resolve a share code to tenant + competition details */
+export async function resolveShareCode(shareCode: string): Promise<ResolvedConnection> {
   const code = shareCode.trim().toUpperCase()
   logger.schedule.info(`Resolving share code: ${code}`)
 
@@ -180,6 +195,9 @@ export async function resolveShareCode(shareCode: string): Promise<{
 
   const data = await response.json()
   logger.schedule.info(`Share code resolved: ${data.name} (${data.tenant})`)
+
+  // Store for use by upload service
+  resolvedConnection = data
   return data
 }
 

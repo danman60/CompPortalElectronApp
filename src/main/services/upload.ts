@@ -6,7 +6,7 @@ import { URL } from 'url'
 import { IPC_CHANNELS, UploadProgress, Routine } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
-import { getSettings } from './settings'
+import { getResolvedConnection } from './schedule'
 
 interface UploadJob {
   routineId: string
@@ -37,19 +37,14 @@ function sendProgress(routineId: string, progress: UploadProgress): void {
   sendToRenderer(IPC_CHANNELS.UPLOAD_PROGRESS, { routineId, progress })
 }
 
-function getApiBase(): string {
-  const settings = getSettings()
-  if (settings.compsync.uploadEndpoint) {
-    return settings.compsync.uploadEndpoint
-  }
-  const tenant = settings.compsync.tenant
-  if (!tenant) throw new Error('No tenant configured')
-  return `https://${tenant}.compsync.net`
+function getConnection(): { apiBase: string; apiKey: string; competitionId: string } {
+  const conn = getResolvedConnection()
+  if (!conn) throw new Error('No active connection. Load a competition via share code first.')
+  return { apiBase: conn.apiBase, apiKey: conn.apiKey, competitionId: conn.competitionId }
 }
 
 export function enqueueRoutine(routine: Routine): void {
-  const settings = getSettings()
-  const competitionId = settings.compsync.competition
+  const { competitionId } = getConnection()
 
   if (!routine.encodedFiles) return
 
@@ -219,12 +214,7 @@ async function getSignedUploadUrl(
   filename: string,
   contentType: string,
 ): Promise<{ signedUrl: string; storagePath: string }> {
-  const settings = getSettings()
-  const apiKey = settings.compsync.pluginApiKey
-
-  if (!apiKey) throw new Error('No plugin API key configured')
-
-  const apiBase = getApiBase()
+  const { apiBase, apiKey } = getConnection()
   const response = await fetch(`${apiBase}/api/plugin/upload-url`, {
     method: 'POST',
     headers: {
@@ -320,9 +310,7 @@ function uploadFileToSignedUrl(
 async function callPluginComplete(
   state: RoutineUploadState,
 ): Promise<void> {
-  const settings = getSettings()
-  const apiKey = settings.compsync.pluginApiKey
-  const apiBase = getApiBase()
+  const { apiBase, apiKey } = getConnection()
 
   const body = {
     entryId: state.entryId,
