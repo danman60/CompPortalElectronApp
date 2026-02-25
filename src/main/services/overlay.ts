@@ -192,7 +192,7 @@ function buildOverlayHTML(): string {
   .logo.visible { opacity: 1; }
   .logo img { max-height: 60px; max-width: 200px; border-radius: 6px; }
   .clock {
-    position: absolute; bottom: 30px; left: 40px;
+    position: absolute; top: 130px; right: 40px;
     opacity: 0; transition: opacity 0.4s ease;
   }
   .clock.visible { opacity: 1; }
@@ -201,6 +201,7 @@ function buildOverlayHTML(): string {
     border: 1px solid rgba(102, 126, 234, 0.3);
     border-radius: 8px; padding: 8px 16px;
     backdrop-filter: blur(8px);
+    text-align: center; min-width: 120px;
   }
   .clock-time {
     font-size: 22px; font-weight: 600; color: #c0c0e0;

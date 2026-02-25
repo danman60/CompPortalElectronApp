@@ -111,6 +111,8 @@ async function processNext(): Promise<void> {
   const job = queue.shift()!
 
   logger.ffmpeg.info(`Processing routine ${job.routineId}: ${job.inputPath}`)
+  state.updateRoutineStatus(job.routineId, 'encoding')
+  broadcastFullState()
   sendProgress({
     routineId: job.routineId,
     state: 'encoding',
@@ -182,46 +184,89 @@ async function processNext(): Promise<void> {
   processNext()
 }
 
-function runFFmpeg(job: FFmpegJob): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const ffmpegPath = getFFmpegPath()
+async function runFFmpeg(job: FFmpegJob): Promise<void> {
+  const ffmpegPath = getFFmpegPath()
 
-    // Ensure output directory exists
-    if (!fs.existsSync(job.outputDir)) {
-      fs.mkdirSync(job.outputDir, { recursive: true })
-    }
+  // Ensure output directory exists
+  if (!fs.existsSync(job.outputDir)) {
+    fs.mkdirSync(job.outputDir, { recursive: true })
+  }
 
-    // Build args: single command, multiple outputs
-    const args: string[] = ['-y', '-i', job.inputPath]
+  if (job.processingMode === 'smart') {
+    await runSmartEncode(job, ffmpegPath)
+    return
+  }
 
-    // Performance track (track 0 = video + audio track 0)
+  // Build args: single command, multiple outputs
+  const args: string[] = ['-y', '-i', job.inputPath]
+
+  if (job.processingMode === '720p') {
+    args.push(...buildReencodeArgs(job, '1280:720').slice(3)) // skip -y -i input
+  } else if (job.processingMode === '1080p') {
+    args.push(...buildReencodeArgs(job, '1920:1080').slice(3))
+  } else {
+    // Copy mode
     const perfOutput = path.join(job.outputDir, 'performance.mp4')
     args.push('-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', perfOutput)
-
-    // Judge tracks
     for (let i = 1; i <= job.judgeCount; i++) {
       const judgeOutput = path.join(job.outputDir, `judge${i}_commentary.mp4`)
       args.push('-map', '0:v:0', '-map', `0:a:${i}`, '-c', 'copy', judgeOutput)
     }
+  }
 
-    // If re-encoding is selected, modify the args
-    if (job.processingMode === '720p') {
-      // Override copy with re-encode — rebuild args
-      const reencodeArgs = buildReencodeArgs(job, '1280:720')
-      args.length = 0
-      args.push(...reencodeArgs)
-    } else if (job.processingMode === '1080p') {
-      const reencodeArgs = buildReencodeArgs(job, '1920:1080')
-      args.length = 0
-      args.push(...reencodeArgs)
+  await spawnFFmpeg(ffmpegPath, args)
+}
+
+/** Smart encode: encode video once, then mux with each audio track */
+async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void> {
+  const tempVideo = path.join(job.outputDir, '_temp_video.mp4')
+
+  try {
+    // Step 1: Encode video once (no audio)
+    logger.ffmpeg.info('Smart encode step 1: encoding video...')
+    await spawnFFmpeg(ffmpegPath, [
+      '-y', '-i', job.inputPath,
+      '-map', '0:v:0',
+      '-an',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      tempVideo,
+    ])
+
+    // Step 2: Mux encoded video + each audio track
+    logger.ffmpeg.info('Smart encode step 2: muxing audio tracks...')
+
+    // Performance (audio track 0)
+    const perfOutput = path.join(job.outputDir, 'performance.mp4')
+    await spawnFFmpeg(ffmpegPath, [
+      '-y', '-i', tempVideo, '-i', job.inputPath,
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+      perfOutput,
+    ])
+
+    // Judge tracks
+    for (let i = 1; i <= job.judgeCount; i++) {
+      const judgeOutput = path.join(job.outputDir, `judge${i}_commentary.mp4`)
+      await spawnFFmpeg(ffmpegPath, [
+        '-y', '-i', tempVideo, '-i', job.inputPath,
+        '-map', '0:v:0', '-map', `1:a:${i}`,
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+        judgeOutput,
+      ])
     }
+  } finally {
+    // Clean up temp video
+    try { fs.unlinkSync(tempVideo) } catch {}
+  }
+}
 
+function spawnFFmpeg(ffmpegPath: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
     logger.ffmpeg.info(`FFmpeg command: ${ffmpegPath} ${args.join(' ')}`)
 
     const spawnOpts = getSpawnOptions()
     ffmpegProcess = spawn(ffmpegPath, args, spawnOpts)
 
-    // Set CPU priority after spawn
     if (ffmpegProcess.pid) {
       setPriority(ffmpegProcess.pid)
     }

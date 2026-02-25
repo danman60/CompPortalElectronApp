@@ -1,13 +1,15 @@
 import { create } from 'zustand'
-import type {
-  Competition,
-  Routine,
-  OBSState,
-  AppSettings,
-  FFmpegProgress,
-  UploadProgress,
-  SystemStats,
+import {
   IPC_CHANNELS,
+  type Competition,
+  type Routine,
+  type OBSState,
+  type AppSettings,
+  type FFmpegProgress,
+  type UploadProgress,
+  type SystemStats,
+  type AudioMeterData,
+  type AudioLevel,
 } from '../../shared/types'
 
 interface FFmpegProgressMap {
@@ -34,6 +36,9 @@ interface AppStore {
 
   // UI modes
   compactMode: boolean
+
+  // Audio meters
+  audioMeters: AudioMeterData
 
   // System stats
   systemStats: SystemStats | null
@@ -88,6 +93,8 @@ export const useStore = create<AppStore>((set, get) => ({
   previewActive: false,
 
   compactMode: false,
+
+  audioMeters: { performance: -Infinity, judges: [] },
 
   systemStats: null,
 
@@ -168,7 +175,6 @@ export const useStore = create<AppStore>((set, get) => ({
 
 // Initialize IPC listeners
 export function initIPCListeners(): void {
-  const { IPC_CHANNELS } = require('../../shared/types')
   const store = useStore.getState
 
   // State updates from main
@@ -212,5 +218,30 @@ export function initIPCListeners(): void {
   // System stats
   window.api.on(IPC_CHANNELS.SYSTEM_STATS, (data: unknown) => {
     useStore.setState({ systemStats: data as SystemStats })
+  })
+
+  // Audio levels → AudioMeterData
+  window.api.on(IPC_CHANNELS.OBS_AUDIO_LEVELS, (data: unknown) => {
+    const levels = data as AudioLevel[]
+    const settings = store().settings
+    const mapping = settings?.audioInputMapping
+    if (!mapping) return
+
+    const findDB = (role: string): number => {
+      const inputName = mapping[role]
+      if (!inputName) return -Infinity
+      const src = levels.find((l) => l.inputName === inputName)
+      if (!src || !src.levels.length) return -Infinity
+      const peak = Math.max(...src.levels)
+      return peak > 0 ? 20 * Math.log10(peak) : -Infinity
+    }
+
+    const judgeCount = settings?.competition.judgeCount ?? 3
+    useStore.setState({
+      audioMeters: {
+        performance: findDB('performance'),
+        judges: Array.from({ length: judgeCount }, (_, i) => findDB(`judge${i + 1}`)),
+      },
+    })
   })
 }

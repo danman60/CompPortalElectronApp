@@ -9,6 +9,7 @@ export type RoutineStatus =
   | 'skipped'
   | 'recording'
   | 'recorded'
+  | 'queued'
   | 'encoding'
   | 'encoded'
   | 'uploading'
@@ -132,7 +133,7 @@ export interface AppSettings {
   }
   ffmpeg: {
     path: string // "(bundled)" or custom path
-    processingMode: 'copy' | '720p' | '1080p'
+    processingMode: 'copy' | 'smart' | '720p' | '1080p'
     cpuPriority: 'normal' | 'below-normal' | 'idle'
   }
   hotkeys: {
@@ -267,7 +268,7 @@ export interface FFmpegJob {
   outputDir: string
   judgeCount: number
   trackMapping: Record<string, string>
-  processingMode: 'copy' | '720p' | '1080p'
+  processingMode: 'copy' | 'smart' | '720p' | '1080p'
 }
 
 export interface FFmpegProgress {
@@ -393,7 +394,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   ffmpeg: {
     path: '(bundled)',
-    processingMode: 'copy',
+    processingMode: 'smart',
     cpuPriority: 'below-normal',
   },
   hotkeys: {

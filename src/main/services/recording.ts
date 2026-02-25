@@ -7,9 +7,13 @@ import * as overlay from './overlay'
 import * as wsHub from './wsHub'
 import * as uploadService from './upload'
 import { getSettings } from './settings'
+import * as schedule from './schedule'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
+
+// --- Active recording tracking ---
+let activeRecordingRoutineId: string | null = null
 
 // --- Auto-fire lower third ---
 let autoFireEnabled = false
@@ -71,6 +75,15 @@ function buildFileName(routine: Routine): string {
 function getRoutineOutputDir(routine: Routine): string {
   const settings = getSettings()
   const fileName = buildFileName(routine)
+  const conn = schedule.getResolvedConnection()
+
+  if (conn) {
+    // Tenant/CompName/Entry# structure
+    const tenant = conn.tenant.replace(/[<>:"/\\|?*]/g, '_')
+    const compName = conn.name.replace(/[<>:"/\\|?*]/g, '_')
+    return path.join(settings.fileNaming.outputDirectory, tenant, compName, fileName)
+  }
+
   return path.join(settings.fileNaming.outputDirectory, fileName)
 }
 
@@ -104,7 +117,14 @@ export async function handleRecordingStopped(
   outputPath: string,
   timestamp: string,
 ): Promise<void> {
-  const routine = state.getCurrentRoutine()
+  const routineId = activeRecordingRoutineId
+  activeRecordingRoutineId = null
+
+  const comp = state.getCompetition()
+  const routine = routineId
+    ? comp?.routines.find((r) => r.id === routineId) ?? null
+    : state.getCurrentRoutine()
+
   if (!routine) {
     logger.app.warn('Recording stopped but no current routine')
     return
@@ -176,7 +196,8 @@ export async function handleRecordingStopped(
 
     // Auto-encode if enabled
     if (settings.behavior.autoEncodeRecordings) {
-      state.updateRoutineStatus(routine.id, 'encoding')
+      const queueBusy = ffmpegService.getQueueLength() > 0
+      state.updateRoutineStatus(routine.id, queueBusy ? 'queued' : 'encoding')
       broadcastFullState()
       ffmpegService.enqueueJob({
         routineId: routine.id,
@@ -198,6 +219,8 @@ export async function handleRecordingStopped(
 export async function handleRecordingStarted(timestamp: string): Promise<void> {
   const routine = state.getCurrentRoutine()
   if (!routine) return
+
+  activeRecordingRoutineId = routine.id
 
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,
@@ -329,10 +352,28 @@ export async function prev(): Promise<void> {
   broadcastFullState()
 }
 
+function syncOverlayFromCurrent(): void {
+  const current = state.getCurrentRoutine()
+  if (!current) return
+  const comp = state.getCompetition()
+  const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
+  overlay.updateRoutineData({
+    entryNumber: current.entryNumber,
+    routineTitle: current.routineTitle,
+    dancers: current.dancers,
+    studioName: current.studioName,
+    category: `${current.ageGroup} ${current.category}`,
+    current: state.getCurrentRoutineIndex() + 1,
+    total: visibleCount,
+  })
+}
+
 function broadcastFullState(): void {
   const competition = state.getCompetition()
   const current = state.getCurrentRoutine()
   const nextR = state.getNextRoutine()
+
+  syncOverlayFromCurrent()
 
   sendToRenderer(IPC_CHANNELS.STATE_UPDATE, {
     competition,

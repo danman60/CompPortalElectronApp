@@ -348,11 +348,12 @@ export default function Settings(): React.ReactElement {
               <label>Processing</label>
               <select
                 value={draft.ffmpeg.processingMode}
-                onChange={(e) => update('ffmpeg', { processingMode: e.target.value as 'copy' | '720p' | '1080p' })}
+                onChange={(e) => update('ffmpeg', { processingMode: e.target.value as 'copy' | 'smart' | '720p' | '1080p' })}
               >
-                <option value="copy">Stream copy (fast, no re-encode)</option>
-                <option value="720p">Re-encode to 720p H.264</option>
-                <option value="1080p">Re-encode to 1080p H.264</option>
+                <option value="copy">Stream copy (fast, large files)</option>
+                <option value="smart">Smart encode (recommended — smaller files)</option>
+                <option value="720p">Re-encode to 720p (smallest, slow)</option>
+                <option value="1080p">Re-encode to 1080p (small, slow)</option>
               </select>
             </div>
             <div className="field">

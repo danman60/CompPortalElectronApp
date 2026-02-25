@@ -13,6 +13,8 @@ function statusToLabel(status: RoutineStatus): { text: string; className: string
       return { text: 'LIVE', className: 'recording' }
     case 'recorded':
       return { text: 'Recorded', className: 'processing' }
+    case 'queued':
+      return { text: 'Queued', className: 'waiting' }
     case 'encoding':
       return { text: 'Encoding', className: 'processing' }
     case 'encoded':
@@ -138,6 +140,7 @@ export default function RoutineTable(): React.ReactElement {
   const dayFilter = useStore((s) => s.dayFilter)
   const searchQuery = useStore((s) => s.searchQuery)
   const compactMode = useStore((s) => s.compactMode)
+  const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
 
   let routines = competition?.routines ?? []
@@ -158,6 +161,7 @@ export default function RoutineTable(): React.ReactElement {
   }
 
   async function handleJumpTo(routine: Routine): Promise<void> {
+    if (obsState.isRecording) return
     await window.api.jumpToRoutine(routine.id)
   }
 
@@ -196,7 +200,7 @@ export default function RoutineTable(): React.ReactElement {
                 className={isCurrent ? 'current-row' : ''}
                 onClick={() => handleJumpTo(routine)}
                 style={{
-                  cursor: 'pointer',
+                  cursor: obsState.isRecording ? 'not-allowed' : 'pointer',
                   ...(isLive
                     ? { background: 'rgba(239,68,68,0.06)', borderLeft: '3px solid var(--recording)' }
                     : {}),
