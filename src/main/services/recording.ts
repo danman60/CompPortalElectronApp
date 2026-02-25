@@ -72,19 +72,29 @@ function buildFileName(routine: Routine): string {
   return name
 }
 
-function getRoutineOutputDir(routine: Routine): string {
+function sanitize(s: string): string {
+  return s.replace(/[<>:"/\\|?*]/g, '_').trim()
+}
+
+function getRoutineOutputDir(routine: Routine, obsOutputPath?: string): string {
   const settings = getSettings()
-  const fileName = buildFileName(routine)
   const conn = schedule.getResolvedConnection()
 
+  // Base directory: explicit setting > OBS recording dir
+  let baseDir = settings.fileNaming.outputDirectory
+  if (!baseDir && obsOutputPath) {
+    baseDir = path.dirname(obsOutputPath)
+  }
+  if (!baseDir) return ''
+
+  // Build subfolder: ShareCode/Entry# when using share code, else pattern-based
   if (conn) {
-    // Tenant/CompName/Entry# structure
-    const tenant = conn.tenant.replace(/[<>:"/\\|?*]/g, '_')
-    const compName = conn.name.replace(/[<>:"/\\|?*]/g, '_')
-    return path.join(settings.fileNaming.outputDirectory, tenant, compName, fileName)
+    const shareCode = sanitize(conn.name)
+    const entry = sanitize(routine.entryNumber || buildFileName(routine))
+    return path.join(baseDir, shareCode, entry)
   }
 
-  return path.join(settings.fileNaming.outputDirectory, fileName)
+  return path.join(baseDir, buildFileName(routine))
 }
 
 async function archiveExistingFiles(routineDir: string): Promise<void> {
@@ -158,13 +168,12 @@ export async function handleRecordingStopped(
 
   const settings = getSettings()
 
-  if (!settings.fileNaming.outputDirectory) {
-    logger.app.warn('No output directory set — skipping file rename/organization')
+  const routineDir = getRoutineOutputDir(routine, outputPath)
+  if (!routineDir) {
+    logger.app.warn('No output directory available — skipping file organization')
     broadcastFullState()
     return
   }
-
-  const routineDir = getRoutineOutputDir(routine)
   const fileName = buildFileName(routine)
 
   logger.app.info(`Routine dir: ${routineDir}`)
@@ -192,7 +201,7 @@ export async function handleRecordingStopped(
     const fileSizeMB = (fs.statSync(newPath).size / (1024 * 1024)).toFixed(1)
     logger.app.info(`Renamed: ${outputPath} → ${newPath} (${fileSizeMB} MB)`)
 
-    state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath })
+    state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath, outputDir: routineDir })
 
     // Auto-encode if enabled
     if (settings.behavior.autoEncodeRecordings) {

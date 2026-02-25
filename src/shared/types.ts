@@ -36,6 +36,7 @@ export interface Routine {
   recordingStartedAt?: string // ISO timestamp
   recordingStoppedAt?: string // ISO timestamp
   outputPath?: string // path to renamed MKV
+  outputDir?: string // routine folder path
   encodedFiles?: EncodedFile[]
   photos?: PhotoMatch[]
   uploadProgress?: UploadProgress

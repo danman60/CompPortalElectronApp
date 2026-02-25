@@ -16,7 +16,7 @@ export default function LeftPanel(): React.ReactElement {
       <CurrentRoutine />
       {!compactMode && <AudioMeters />}
       <Controls />
-      {!compactMode && <OverlayControls />}
+      <OverlayControls compact={compactMode} />
     </div>
   )
 }

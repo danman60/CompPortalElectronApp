@@ -28,6 +28,10 @@ export default function Controls(): React.ReactElement {
     try { await window.api.recordingNext() } catch { /* handled server-side */ }
   }
 
+  async function handleNextFull(): Promise<void> {
+    try { await window.api.recordingNextFull() } catch { /* handled server-side */ }
+  }
+
   async function handleToggleStream(): Promise<void> {
     if (!isConnected) return
     try {
@@ -54,6 +58,9 @@ export default function Controls(): React.ReactElement {
 
   return (
     <div className="section controls-section">
+      <button className="ctrl-btn next-full" onClick={handleNextFull} disabled={!isConnected}>
+        NEXT
+      </button>
       <div className="control-row">
         <button className="ctrl-btn" onClick={handlePrev}>
           Prev
@@ -66,9 +73,8 @@ export default function Controls(): React.ReactElement {
           {obsState.isRecording ? 'Stop Rec' : 'Record'}
           <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
         </button>
-        <button className="ctrl-btn primary" onClick={handleNext}>
-          Next
-          <span className="hotkey-hint">{hotkeys?.nextRoutine || 'F6'}</span>
+        <button className="ctrl-btn" onClick={handleNext}>
+          Next Only
         </button>
       </div>
       <div className="control-row">

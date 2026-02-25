@@ -75,14 +75,26 @@ function getBarClass(status: RoutineStatus): string {
   }
 }
 
-function getVideoText(routine: Routine, judgeCount: number): string {
+function getVideoInfo(routine: Routine, judgeCount: number): { text: string; color: string } {
   const total = judgeCount + 1
-  if (routine.status === 'pending' || routine.status === 'skipped') return '\u2014'
-  if (routine.status === 'recording') return '0/' + total
-  if (routine.encodedFiles) {
-    return `${routine.encodedFiles.length}/${total}`
+  if (routine.status === 'pending' || routine.status === 'skipped') {
+    return { text: '\u2014', color: 'var(--text-muted)' }
   }
-  return '0/' + total
+  if (routine.status === 'recording' || routine.status === 'recorded' || routine.status === 'queued') {
+    return { text: `0/${total}`, color: 'var(--text-muted)' }
+  }
+  if (!routine.encodedFiles || routine.encodedFiles.length === 0) {
+    return { text: `0/${total}`, color: 'var(--text-muted)' }
+  }
+  const uploaded = routine.encodedFiles.filter((f) => f.uploaded).length
+  const encoded = routine.encodedFiles.length
+  if (uploaded === total) {
+    return { text: `${uploaded}/${total}`, color: 'var(--success)' }
+  }
+  if (uploaded > 0) {
+    return { text: `${uploaded}/${total}`, color: 'var(--upload-blue)' }
+  }
+  return { text: `${encoded}/${total}`, color: 'var(--warning)' }
 }
 
 function NoteEditor({ routine }: { routine: Routine }): React.ReactElement {
@@ -166,8 +178,8 @@ export default function RoutineTable(): React.ReactElement {
   }
 
   async function handleViewMedia(routine: Routine): Promise<void> {
-    if (routine.outputPath) {
-      const dir = routine.outputPath.replace(/[/\\][^/\\]+$/, '')
+    const dir = routine.outputDir || (routine.outputPath ? routine.outputPath.replace(/[/\\][^/\\]+$/, '') : null)
+    if (dir) {
       await window.api.openPath(dir)
     }
   }
@@ -230,20 +242,10 @@ export default function RoutineTable(): React.ReactElement {
                 </td>
                 {!compactMode && (
                   <td>
-                    <span
-                      style={{
-                        color:
-                          routine.status === 'uploaded' || routine.status === 'confirmed'
-                            ? 'var(--success)'
-                            : routine.status === 'uploading'
-                              ? 'var(--upload-blue)'
-                              : routine.status === 'encoding'
-                                ? 'var(--warning)'
-                                : 'var(--text-muted)',
-                      }}
-                    >
-                      {getVideoText(routine, judgeCount)}
-                    </span>
+                    {(() => {
+                      const info = getVideoInfo(routine, judgeCount)
+                      return <span style={{ color: info.color }}>{info.text}</span>
+                    })()}
                   </td>
                 )}
                 {!compactMode && (

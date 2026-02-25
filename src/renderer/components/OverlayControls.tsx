@@ -7,7 +7,7 @@ interface OverlayToggles {
   lowerThird: boolean
 }
 
-export default function OverlayControls(): React.ReactElement {
+export default function OverlayControls({ compact = false }: { compact?: boolean }): React.ReactElement {
   const [autoFire, setAutoFire] = useState(false)
   const [toggles, setToggles] = useState<OverlayToggles>({
     counter: true, clock: false, logo: true, lowerThird: false,
@@ -61,6 +61,35 @@ export default function OverlayControls(): React.ReactElement {
       {label}
     </button>
   )
+
+  if (compact) {
+    return (
+      <div style={{ display: 'flex', gap: '4px' }}>
+        <button
+          style={{
+            flex: 1, padding: '5px 8px', background: 'var(--bg-secondary)',
+            border: '1px solid var(--border)', borderRadius: '4px',
+            color: 'var(--text-primary)', fontSize: '10px', fontWeight: 500,
+            transition: 'all 0.15s',
+          }}
+          onClick={() => window.api.overlayFireLT()}
+        >
+          Fire LT
+        </button>
+        <button
+          style={{
+            flex: 1, padding: '5px 8px', background: 'var(--bg-secondary)',
+            border: '1px solid var(--border)', borderRadius: '4px',
+            color: 'var(--text-primary)', fontSize: '10px', fontWeight: 500,
+            transition: 'all 0.15s',
+          }}
+          onClick={() => window.api.overlayHideLT()}
+        >
+          Hide LT
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="section">

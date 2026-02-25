@@ -76,3 +76,14 @@
   font-size: 9px;
   margin-left: 2px;
 }
+
+.ctrl-btn.next-full {
+  padding: 14px 10px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.ctrl-btn.next-full:hover { background: var(--accent-hover); }
