@@ -13,6 +13,9 @@ let ffmpegProcess: ChildProcess | null = null
 const queue: FFmpegJob[] = []
 let isProcessing = false
 
+function perfFileName(): string { return 'P_performance.mp4' }
+function judgeFileName(i: number): string { return `J${i}_commentary.mp4` }
+
 function getFFmpegPath(): string {
   const settings = getSettings()
   if (settings.ffmpeg.path && settings.ffmpeg.path !== '(bundled)') {
@@ -126,14 +129,14 @@ async function processNext(): Promise<void> {
 
     // Build encodedFiles list from output directory
     const encodedFiles: EncodedFile[] = []
-    const perfPath = path.join(job.outputDir, 'performance.mp4')
+    const perfPath = path.join(job.outputDir, perfFileName())
     if (fs.existsSync(perfPath)) {
       encodedFiles.push({ role: 'performance', filePath: perfPath, uploaded: false })
     } else {
       logger.ffmpeg.warn(`Expected output file not found: ${perfPath}`)
     }
     for (let i = 1; i <= job.judgeCount; i++) {
-      const judgePath = path.join(job.outputDir, `judge${i}_commentary.mp4`)
+      const judgePath = path.join(job.outputDir, judgeFileName(i))
       if (fs.existsSync(judgePath)) {
         encodedFiles.push({ role: `judge${i}` as EncodedFile['role'], filePath: judgePath, uploaded: false })
       } else {
@@ -206,10 +209,10 @@ async function runFFmpeg(job: FFmpegJob): Promise<void> {
     args.push(...buildReencodeArgs(job, '1920:1080').slice(3))
   } else {
     // Copy mode
-    const perfOutput = path.join(job.outputDir, 'performance.mp4')
+    const perfOutput = path.join(job.outputDir, perfFileName())
     args.push('-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', perfOutput)
     for (let i = 1; i <= job.judgeCount; i++) {
-      const judgeOutput = path.join(job.outputDir, `judge${i}_commentary.mp4`)
+      const judgeOutput = path.join(job.outputDir, judgeFileName(i))
       args.push('-map', '0:v:0', '-map', `0:a:${i}`, '-c', 'copy', judgeOutput)
     }
   }
@@ -236,7 +239,7 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
     logger.ffmpeg.info('Smart encode step 2: muxing audio tracks...')
 
     // Performance (audio track 0)
-    const perfOutput = path.join(job.outputDir, 'performance.mp4')
+    const perfOutput = path.join(job.outputDir, perfFileName())
     await spawnFFmpeg(ffmpegPath, [
       '-y', '-i', tempVideo, '-i', job.inputPath,
       '-map', '0:v:0', '-map', '1:a:0',
@@ -246,7 +249,7 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
 
     // Judge tracks
     for (let i = 1; i <= job.judgeCount; i++) {
-      const judgeOutput = path.join(job.outputDir, `judge${i}_commentary.mp4`)
+      const judgeOutput = path.join(job.outputDir, judgeFileName(i))
       await spawnFFmpeg(ffmpegPath, [
         '-y', '-i', tempVideo, '-i', job.inputPath,
         '-map', '0:v:0', '-map', `1:a:${i}`,
@@ -301,7 +304,7 @@ function spawnFFmpeg(ffmpegPath: string, args: string[]): Promise<void> {
 function buildReencodeArgs(job: FFmpegJob, scale: string): string[] {
   const args: string[] = ['-y', '-i', job.inputPath]
 
-  const perfOutput = path.join(job.outputDir, 'performance.mp4')
+  const perfOutput = path.join(job.outputDir, perfFileName())
   args.push(
     '-map', '0:v:0', '-map', '0:a:0',
     '-vf', `scale=${scale}`,
@@ -311,7 +314,7 @@ function buildReencodeArgs(job: FFmpegJob, scale: string): string[] {
   )
 
   for (let i = 1; i <= job.judgeCount; i++) {
-    const judgeOutput = path.join(job.outputDir, `judge${i}_commentary.mp4`)
+    const judgeOutput = path.join(job.outputDir, judgeFileName(i))
     args.push(
       '-map', '0:v:0', '-map', `0:a:${i}`,
       '-vf', `scale=${scale}`,

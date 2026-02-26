@@ -1,4 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
+
+function useAppVersion(): string {
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    window.api.getVersion().then((v: string) => setVersion(v))
+  }, [])
+  return version
+}
 import { useStore } from '../store/useStore'
 import LoadCompetition from './LoadCompetition'
 import '../styles/header.css'
@@ -71,6 +79,7 @@ export default function Header(): React.ReactElement {
     }
   }
 
+  const appVersion = useAppVersion()
   const obsColor =
     obsState.connectionStatus === 'connected'
       ? 'var(--success)'
@@ -82,6 +91,7 @@ export default function Header(): React.ReactElement {
     <div className="app-header">
       <div className="app-logo">
         {compactMode ? 'CS' : 'CompSync Media'}
+        {appVersion && <span style={{ fontSize: '9px', color: 'var(--text-muted)', opacity: 0.5, marginLeft: '6px' }}>v{appVersion}</span>}
       </div>
 
       <div className="header-status">

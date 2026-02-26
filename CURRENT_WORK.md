@@ -1,19 +1,19 @@
-# Next Build — v2.4.3
+# Next Build — v2.4.4
 
-## Ready (not yet built)
+## Bugs
 
-1. **Big NEXT button** — Full-width "NEXT" at top of controls → `nextFull` (stop rec → advance → start rec → fire LT). "Next Only" below for simple advance.
-2. **LT triggers in compact mode** — Fire LT / Hide LT buttons now show in compact mode
-3. **Videos column progress** — Shows 0/4 → 2/4 yellow (encoding) → 2/4 blue (uploading) → 4/4 green (all uploaded)
+1. **Big NEXT didn't start recording** — nextFull not triggering OBS record on advance
+2. **VIEW column broken formatting** — layout issue in last table column
+3. **Lower third needed browser reload after app update** — WS reconnect or state not pushed on connect
 
-## Shipped in v2.4.2
+## UI Polish
 
-1. Lower third empty on load
-2. Clock position under routine #
-3. AudioMeters crash
-4. `require` error
-5. Jump during recording blocked
-6. Recording to wrong routine
-7. Encoding queue status
-8. Smart encode
-9. Media folder structure
+4. **Version number in top bar** — greyed out, subtle
+5. **Rename ENCODING → PROCESSING** — everywhere in UI
+6. **Bigger lower third text** — 1.5x current sizing
+7. **Date + seconds on clock overlay** — currently just H:MM AM/PM, add date and seconds
+
+## Features
+
+8. **Better encoded filenames** — TENANT/COMP/P_performance.mp4, J1_commentary.mp4 etc
+9. **5 lower third animations** — slide, zoom, fade, sparkle, plus randomize option

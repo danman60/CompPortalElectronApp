@@ -16,9 +16,9 @@ function statusToLabel(status: RoutineStatus): { text: string; className: string
     case 'queued':
       return { text: 'Queued', className: 'waiting' }
     case 'encoding':
-      return { text: 'Encoding', className: 'processing' }
+      return { text: 'Processing', className: 'processing' }
     case 'encoded':
-      return { text: 'Encoded', className: 'complete' }
+      return { text: 'Processed', className: 'complete' }
     case 'uploading':
       return { text: 'Uploading', className: 'uploading' }
     case 'uploaded':
@@ -273,19 +273,21 @@ export default function RoutineTable(): React.ReactElement {
                     </div>
                   )}
                 </td>
-                <td style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                  <NoteEditor routine={routine} />
-                  {!isNotRecorded && (
-                    <button
-                      className="view-btn"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleViewMedia(routine)
-                      }}
-                    >
-                      View
-                    </button>
-                  )}
+                <td>
+                  <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+                    <NoteEditor routine={routine} />
+                    {!isNotRecorded && (
+                      <button
+                        className="view-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleViewMedia(routine)
+                        }}
+                      >
+                        View
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             )

@@ -307,12 +307,13 @@ export async function next(): Promise<void> {
 }
 
 export async function nextFull(): Promise<void> {
-  const settings = getSettings()
-  const obsState = obs.getState()
+  const connected = obs.getState().connectionStatus === 'connected'
 
-  if (obsState.isRecording && obsState.connectionStatus === 'connected') {
+  if (connected && obs.getState().isRecording) {
     try {
       await obs.stopRecord()
+      // Wait for OBS to fully stop before starting new recording
+      await new Promise((resolve) => setTimeout(resolve, 1500))
     } catch (err) {
       logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
     }
@@ -324,19 +325,9 @@ export async function nextFull(): Promise<void> {
     return
   }
 
-  const comp = state.getCompetition()
-  const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
-  overlay.updateRoutineData({
-    entryNumber: nextRoutine.entryNumber,
-    routineTitle: nextRoutine.routineTitle,
-    dancers: nextRoutine.dancers,
-    studioName: nextRoutine.studioName,
-    category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
-    current: state.getCurrentRoutineIndex() + 1,
-    total: visibleCount,
-  })
+  broadcastFullState()
 
-  if (obsState.connectionStatus === 'connected') {
+  if (connected) {
     try {
       await obs.startRecord()
     } catch (err) {
@@ -348,7 +339,6 @@ export async function nextFull(): Promise<void> {
     overlay.fireLowerThird()
   }, 5000)
 
-  broadcastFullState()
   logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
 }
 

@@ -112,6 +112,7 @@ export function startServer(): void {
 
   app.get('/overlay', (_req, res) => {
     res.setHeader('Content-Type', 'text/html')
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
     res.send(buildOverlayHTML())
   })
 
@@ -204,31 +205,43 @@ function buildOverlayHTML(): string {
     text-align: center; min-width: 120px;
   }
   .clock-time {
-    font-size: 22px; font-weight: 600; color: #c0c0e0;
+    font-size: 20px; font-weight: 600; color: #c0c0e0;
     font-variant-numeric: tabular-nums;
+  }
+  .clock-date {
+    font-size: 11px; color: #9090b0; margin-top: 2px;
   }
   .lower-third {
     position: absolute; bottom: 90px; left: 40px;
-    opacity: 0; transform: translateY(20px);
-    transition: opacity 0.5s ease, transform 0.5s ease;
+    opacity: 0; transition: opacity 0.5s ease, transform 0.5s ease;
   }
-  .lower-third.visible { opacity: 1; transform: translateY(0); }
+  /* Animation variants */
+  .lower-third.anim-slide { transform: translateX(-100px); }
+  .lower-third.anim-slide.visible { opacity: 1; transform: translateX(0); }
+  .lower-third.anim-zoom { transform: scale(0.5); }
+  .lower-third.anim-zoom.visible { opacity: 1; transform: scale(1); }
+  .lower-third.anim-fade { transform: none; }
+  .lower-third.anim-fade.visible { opacity: 1; }
+  .lower-third.anim-rise { transform: translateY(40px); }
+  .lower-third.anim-rise.visible { opacity: 1; transform: translateY(0); }
+  .lower-third.anim-sparkle { transform: scale(0.8); filter: brightness(2); }
+  .lower-third.anim-sparkle.visible { opacity: 1; transform: scale(1); filter: brightness(1); transition: opacity 0.5s ease, transform 0.5s ease, filter 0.8s ease; }
   .lt-card {
     background: rgba(30, 30, 46, 0.92);
     border: 1px solid rgba(102, 126, 234, 0.4);
-    border-radius: 8px; padding: 16px 24px;
-    backdrop-filter: blur(10px); min-width: 400px;
+    border-radius: 10px; padding: 20px 30px;
+    backdrop-filter: blur(10px); min-width: 500px;
   }
-  .lt-top { display: flex; align-items: center; gap: 12px; }
+  .lt-top { display: flex; align-items: center; gap: 16px; }
   .lt-number {
     background: linear-gradient(135deg, #667eea, #764ba2);
-    color: white; font-weight: 700; font-size: 24px;
-    padding: 4px 12px; border-radius: 6px; flex-shrink: 0;
+    color: white; font-weight: 700; font-size: 36px;
+    padding: 6px 16px; border-radius: 8px; flex-shrink: 0;
   }
-  .lt-number::before { content: '#'; opacity: 0.6; font-size: 16px; }
-  .lt-title { font-size: 22px; font-weight: 700; color: #e0e0f0; }
-  .lt-dancers { font-size: 14px; color: #a5b4fc; margin-top: 4px; }
-  .lt-meta { font-size: 12px; color: #9090b0; margin-top: 6px; }
+  .lt-number::before { content: '#'; opacity: 0.6; font-size: 22px; }
+  .lt-title { font-size: 33px; font-weight: 700; color: #e0e0f0; }
+  .lt-dancers { font-size: 21px; color: #a5b4fc; margin-top: 4px; }
+  .lt-meta { font-size: 18px; color: #9090b0; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -239,7 +252,7 @@ function buildOverlayHTML(): string {
   </div>
 </div>
 <div class="logo" id="logo"><img id="logoImg" src="" alt="" /></div>
-<div class="clock" id="clock"><div class="clock-box"><div class="clock-time" id="clockTime"></div></div></div>
+<div class="clock" id="clock"><div class="clock-box"><div class="clock-time" id="clockTime"></div><div class="clock-date" id="clockDate"></div></div></div>
 <div class="lower-third" id="lt">
   <div class="lt-card">
     <div class="lt-top">
@@ -254,9 +267,11 @@ function buildOverlayHTML(): string {
 </div>
 <script>
   const WS_URL = 'ws://localhost:9877';
+  const LT_ANIMS = ['anim-slide','anim-zoom','anim-fade','anim-rise','anim-sparkle'];
   let ws = null;
   let reconnectDelay = 1000;
   let lastCounterEntry = '';
+  let currentAnim = '';
 
   function connect() {
     ws = new WebSocket(WS_URL);
@@ -308,6 +323,11 @@ function buildOverlayHTML(): string {
     else clockEl.classList.remove('visible');
     const ltEl = document.getElementById('lt');
     if (o.lowerThird.visible) {
+      if (!currentAnim) {
+        currentAnim = LT_ANIMS[Math.floor(Math.random() * LT_ANIMS.length)];
+        LT_ANIMS.forEach(a => ltEl.classList.remove(a));
+        ltEl.classList.add(currentAnim);
+      }
       ltEl.classList.add('visible');
       document.getElementById('ltNumber').textContent = o.lowerThird.entryNumber;
       document.getElementById('ltTitle').textContent = o.lowerThird.routineTitle;
@@ -316,6 +336,9 @@ function buildOverlayHTML(): string {
         o.lowerThird.studioName + ' \\u2014 ' + o.lowerThird.category;
     } else {
       ltEl.classList.remove('visible');
+      if (currentAnim) {
+        setTimeout(() => { ltEl.classList.remove(currentAnim); currentAnim = ''; }, 600);
+      }
     }
   }
 
@@ -323,9 +346,13 @@ function buildOverlayHTML(): string {
     const now = new Date();
     const h = now.getHours();
     const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
     const ampm = h >= 12 ? 'PM' : 'AM';
     const h12 = h % 12 || 12;
-    document.getElementById('clockTime').textContent = h12 + ':' + m + ' ' + ampm;
+    document.getElementById('clockTime').textContent = h12 + ':' + m + ':' + s + ' ' + ampm;
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    document.getElementById('clockDate').textContent = days[now.getDay()] + ', ' + months[now.getMonth()] + ' ' + now.getDate();
   }
   setInterval(updateClock, 1000);
   updateClock();

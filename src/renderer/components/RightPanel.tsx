@@ -103,7 +103,7 @@ export default function RightPanel(): React.ReactElement {
         </button>
         {encodingCount > 0 && (
           <div className="stat">
-            <span className="stat-num" style={{ color: 'var(--warning)' }}>{encodingCount}</span> Encoding
+            <span className="stat-num" style={{ color: 'var(--warning)' }}>{encodingCount}</span> Processing
           </div>
         )}
         {uploadingCount > 0 && (
