@@ -223,6 +223,16 @@ export async function loadFromShareCode(shareCode: string): Promise<Competition>
   return data as Competition
 }
 
+/** Build a filename prefix from resolved connection + entry number */
+export function buildFilePrefix(entryNumber: string): string {
+  const conn = getResolvedConnection()
+  if (conn) {
+    const tag = conn.name.replace(/[\s]+/g, '_')
+    return `${conn.tenant}_${tag}_${entryNumber}`
+  }
+  return entryNumber
+}
+
 /** Legacy: load from API with explicit credentials (kept for backwards compat) */
 export async function loadFromAPI(competitionId: string): Promise<Competition> {
   // This is now a no-op since we removed tenant/apiKey from settings

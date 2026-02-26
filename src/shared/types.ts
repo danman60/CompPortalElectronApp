@@ -111,6 +111,10 @@ export interface SystemStats {
   diskTotalGB: number
 }
 
+// --- Overlay Animation ---
+
+export type OverlayAnimation = 'random' | 'slide' | 'zoom' | 'fade' | 'rise' | 'sparkle'
+
 // --- Settings ---
 
 export interface AppSettings {
@@ -150,6 +154,12 @@ export interface AppSettings {
     defaultCounter: boolean
     defaultClock: boolean
     defaultLogo: boolean
+    animation: OverlayAnimation
+    showEntryNumber: boolean
+    showRoutineTitle: boolean
+    showDancers: boolean
+    showStudioName: boolean
+    showCategory: boolean
   }
   behavior: {
     autoRecordOnNext: boolean
@@ -270,6 +280,7 @@ export interface FFmpegJob {
   judgeCount: number
   trackMapping: Record<string, string>
   processingMode: 'copy' | 'smart' | '720p' | '1080p'
+  filePrefix: string
 }
 
 export interface FFmpegProgress {
@@ -315,6 +326,12 @@ export interface OverlayLowerThirdState extends OverlayElementState {
   studioName: string
   category: string
   autoHideSeconds: number
+  animation: OverlayAnimation
+  showEntryNumber: boolean
+  showRoutineTitle: boolean
+  showDancers: boolean
+  showStudioName: boolean
+  showCategory: boolean
 }
 
 export interface OverlayState {
@@ -411,6 +428,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultCounter: true,
     defaultClock: false,
     defaultLogo: true,
+    animation: 'random',
+    showEntryNumber: true,
+    showRoutineTitle: true,
+    showDancers: true,
+    showStudioName: true,
+    showCategory: true,
   },
   behavior: {
     autoRecordOnNext: true,

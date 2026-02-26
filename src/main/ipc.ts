@@ -128,6 +128,7 @@ export function registerAllHandlers(): void {
       judgeCount: s.competition.judgeCount,
       trackMapping: s.audioTrackMapping,
       processingMode: s.ffmpeg.processingMode,
+      filePrefix: schedule.buildFilePrefix(routine.entryNumber),
     })
   })
 
@@ -146,6 +147,7 @@ export function registerAllHandlers(): void {
           judgeCount: s.competition.judgeCount,
           trackMapping: s.audioTrackMapping,
           processingMode: s.ffmpeg.processingMode,
+          filePrefix: schedule.buildFilePrefix(routine.entryNumber),
         })
       }
     }

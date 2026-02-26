@@ -20,6 +20,12 @@ let overlayState: OverlayState = {
     studioName: '',
     category: '',
     autoHideSeconds: 8,
+    animation: 'random',
+    showEntryNumber: true,
+    showRoutineTitle: true,
+    showDancers: true,
+    showStudioName: true,
+    showCategory: true,
   },
 }
 
@@ -70,6 +76,12 @@ export function fireLowerThird(): void {
   const settings = getSettings()
   const seconds = settings.overlay?.autoHideSeconds ?? 8
   overlayState.lowerThird.autoHideSeconds = seconds
+  overlayState.lowerThird.animation = settings.overlay?.animation ?? 'random'
+  overlayState.lowerThird.showEntryNumber = settings.overlay?.showEntryNumber ?? true
+  overlayState.lowerThird.showRoutineTitle = settings.overlay?.showRoutineTitle ?? true
+  overlayState.lowerThird.showDancers = settings.overlay?.showDancers ?? true
+  overlayState.lowerThird.showStudioName = settings.overlay?.showStudioName ?? true
+  overlayState.lowerThird.showCategory = settings.overlay?.showCategory ?? true
   logger.app.info('Overlay lower third fired')
   if (autoHideTimer) clearTimeout(autoHideTimer)
   if (seconds > 0) {
@@ -102,6 +114,12 @@ export function initDefaults(): void {
     overlayState.clock.visible = settings.overlay.defaultClock ?? false
     overlayState.logo.visible = settings.overlay.defaultLogo ?? true
     overlayState.logo.url = settings.overlay.logoUrl ?? ''
+    overlayState.lowerThird.animation = settings.overlay.animation ?? 'random'
+    overlayState.lowerThird.showEntryNumber = settings.overlay.showEntryNumber ?? true
+    overlayState.lowerThird.showRoutineTitle = settings.overlay.showRoutineTitle ?? true
+    overlayState.lowerThird.showDancers = settings.overlay.showDancers ?? true
+    overlayState.lowerThird.showStudioName = settings.overlay.showStudioName ?? true
+    overlayState.lowerThird.showCategory = settings.overlay.showCategory ?? true
   }
 }
 
@@ -324,16 +342,31 @@ function buildOverlayHTML(): string {
     const ltEl = document.getElementById('lt');
     if (o.lowerThird.visible) {
       if (!currentAnim) {
-        currentAnim = LT_ANIMS[Math.floor(Math.random() * LT_ANIMS.length)];
+        var anim = o.lowerThird.animation || 'random';
+        if (anim === 'random') {
+          currentAnim = LT_ANIMS[Math.floor(Math.random() * LT_ANIMS.length)];
+        } else {
+          currentAnim = 'anim-' + anim;
+        }
         LT_ANIMS.forEach(a => ltEl.classList.remove(a));
         ltEl.classList.add(currentAnim);
       }
       ltEl.classList.add('visible');
-      document.getElementById('ltNumber').textContent = o.lowerThird.entryNumber;
-      document.getElementById('ltTitle').textContent = o.lowerThird.routineTitle;
-      document.getElementById('ltDancers').textContent = o.lowerThird.dancers;
-      document.getElementById('ltMeta').textContent =
-        o.lowerThird.studioName + ' \\u2014 ' + o.lowerThird.category;
+      var ltNum = document.getElementById('ltNumber');
+      var ltTitle = document.getElementById('ltTitle');
+      var ltDancers = document.getElementById('ltDancers');
+      var ltMeta = document.getElementById('ltMeta');
+      ltNum.textContent = o.lowerThird.entryNumber;
+      ltNum.style.display = o.lowerThird.showEntryNumber === false ? 'none' : '';
+      ltTitle.textContent = o.lowerThird.routineTitle;
+      ltTitle.style.display = o.lowerThird.showRoutineTitle === false ? 'none' : '';
+      ltDancers.textContent = o.lowerThird.dancers;
+      ltDancers.style.display = o.lowerThird.showDancers === false ? 'none' : '';
+      var metaParts = [];
+      if (o.lowerThird.showStudioName !== false) metaParts.push(o.lowerThird.studioName);
+      if (o.lowerThird.showCategory !== false) metaParts.push(o.lowerThird.category);
+      ltMeta.textContent = metaParts.filter(Boolean).join(' \\u2014 ');
+      ltMeta.style.display = metaParts.length === 0 ? 'none' : '';
     } else {
       ltEl.classList.remove('visible');
       if (currentAnim) {

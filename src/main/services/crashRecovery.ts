@@ -79,6 +79,7 @@ export async function recoverOrphans(orphans: OrphanedFile[]): Promise<void> {
       judgeCount: settings.competition.judgeCount,
       trackMapping: settings.audioTrackMapping,
       processingMode: settings.ffmpeg.processingMode,
+      filePrefix: '',
     })
   }
 }

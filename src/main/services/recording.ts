@@ -215,6 +215,7 @@ export async function handleRecordingStopped(
         judgeCount: settings.competition.judgeCount,
         trackMapping: settings.audioTrackMapping,
         processingMode: settings.ffmpeg.processingMode,
+        filePrefix: schedule.buildFilePrefix(routine.entryNumber),
       })
     }
   } catch (err) {

@@ -407,10 +407,24 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
-        {/* Lower Third Overlay */}
+        {/* Overlay */}
         <div className="settings-section">
-          <div className="settings-section-title">Lower Third Overlay</div>
+          <div className="settings-section-title">Overlay</div>
           <div className="settings-grid">
+            <div className="field">
+              <label>Animation Style</label>
+              <select
+                value={draft.overlay.animation}
+                onChange={(e) => update('overlay', { animation: e.target.value as AppSettings['overlay']['animation'] })}
+              >
+                <option value="random">Random (varies each fire)</option>
+                <option value="slide">Slide</option>
+                <option value="zoom">Zoom</option>
+                <option value="fade">Fade</option>
+                <option value="rise">Rise</option>
+                <option value="sparkle">Sparkle</option>
+              </select>
+            </div>
             <div className="field">
               <label>Auto-hide After (seconds)</label>
               <input
@@ -423,6 +437,36 @@ export default function Settings(): React.ReactElement {
               />
               <span className="hint">0 = never auto-hide (manual only)</span>
             </div>
+          </div>
+          {[
+            { key: 'defaultClock', label: 'Show Clock', desc: 'Display clock on overlay' },
+            { key: 'showEntryNumber', label: 'Show Entry Number', desc: 'Display entry number badge on lower third' },
+            { key: 'showRoutineTitle', label: 'Show Routine Title', desc: 'Display routine title on lower third' },
+            { key: 'showDancers', label: 'Show Dancers', desc: 'Display dancer names on lower third' },
+            { key: 'showStudioName', label: 'Show Studio Name', desc: 'Display studio name on lower third' },
+            { key: 'showCategory', label: 'Show Category', desc: 'Display category on lower third' },
+          ].map(({ key, label, desc }) => (
+            <div className="toggle-row" key={key}>
+              <div>
+                <div className="toggle-label">{label}</div>
+                <div className="toggle-desc">{desc}</div>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={draft.overlay[key as keyof typeof draft.overlay] as boolean}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      overlay: { ...draft.overlay, [key]: e.target.checked },
+                    })
+                  }
+                />
+                <span className="toggle-slider" />
+              </label>
+            </div>
+          ))}
+          <div className="settings-grid" style={{ marginTop: '12px' }}>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Overlay URL (Browser Source in OBS)</label>
               <div className="field-row">

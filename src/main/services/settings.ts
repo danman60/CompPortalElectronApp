@@ -85,6 +85,19 @@ export function getSettings(): AppSettings {
     store.set('behavior', beh)
   }
 
+  // Migrate overlay: add animation + showX fields if missing
+  const ov = raw.overlay as Record<string, unknown> | undefined
+  if (ov) {
+    let ovChanged = false
+    if (!('animation' in ov)) { ov.animation = 'random'; ovChanged = true }
+    if (!('showEntryNumber' in ov)) { ov.showEntryNumber = true; ovChanged = true }
+    if (!('showRoutineTitle' in ov)) { ov.showRoutineTitle = true; ovChanged = true }
+    if (!('showDancers' in ov)) { ov.showDancers = true; ovChanged = true }
+    if (!('showStudioName' in ov)) { ov.showStudioName = true; ovChanged = true }
+    if (!('showCategory' in ov)) { ov.showCategory = true; ovChanged = true }
+    if (ovChanged) store.set('overlay', ov)
+  }
+
   // Decrypt sensitive values
   for (const key of SENSITIVE_KEYS) {
     const encrypted = getNestedValue(settings as unknown as Record<string, unknown>, key + '_encrypted') as string | undefined
