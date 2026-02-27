@@ -1,19 +1,33 @@
-# Next Build — v2.4.4
+# Next Build — v2.5.0
 
-## Bugs
+## Completed (Stability & Pipeline Rewrite)
 
-1. **Big NEXT didn't start recording** — nextFull not triggering OBS record on advance
-2. **VIEW column broken formatting** — layout issue in last table column
-3. **Lower third needed browser reload after app update** — WS reconnect or state not pushed on connect
+All 27 audit issues addressed across 6 batches:
 
-## UI Polish
+1. **Persistent job queue** — jobQueue.ts replaces in-memory arrays in ffmpeg/upload
+2. **State hardening** — ID-based routine tracking, debounced atomic writes
+3. **Settings deep merge** — missing keys filled from defaults, atomic migrations
+4. **FFmpeg rewrite** — 10min timeout, PID tracking, orphan kill, temp cleanup
+5. **Upload rewrite** — awaited loop, abort cleanup, scaled timeout, per-file jobs
+6. **Error handling** — crash dialog + flush, graceful shutdown, OBS event cleanup
+7. **WS heartbeat** — readyState check, command error boundary
+8. **Overlay toggle** — auto-hide timer canceled on manual dismiss
+9. **IPC cleanup** — listener cleanup function returned from initIPCListeners
+10. **Crash recovery** — async ops, temp cleanup, prefix-aware orphan detection
+11. **Import handlers** — drag-drop file import, folder scan with entry# matching
+12. **Job queue IPC** — get/retry/cancel handlers for UI management
+13. **Startup validation** — FFmpeg check, disk space, output dir, job resume report
+14. **File lock retry** — 500ms interval retry loop (was hardcoded 2s wait)
+15. **Async file ops** — archiveExistingFiles, mkdir, rename all async
 
-4. **Version number in top bar** — greyed out, subtle
-5. **Rename ENCODING → PROCESSING** — everywhere in UI
-6. **Bigger lower third text** — 1.5x current sizing
-7. **Date + seconds on clock overlay** — currently just H:MM AM/PM, add date and seconds
+## Remaining (UI + Polish)
 
-## Features
+- Import drop zones on routine rows (renderer)
+- Import toolbar button + confirmation dialog
+- Job queue status panel (pending/running/failed counts)
+- Retry/cancel buttons for failed jobs
+- Startup report notification in UI
 
-8. **Better encoded filenames** — TENANT/COMP/P_performance.mp4, J1_commentary.mp4 etc
-9. **5 lower third animations** — slide, zoom, fade, sparkle, plus randomize option
+## Known Bugs
+
+(none currently tracked)
