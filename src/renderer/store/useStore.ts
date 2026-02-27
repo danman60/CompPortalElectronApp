@@ -174,7 +174,7 @@ export const useStore = create<AppStore>((set, get) => ({
 }))
 
 // Initialize IPC listeners
-export function initIPCListeners(): void {
+export function initIPCListeners(): () => void {
   const store = useStore.getState
 
   // State updates from main
@@ -244,4 +244,15 @@ export function initIPCListeners(): void {
       },
     })
   })
+
+  // Return cleanup function
+  return () => {
+    window.api.removeAllListeners?.(IPC_CHANNELS.STATE_UPDATE)
+    window.api.removeAllListeners?.(IPC_CHANNELS.OBS_STATE)
+    window.api.removeAllListeners?.(IPC_CHANNELS.FFMPEG_PROGRESS)
+    window.api.removeAllListeners?.(IPC_CHANNELS.UPLOAD_PROGRESS)
+    window.api.removeAllListeners?.(IPC_CHANNELS.PREVIEW_FRAME)
+    window.api.removeAllListeners?.(IPC_CHANNELS.SYSTEM_STATS)
+    window.api.removeAllListeners?.(IPC_CHANNELS.OBS_AUDIO_LEVELS)
+  }
 }
