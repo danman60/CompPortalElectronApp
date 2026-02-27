@@ -93,9 +93,6 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_IMPORT_FILE, routineId, filePath),
   importFolder: (folderPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_IMPORT_FOLDER, folderPath),
-  importConfirm: (matches: { file: string; routineId: string }[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_IMPORT_CONFIRM, matches),
-
   // Job Queue
   jobQueueGet: () => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_GET),
   jobQueueRetry: (jobId: string) => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_RETRY, jobId),

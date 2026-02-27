@@ -276,7 +276,7 @@ export function initIPCListeners(): () => void {
   })
 
   // Startup report
-  window.api.on('app:startup-report', (data: unknown) => {
+  window.api.on(IPC_CHANNELS.APP_STARTUP_REPORT, (data: unknown) => {
     store().setStartupReport(data as StartupReport)
   })
 
@@ -290,6 +290,6 @@ export function initIPCListeners(): () => void {
     window.api.removeAllListeners(IPC_CHANNELS.SYSTEM_STATS)
     window.api.removeAllListeners(IPC_CHANNELS.OBS_AUDIO_LEVELS)
     window.api.removeAllListeners(IPC_CHANNELS.JOB_QUEUE_PROGRESS)
-    window.api.removeAllListeners('app:startup-report')
+    window.api.removeAllListeners(IPC_CHANNELS.APP_STARTUP_REPORT)
   }
 }

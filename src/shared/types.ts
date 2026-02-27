@@ -273,13 +273,15 @@ export const IPC_CHANNELS = {
   // Import
   RECORDING_IMPORT_FILE: 'recording:import-file',
   RECORDING_IMPORT_FOLDER: 'recording:import-folder',
-  RECORDING_IMPORT_CONFIRM: 'recording:import-confirm',
 
   // Job Queue
   JOB_QUEUE_GET: 'job:queue-get',
   JOB_QUEUE_RETRY: 'job:queue-retry',
   JOB_QUEUE_CANCEL: 'job:queue-cancel',
   JOB_QUEUE_PROGRESS: 'job:queue-progress',
+
+  // Startup
+  APP_STARTUP_REPORT: 'app:startup-report',
 } as const
 
 // --- FFmpeg ---

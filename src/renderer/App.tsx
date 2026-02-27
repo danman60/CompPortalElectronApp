@@ -85,7 +85,7 @@ export default function App(): React.ReactElement {
     initialized.current = true
 
     // Initialize IPC listeners
-    initIPCListeners()
+    const cleanupIPC = initIPCListeners()
 
     // Load initial settings and auto-connect OBS
     window.api.settingsGet().then((settings) => {
@@ -101,6 +101,8 @@ export default function App(): React.ReactElement {
         useStore.getState().setCompetition(comp)
       }
     }).catch(() => {})
+
+    return cleanupIPC
   }, [])
 
   return (

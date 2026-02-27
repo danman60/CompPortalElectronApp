@@ -68,7 +68,7 @@ export async function runStartupChecks(): Promise<StartupReport> {
   }
 
   // Send to renderer for display
-  sendToRenderer('app:startup-report', report)
+  sendToRenderer(IPC_CHANNELS.APP_STARTUP_REPORT, report)
 
   const parts: string[] = ['Startup complete.']
   if (!ffmpegAvailable) parts.push('WARNING: FFmpeg not found.')

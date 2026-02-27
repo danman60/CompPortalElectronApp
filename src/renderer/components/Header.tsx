@@ -80,11 +80,9 @@ export default function Header(): React.ReactElement {
   }
 
   async function handleImportVideo(): Promise<void> {
-    const filePath = await window.api.settingsBrowseFile([
-      { name: 'Video Files', extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'mts'] },
-    ])
-    if (filePath) {
-      await window.api.importFolder(filePath)
+    const folderPath = await window.api.settingsBrowseDir()
+    if (folderPath) {
+      await window.api.importFolder(folderPath)
     }
   }
 

@@ -206,7 +206,10 @@ export default function RoutineTable(): React.ReactElement {
     )
     if (videoFiles.length === 0) return
     for (const file of videoFiles) {
-      await window.api.importFile(routine.id, file.path)
+      const filePath = (file as File & { path: string }).path
+      if (filePath) {
+        await window.api.importFile(routine.id, filePath)
+      }
     }
   }
 
