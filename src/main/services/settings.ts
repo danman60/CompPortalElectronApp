@@ -28,24 +28,46 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
   if (target) target[last] = value
 }
 
+/** Deep merge: fills in missing keys from defaults without overwriting existing values. */
+function deepMerge(target: Record<string, unknown>, defaults: Record<string, unknown>): Record<string, unknown> {
+  for (const key of Object.keys(defaults)) {
+    if (!(key in target)) {
+      target[key] = defaults[key]
+    } else if (
+      typeof defaults[key] === 'object' &&
+      defaults[key] !== null &&
+      !Array.isArray(defaults[key]) &&
+      typeof target[key] === 'object' &&
+      target[key] !== null
+    ) {
+      target[key] = deepMerge(
+        target[key] as Record<string, unknown>,
+        defaults[key] as Record<string, unknown>,
+      )
+    }
+  }
+  return target
+}
+
 export function getSettings(): AppSettings {
-  let settings: AppSettings
+  let raw: Record<string, unknown>
   try {
-    settings = store.store as unknown as AppSettings
-    // Sanity check: if critical nested objects are missing, reset
-    if (!settings.obs || !settings.behavior || !settings.competition) {
+    raw = store.store as unknown as Record<string, unknown>
+    if (!raw.obs || !raw.behavior || !raw.competition) {
       logger.settings.warn('Settings corrupted (missing sections), resetting to defaults')
       store.clear()
-      settings = store.store as unknown as AppSettings
+      raw = store.store as unknown as Record<string, unknown>
     }
   } catch (err) {
     logger.settings.error('Failed to read settings, resetting to defaults:', err)
     store.clear()
-    settings = store.store as unknown as AppSettings
+    raw = store.store as unknown as Record<string, unknown>
   }
 
+  // --- Migrations (collected, applied in single store.set) ---
+  let migrated = false
+
   // Migrate old lowerThird settings key to overlay
-  const raw = settings as unknown as Record<string, unknown>
   if (raw.lowerThird && !raw.overlay) {
     const old = raw.lowerThird as Record<string, unknown>
     raw.overlay = {
@@ -57,50 +79,41 @@ export function getSettings(): AppSettings {
       defaultLogo: true,
     }
     delete raw.lowerThird
-    store.set('overlay', raw.overlay)
-    store.delete('lowerThird' as never)
     logger.settings.info('Migrated lowerThird settings to overlay')
+    migrated = true
   }
 
   // Migrate old compsync fields to shareCode format
   const cs = raw.compsync as Record<string, unknown> | undefined
   if (cs && ('tenant' in cs || 'pluginApiKey' in cs)) {
-    const shareCode = (cs.shareCode as string) || ''
-    raw.compsync = { shareCode }
-    store.set('compsync', raw.compsync)
+    raw.compsync = { shareCode: (cs.shareCode as string) || '' }
     logger.settings.info('Migrated compsync settings to shareCode format')
+    migrated = true
   }
 
-  // Migrate ffmpeg: add cpuPriority if missing
-  const ff = raw.ffmpeg as Record<string, unknown> | undefined
-  if (ff && !('cpuPriority' in ff)) {
-    ff.cpuPriority = 'below-normal'
-    store.set('ffmpeg', ff)
+  // Deep merge with defaults — fills in any missing keys at any nesting level
+  const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>
+  const merged = deepMerge(raw, defaults)
+  if (JSON.stringify(merged) !== JSON.stringify(raw)) {
+    migrated = true
   }
 
-  // Migrate behavior: add compactMode if missing
-  const beh = raw.behavior as Record<string, unknown> | undefined
-  if (beh && !('compactMode' in beh)) {
-    beh.compactMode = false
-    store.set('behavior', beh)
+  // Atomic migration: single store write
+  if (migrated) {
+    for (const [key, value] of Object.entries(merged)) {
+      store.set(key, value)
+    }
+    // Clean up legacy keys
+    if ('lowerThird' in store.store) {
+      store.delete('lowerThird' as never)
+    }
   }
 
-  // Migrate overlay: add animation + showX fields if missing
-  const ov = raw.overlay as Record<string, unknown> | undefined
-  if (ov) {
-    let ovChanged = false
-    if (!('animation' in ov)) { ov.animation = 'random'; ovChanged = true }
-    if (!('showEntryNumber' in ov)) { ov.showEntryNumber = true; ovChanged = true }
-    if (!('showRoutineTitle' in ov)) { ov.showRoutineTitle = true; ovChanged = true }
-    if (!('showDancers' in ov)) { ov.showDancers = true; ovChanged = true }
-    if (!('showStudioName' in ov)) { ov.showStudioName = true; ovChanged = true }
-    if (!('showCategory' in ov)) { ov.showCategory = true; ovChanged = true }
-    if (ovChanged) store.set('overlay', ov)
-  }
+  const settings = merged as unknown as AppSettings
 
   // Decrypt sensitive values
   for (const key of SENSITIVE_KEYS) {
-    const encrypted = getNestedValue(settings as unknown as Record<string, unknown>, key + '_encrypted') as string | undefined
+    const encrypted = getNestedValue(merged, key + '_encrypted') as string | undefined
     if (encrypted && safeStorage.isEncryptionAvailable()) {
       try {
         const decrypted = safeStorage.decryptString(Buffer.from(encrypted, 'base64'))

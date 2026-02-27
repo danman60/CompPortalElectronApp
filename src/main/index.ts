@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import path from 'path'
 import windowStateKeeper from 'electron-window-state'
 import { logger } from './logger'
@@ -9,16 +9,31 @@ import * as recording from './services/recording'
 import * as overlay from './services/overlay'
 import * as wsHub from './services/wsHub'
 import * as hotkeys from './services/hotkeys'
+import * as jobQueue from './services/jobQueue'
+import * as ffmpegService from './services/ffmpeg'
+import * as state from './services/state'
 import { checkAndRecover } from './services/crashRecovery'
-import { loadState } from './services/state'
+import { runStartupChecks } from './services/startup'
 
 // --- Global error handlers ---
 process.on('uncaughtException', (error) => {
-  logger.app.error('Uncaught exception:', error.message, error.stack)
+  logger.app.error('FATAL uncaught exception:', error.message, error.stack)
+
+  // Flush critical state to disk
+  try { jobQueue.flushSync() } catch {}
+  try { state.saveStateImmediate() } catch {}
+
+  dialog.showErrorBox(
+    'CompSync Media — Critical Error',
+    `The app encountered an unexpected error:\n\n${error.message}\n\nYour data has been saved. Please restart the app.`,
+  )
+
+  app.exit(1)
 })
 
 process.on('unhandledRejection', (reason) => {
   logger.app.error('Unhandled rejection:', reason instanceof Error ? reason.message : String(reason))
+  // Non-fatal — log and continue
 })
 
 let mainWindow: BrowserWindow | null = null
@@ -122,6 +137,12 @@ app.whenReady().then(async () => {
   logger.app.info('App starting, version:', app.getVersion())
   logger.app.info('User data path:', app.getPath('userData'))
 
+  // Initialize persistent job queue (must be before any service that enqueues)
+  jobQueue.init()
+
+  // Kill orphaned FFmpeg from previous crash
+  ffmpegService.killOrphanedProcess()
+
   // Register IPC handlers before creating window
   registerAllHandlers()
 
@@ -146,22 +167,41 @@ app.whenReady().then(async () => {
   hotkeys.register()
 
   // Load persisted state
-  // Note: OBS auto-connect is triggered by the renderer after loading settings
-  loadState()
+  state.loadState()
 
   // Check for crash recovery
   checkAndRecover().catch((err) => {
     logger.app.warn('Crash recovery check failed:', err)
   })
+
+  // Run startup validation (after window is ready so we can send report to renderer)
+  runStartupChecks().catch((err) => {
+    logger.app.warn('Startup checks failed:', err)
+  })
 })
 
 app.on('window-all-closed', () => {
   logger.app.info('All windows closed')
+  app.quit()
+})
+
+app.on('before-quit', () => {
+  logger.app.info('Graceful shutdown starting...')
+
+  // Cancel active FFmpeg
+  ffmpegService.cancelCurrent()
+
+  // Flush persistent state
+  state.saveStateImmediate()
+  jobQueue.cleanup()
+
+  // Stop servers + hotkeys
   hotkeys.unregister()
   wsHub.stop()
   overlay.stopServer()
   obs.disconnect()
-  app.quit()
+
+  logger.app.info('Graceful shutdown complete')
 })
 
 app.on('activate', () => {

@@ -1,20 +1,58 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process'
 import path from 'path'
 import fs from 'fs'
+import { app } from 'electron'
 import { FFmpegJob, FFmpegProgress, IPC_CHANNELS, EncodedFile } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getSettings } from './settings'
 import * as state from './state'
 import * as uploadService from './upload'
+import * as jobQueue from './jobQueue'
 import { broadcastFullState } from './recording'
 
 let ffmpegProcess: ChildProcess | null = null
-const queue: FFmpegJob[] = []
 let isProcessing = false
+
+const PID_FILE = 'ffmpeg.pid'
+const DEFAULT_TIMEOUT_MS = 600000 // 10 minutes
 
 function perfFileName(prefix: string): string { return prefix ? `${prefix}_P_performance.mp4` : 'P_performance.mp4' }
 function judgeFileName(prefix: string, i: number): string { return prefix ? `${prefix}_J${i}_commentary.mp4` : `J${i}_commentary.mp4` }
+
+function getPidFilePath(): string {
+  return path.join(app.getPath('userData'), PID_FILE)
+}
+
+function writePid(pid: number): void {
+  try {
+    fs.writeFileSync(getPidFilePath(), String(pid))
+  } catch {}
+}
+
+function clearPid(): void {
+  try {
+    const pidPath = getPidFilePath()
+    if (fs.existsSync(pidPath)) fs.unlinkSync(pidPath)
+  } catch {}
+}
+
+/** Kill orphaned FFmpeg from a previous crash. Called at startup. */
+export function killOrphanedProcess(): void {
+  try {
+    const pidPath = getPidFilePath()
+    if (!fs.existsSync(pidPath)) return
+    const pid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10)
+    if (isNaN(pid)) { clearPid(); return }
+    try {
+      process.kill(pid, 'SIGTERM')
+      logger.ffmpeg.warn(`Killed orphaned FFmpeg process (PID ${pid})`)
+    } catch {
+      // Process already dead — fine
+    }
+    clearPid()
+  } catch {}
+}
 
 function getFFmpegPath(): string {
   const settings = getSettings()
@@ -25,46 +63,54 @@ function getFFmpegPath(): string {
     logger.ffmpeg.warn(`Custom ffmpeg path not found: ${settings.ffmpeg.path}, falling back to bundled`)
   }
 
-  // Check extraResources (primary location in packaged app)
   const resourcePath = path.join(process.resourcesPath || '.', 'ffmpeg.exe')
   if (fs.existsSync(resourcePath)) {
     return resourcePath
   }
 
-  // Dev fallback: try ffmpeg-static npm package
   try {
     const ffmpegStatic = require('ffmpeg-static') as string
     if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
       return ffmpegStatic
     }
-  } catch {
-    // Not available
-  }
+  } catch {}
 
-  // Last resort: assume on PATH
   logger.ffmpeg.warn('No bundled ffmpeg found, assuming ffmpeg is on PATH')
   return 'ffmpeg'
 }
 
+/** Validate FFmpeg is available. Returns version string or null. */
+export function validateFFmpeg(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath()
+    try {
+      const proc = spawn(ffmpegPath, ['-version'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      let output = ''
+      proc.stdout?.on('data', (d: Buffer) => { output += d.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) {
+          const versionLine = output.split('\n')[0] || 'unknown'
+          resolve(versionLine.trim())
+        } else {
+          resolve(null)
+        }
+      })
+      proc.on('error', () => resolve(null))
+      setTimeout(() => { proc.kill(); resolve(null) }, 10000)
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
 function getSpawnOptions(): SpawnOptions {
-  const settings = getSettings()
-  const priority = settings.ffmpeg.cpuPriority
-
   const opts: SpawnOptions = { stdio: ['pipe', 'pipe', 'pipe'] }
-
-  // On Windows, use priority class flags
-  if (process.platform === 'win32' && priority !== 'normal') {
-    // Node.js spawn on Windows supports windowsHide + we use wmic to set priority after spawn
-    // But the cleanest way is using CREATE_SUSPENDED isn't available.
-    // Instead we'll use 'start /LOW' wrapper or set priority post-spawn.
-    // For simplicity, we spawn normally and set priority via child PID.
+  if (process.platform === 'win32') {
     opts.windowsHide = true
   }
-
   return opts
 }
 
-/** Set process priority on Windows after spawn */
 function setPriority(pid: number): void {
   const settings = getSettings()
   if (process.platform !== 'win32' || settings.ffmpeg.cpuPriority === 'normal') return
@@ -77,12 +123,11 @@ function setPriority(pid: number): void {
   if (!level) return
 
   try {
-    // Use wmic to set priority (works without elevation)
     const wmic = spawn('wmic', ['process', 'where', `ProcessId=${pid}`, 'CALL', 'setpriority', level], {
       stdio: 'ignore',
       windowsHide: true,
     })
-    wmic.on('error', () => {}) // ignore errors
+    wmic.on('error', () => {})
     logger.ffmpeg.info(`Set FFmpeg PID ${pid} priority to ${level}`)
   } catch {
     logger.ffmpeg.warn(`Failed to set FFmpeg priority to ${level}`)
@@ -93,11 +138,10 @@ function sendProgress(progress: FFmpegProgress): void {
   sendToRenderer(IPC_CHANNELS.FFMPEG_PROGRESS, progress)
 }
 
+/** Enqueue an FFmpeg job via the persistent job queue. */
 export function enqueueJob(job: FFmpegJob): void {
-  queue.push(job)
-  logger.ffmpeg.info(
-    `Job queued for routine ${job.routineId}, queue size: ${queue.length}`,
-  )
+  jobQueue.enqueue('encode', job.routineId, job as unknown as Record<string, unknown>)
+  logger.ffmpeg.info(`Job queued for routine ${job.routineId}`)
   sendProgress({
     routineId: job.routineId,
     state: 'queued',
@@ -108,10 +152,15 @@ export function enqueueJob(job: FFmpegJob): void {
 }
 
 async function processNext(): Promise<void> {
-  if (isProcessing || queue.length === 0) return
+  if (isProcessing) return
+
+  const jobRecord = jobQueue.getNext('encode')
+  if (!jobRecord) return
 
   isProcessing = true
-  const job = queue.shift()!
+  jobQueue.updateStatus(jobRecord.id, 'running')
+
+  const job = jobRecord.payload as unknown as FFmpegJob
 
   logger.ffmpeg.info(`Processing routine ${job.routineId}: ${job.inputPath}`)
   state.updateRoutineStatus(job.routineId, 'encoding')
@@ -127,7 +176,6 @@ async function processNext(): Promise<void> {
     await runFFmpeg(job)
     logger.ffmpeg.info(`Encoding complete for routine ${job.routineId}`)
 
-    // Build encodedFiles list from output directory
     const encodedFiles: EncodedFile[] = []
     const perfPath = path.join(job.outputDir, perfFileName(job.filePrefix))
     if (fs.existsSync(perfPath)) {
@@ -148,10 +196,8 @@ async function processNext(): Promise<void> {
       logger.ffmpeg.error(`No output files found after encoding routine ${job.routineId}`)
     }
 
-    // Update routine with encoded files and status
     state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles })
-
-    // Broadcast updated state to renderer
+    jobQueue.updateStatus(jobRecord.id, 'done')
     broadcastFullState()
 
     // Auto-upload if enabled
@@ -174,6 +220,11 @@ async function processNext(): Promise<void> {
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
     logger.ffmpeg.error(`Encoding failed for routine ${job.routineId}:`, errMsg)
+    jobQueue.updateStatus(jobRecord.id, 'failed', { error: errMsg })
+
+    // Clean up any temp files on failure
+    cleanupTempFiles(job.outputDir)
+
     sendProgress({
       routineId: job.routineId,
       state: 'error',
@@ -184,15 +235,16 @@ async function processNext(): Promise<void> {
   }
 
   isProcessing = false
-  processNext()
+  clearPid()
+  // Process next job (properly awaited)
+  await processNext()
 }
 
 async function runFFmpeg(job: FFmpegJob): Promise<void> {
   const ffmpegPath = getFFmpegPath()
 
-  // Ensure output directory exists
   if (!fs.existsSync(job.outputDir)) {
-    fs.mkdirSync(job.outputDir, { recursive: true })
+    await fs.promises.mkdir(job.outputDir, { recursive: true })
   }
 
   if (job.processingMode === 'smart') {
@@ -200,15 +252,13 @@ async function runFFmpeg(job: FFmpegJob): Promise<void> {
     return
   }
 
-  // Build args: single command, multiple outputs
   const args: string[] = ['-y', '-i', job.inputPath]
 
   if (job.processingMode === '720p') {
-    args.push(...buildReencodeArgs(job, '1280:720').slice(3)) // skip -y -i input
+    args.push(...buildReencodeArgs(job, '1280:720').slice(3))
   } else if (job.processingMode === '1080p') {
     args.push(...buildReencodeArgs(job, '1920:1080').slice(3))
   } else {
-    // Copy mode
     const perfOutput = path.join(job.outputDir, perfFileName(job.filePrefix))
     args.push('-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', perfOutput)
     for (let i = 1; i <= job.judgeCount; i++) {
@@ -217,17 +267,16 @@ async function runFFmpeg(job: FFmpegJob): Promise<void> {
     }
   }
 
-  await spawnFFmpeg(ffmpegPath, args)
+  await spawnFFmpegWithTimeout(ffmpegPath, args)
 }
 
-/** Smart encode: encode video once, then mux with each audio track */
 async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void> {
   const tempVideo = path.join(job.outputDir, '_temp_video.mp4')
 
   try {
     // Step 1: Encode video once (no audio)
     logger.ffmpeg.info('Smart encode step 1: encoding video...')
-    await spawnFFmpeg(ffmpegPath, [
+    await spawnFFmpegWithTimeout(ffmpegPath, [
       '-y', '-i', job.inputPath,
       '-map', '0:v:0',
       '-an',
@@ -238,19 +287,17 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
     // Step 2: Mux encoded video + each audio track
     logger.ffmpeg.info('Smart encode step 2: muxing audio tracks...')
 
-    // Performance (audio track 0)
     const perfOutput = path.join(job.outputDir, perfFileName(job.filePrefix))
-    await spawnFFmpeg(ffmpegPath, [
+    await spawnFFmpegWithTimeout(ffmpegPath, [
       '-y', '-i', tempVideo, '-i', job.inputPath,
       '-map', '0:v:0', '-map', '1:a:0',
       '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
       perfOutput,
     ])
 
-    // Judge tracks
     for (let i = 1; i <= job.judgeCount; i++) {
       const judgeOutput = path.join(job.outputDir, judgeFileName(job.filePrefix, i))
-      await spawnFFmpeg(ffmpegPath, [
+      await spawnFFmpegWithTimeout(ffmpegPath, [
         '-y', '-i', tempVideo, '-i', job.inputPath,
         '-map', '0:v:0', '-map', `1:a:${i}`,
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
@@ -259,11 +306,12 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
     }
   } finally {
     // Clean up temp video
-    try { fs.unlinkSync(tempVideo) } catch {}
+    try { await fs.promises.unlink(tempVideo) } catch {}
   }
 }
 
-function spawnFFmpeg(ffmpegPath: string, args: string[]): Promise<void> {
+/** Spawn FFmpeg with a timeout. Kills process on timeout. */
+function spawnFFmpegWithTimeout(ffmpegPath: string, args: string[], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     logger.ffmpeg.info(`FFmpeg command: ${ffmpegPath} ${args.join(' ')}`)
 
@@ -272,7 +320,22 @@ function spawnFFmpeg(ffmpegPath: string, args: string[]): Promise<void> {
 
     if (ffmpegProcess.pid) {
       setPriority(ffmpegProcess.pid)
+      writePid(ffmpegProcess.pid)
     }
+
+    // Timeout — kill if FFmpeg hangs
+    const timer = setTimeout(() => {
+      logger.ffmpeg.error(`FFmpeg timed out after ${timeoutMs / 1000}s, killing process`)
+      if (ffmpegProcess) {
+        ffmpegProcess.kill('SIGTERM')
+        setTimeout(() => {
+          if (ffmpegProcess && !ffmpegProcess.killed) {
+            ffmpegProcess.kill('SIGKILL')
+          }
+        }, 5000)
+      }
+      reject(new Error(`FFmpeg timed out after ${timeoutMs / 1000}s`))
+    }, timeoutMs)
 
     ffmpegProcess.stdout?.on('data', (data: Buffer) => {
       logger.ffmpeg.debug(`stdout: ${data.toString().trim()}`)
@@ -286,6 +349,7 @@ function spawnFFmpeg(ffmpegPath: string, args: string[]): Promise<void> {
     })
 
     ffmpegProcess.on('close', (code) => {
+      clearTimeout(timer)
       ffmpegProcess = null
       if (code === 0) {
         resolve()
@@ -295,6 +359,7 @@ function spawnFFmpeg(ffmpegPath: string, args: string[]): Promise<void> {
     })
 
     ffmpegProcess.on('error', (err) => {
+      clearTimeout(timer)
       ffmpegProcess = null
       reject(err)
     })
@@ -327,15 +392,32 @@ function buildReencodeArgs(job: FFmpegJob, scale: string): string[] {
   return args
 }
 
+/** Clean up temp files from failed smart encode */
+function cleanupTempFiles(outputDir: string): void {
+  try {
+    const tempPath = path.join(outputDir, '_temp_video.mp4')
+    if (fs.existsSync(tempPath)) {
+      fs.unlinkSync(tempPath)
+      logger.ffmpeg.info(`Cleaned up temp file: ${tempPath}`)
+    }
+  } catch {}
+}
+
 export function getQueueLength(): number {
-  return queue.length + (isProcessing ? 1 : 0)
+  return jobQueue.getPending('encode').length + jobQueue.getRunning('encode').length
 }
 
 export function cancelCurrent(): void {
   if (ffmpegProcess) {
     ffmpegProcess.kill('SIGTERM')
+    setTimeout(() => {
+      if (ffmpegProcess && !ffmpegProcess.killed) {
+        ffmpegProcess.kill('SIGKILL')
+      }
+    }, 5000)
     ffmpegProcess = null
     isProcessing = false
+    clearPid()
     logger.ffmpeg.warn('Current FFmpeg process cancelled')
   }
 }

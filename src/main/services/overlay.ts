@@ -46,6 +46,13 @@ export function getOverlayState(): OverlayState {
 export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird'): OverlayState {
   const el = overlayState[element]
   el.visible = !el.visible
+
+  // Cancel auto-hide timer when toggling lower third off
+  if (element === 'lowerThird' && !el.visible && autoHideTimer) {
+    clearTimeout(autoHideTimer)
+    autoHideTimer = null
+  }
+
   logger.app.info(`Overlay ${element}: ${el.visible ? 'ON' : 'OFF'}`)
   notifyChange()
   return overlayState

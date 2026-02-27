@@ -32,6 +32,7 @@ let state: OBSState = {
 }
 
 let recordingTimer: NodeJS.Timeout | null = null
+let eventHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = []
 
 function broadcastState(): void {
   sendToRenderer(IPC_CHANNELS.OBS_STATE, state)
@@ -64,6 +65,7 @@ export async function connect(url: string, password: string): Promise<void> {
     // Sync initial state
     await syncState()
     broadcastState()
+    registerOBSEvents()
 
     if (reconnectTimer) {
       clearInterval(reconnectTimer)
@@ -87,6 +89,7 @@ export async function disconnect(): Promise<void> {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  removeOBSEvents()
   reconnectAttempts = 0
   if (recordingTimer) {
     clearInterval(recordingTimer)
@@ -239,63 +242,72 @@ export async function getInputList(): Promise<string[]> {
 
 // --- Events ---
 
-// Recording state changes
-obs.on('RecordStateChanged', (event) => {
-  logger.obs.info('RecordStateChanged:', event.outputState, event.outputPath)
-  if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED') {
-    state.isRecording = true
-    startRecordingTimer()
-    onRecordStartedCb?.({ timestamp: new Date().toISOString() })
-  } else if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPED') {
-    state.isRecording = false
-    stopRecordingTimer()
-    state.currentOutputPath = event.outputPath
-    onRecordStoppedCb?.({ outputPath: event.outputPath, timestamp: new Date().toISOString() })
+function registerOBSEvents(): void {
+  removeOBSEvents() // Clear any previous listeners
+
+  const handlers: Array<[string, (...args: any[]) => void]> = [
+    ['RecordStateChanged', (event: any) => {
+      logger.obs.info('RecordStateChanged:', event.outputState, event.outputPath)
+      if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED') {
+        state.isRecording = true
+        startRecordingTimer()
+        onRecordStartedCb?.({ timestamp: new Date().toISOString() })
+      } else if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPED') {
+        state.isRecording = false
+        stopRecordingTimer()
+        state.currentOutputPath = event.outputPath
+        onRecordStoppedCb?.({ outputPath: event.outputPath, timestamp: new Date().toISOString() })
+      }
+      broadcastState()
+    }],
+    ['StreamStateChanged', (event: any) => {
+      logger.obs.info('StreamStateChanged:', event.outputState)
+      if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED') {
+        state.isStreaming = true
+      } else if (
+        event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPED' ||
+        event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPING'
+      ) {
+        state.isStreaming = false
+      }
+      // STARTING state: don't change — wait for STARTED confirmation
+      broadcastState()
+    }],
+    ['ReplayBufferSaved', (event: any) => {
+      logger.obs.info('ReplayBufferSaved:', event.savedReplayPath)
+      sendToRenderer('obs:replay-saved', { path: event.savedReplayPath })
+    }],
+    ['InputVolumeMeters', (event: any) => {
+      const levels: AudioLevel[] = event.inputs.map((input: any) => ({
+        inputName: input.inputName as string,
+        levels: (input.inputLevelsMul as number[][]).map((ch) => ch[0] || 0),
+      }))
+      sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
+    }],
+    ['ConnectionClosed', () => {
+      if (state.connectionStatus === 'connected') {
+        logger.obs.warn('Connection lost')
+      }
+      state.connectionStatus = 'disconnected'
+      state.isRecording = false
+      state.isStreaming = false
+      stopRecordingTimer()
+      broadcastState()
+    }],
+  ]
+
+  for (const [event, handler] of handlers) {
+    obs.on(event as any, handler as any)
+    eventHandlers.push({ event, handler })
   }
-  broadcastState()
-})
+}
 
-// Stream state changes
-obs.on('StreamStateChanged', (event) => {
-  logger.obs.info('StreamStateChanged:', event.outputState)
-  if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED') {
-    state.isStreaming = true
-  } else if (
-    event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPED' ||
-    event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPING'
-  ) {
-    state.isStreaming = false
+function removeOBSEvents(): void {
+  for (const { event, handler } of eventHandlers) {
+    obs.off(event as any, handler as any)
   }
-  // STARTING state: don't change — wait for STARTED confirmation
-  broadcastState()
-})
-
-// Replay buffer saved
-obs.on('ReplayBufferSaved', (event) => {
-  logger.obs.info('ReplayBufferSaved:', event.savedReplayPath)
-  sendToRenderer('obs:replay-saved', { path: event.savedReplayPath })
-})
-
-// Audio meters — high frequency, throttled in renderer
-obs.on('InputVolumeMeters', (event) => {
-  const levels: AudioLevel[] = event.inputs.map((input) => ({
-    inputName: input.inputName as string,
-    levels: (input.inputLevelsMul as number[][]).map((ch) => ch[0] || 0),
-  }))
-  sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
-})
-
-// Connection closed
-obs.on('ConnectionClosed', () => {
-  if (state.connectionStatus === 'connected') {
-    logger.obs.warn('Connection lost')
-  }
-  state.connectionStatus = 'disconnected'
-  state.isRecording = false
-  state.isStreaming = false
-  stopRecordingTimer()
-  broadcastState()
-})
+  eventHandlers = []
+}
 
 export function getState(): OBSState {
   return { ...state }

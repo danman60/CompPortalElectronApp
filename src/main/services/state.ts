@@ -8,12 +8,14 @@ const STATE_FILE = 'compsync-state.json'
 
 interface PersistedState {
   competition: Competition | null
-  currentRoutineIndex: number
+  currentRoutineId: string | null   // ID-based (was index-based)
+  currentRoutineIndex?: number      // legacy — used for migration only
   savedAt: string
 }
 
 let currentCompetition: Competition | null = null
-let currentRoutineIndex = 0
+let currentRoutineId: string | null = null
+let saveTimer: NodeJS.Timeout | null = null
 
 function getStatePath(): string {
   const settings = getSettings()
@@ -21,17 +23,36 @@ function getStatePath(): string {
   if (outputDir) {
     return path.join(outputDir, STATE_FILE)
   }
-  // Fallback to current dir
   return STATE_FILE
 }
 
+// --- Persistence (debounced + atomic) ---
+
+/** Debounced save — 500ms. For critical moments use saveStateImmediate(). */
 export function saveState(): void {
+  if (saveTimer) return
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    doSave()
+  }, 500)
+}
+
+/** Immediate flush for critical transitions (recording start/stop, app closing). */
+export function saveStateImmediate(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  doSave()
+}
+
+function doSave(): void {
   if (!currentCompetition) return
 
   const statePath = getStatePath()
   const state: PersistedState = {
     competition: currentCompetition,
-    currentRoutineIndex,
+    currentRoutineId,
     savedAt: new Date().toISOString(),
   }
 
@@ -40,7 +61,10 @@ export function saveState(): void {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2))
+    // Atomic write: write to .tmp then rename
+    const tmpPath = statePath + '.tmp'
+    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2))
+    fs.renameSync(tmpPath, statePath)
     logger.app.debug(`State saved to ${statePath}`)
   } catch (err) {
     logger.app.error('Failed to save state:', err)
@@ -51,10 +75,22 @@ export function loadState(): PersistedState | null {
   const statePath = getStatePath()
   try {
     if (fs.existsSync(statePath)) {
-      const data = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
+      const data: PersistedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
       logger.app.info(`State loaded from ${statePath}`)
       currentCompetition = data.competition
-      currentRoutineIndex = data.currentRoutineIndex || 0
+
+      // Migrate from index-based to ID-based
+      if (data.currentRoutineId) {
+        currentRoutineId = data.currentRoutineId
+      } else if (data.currentRoutineIndex !== undefined && data.competition) {
+        const visibleRoutines = data.competition.routines.filter(r => r.status !== 'skipped')
+        const routine = visibleRoutines[data.currentRoutineIndex]
+        currentRoutineId = routine?.id || null
+        logger.app.info(`Migrated state from index ${data.currentRoutineIndex} to ID ${currentRoutineId}`)
+      } else {
+        currentRoutineId = null
+      }
+
       return data
     }
   } catch (err) {
@@ -63,14 +99,29 @@ export function loadState(): PersistedState | null {
   return null
 }
 
+// --- Helper: resolve current routine index from ID ---
+
+function getVisibleRoutines(): Routine[] {
+  if (!currentCompetition) return []
+  return currentCompetition.routines.filter(r => r.status !== 'skipped')
+}
+
+function getCurrentIndex(): number {
+  if (!currentRoutineId) return 0
+  const visible = getVisibleRoutines()
+  const idx = visible.findIndex(r => r.id === currentRoutineId)
+  return idx >= 0 ? idx : 0
+}
+
+// --- Public API ---
+
 export function setCompetition(comp: Competition): void {
   currentCompetition = comp
-  currentRoutineIndex = 0
+  currentRoutineId = null
 
   // Try to restore routine states from persisted state
   const existing = loadState()
   if (existing?.competition?.competitionId === comp.competitionId) {
-    // Merge statuses from persisted state
     let matchedCount = 0
     for (const routine of comp.routines) {
       const persisted = existing.competition.routines.find((r) => r.id === routine.id)
@@ -86,13 +137,28 @@ export function setCompetition(comp: Competition): void {
         matchedCount++
       }
     }
-    currentRoutineIndex = existing.currentRoutineIndex
-    logger.app.info(`Restored state for ${comp.name}, index ${currentRoutineIndex}, ${matchedCount}/${comp.routines.length} routines matched`)
+
+    // Restore current routine by ID (migrated or native)
+    if (currentRoutineId) {
+      const found = comp.routines.find(r => r.id === currentRoutineId)
+      if (!found) {
+        logger.app.warn(`Persisted current routine ID ${currentRoutineId} not found in loaded competition`)
+        currentRoutineId = null
+      }
+    }
+
+    logger.app.info(`Restored state for ${comp.name}, currentId=${currentRoutineId}, ${matchedCount}/${comp.routines.length} routines matched`)
     if (matchedCount === 0 && existing.competition.routines.length > 0) {
       logger.app.warn(`No routine IDs matched — routine IDs may have changed. All progress reset to pending.`)
     } else if (matchedCount < comp.routines.length) {
       logger.app.warn(`${comp.routines.length - matchedCount} routines had no persisted state (new or changed IDs)`)
     }
+  }
+
+  // Default to first routine if none set
+  if (!currentRoutineId && comp.routines.length > 0) {
+    const visible = comp.routines.filter(r => r.status !== 'skipped')
+    if (visible.length > 0) currentRoutineId = visible[0].id
   }
 
   saveState()
@@ -103,64 +169,63 @@ export function getCompetition(): Competition | null {
 }
 
 export function getCurrentRoutine(): Routine | null {
-  if (!currentCompetition) return null
-  const visibleRoutines = currentCompetition.routines.filter((r) => r.status !== 'skipped')
-  return visibleRoutines[currentRoutineIndex] || null
+  if (!currentCompetition || !currentRoutineId) return null
+  const visible = getVisibleRoutines()
+  return visible.find(r => r.id === currentRoutineId) || null
 }
 
 export function getCurrentRoutineIndex(): number {
-  return currentRoutineIndex
+  return getCurrentIndex()
 }
 
 export function getNextRoutine(): Routine | null {
   if (!currentCompetition) return null
-  const visibleRoutines = currentCompetition.routines.filter((r) => r.status !== 'skipped')
-  return visibleRoutines[currentRoutineIndex + 1] || null
+  const visible = getVisibleRoutines()
+  const idx = getCurrentIndex()
+  return visible[idx + 1] || null
 }
 
 export function advanceToNext(): Routine | null {
   if (!currentCompetition) return null
-  const visibleRoutines = currentCompetition.routines.filter((r) => r.status !== 'skipped')
-  if (currentRoutineIndex < visibleRoutines.length - 1) {
-    currentRoutineIndex++
+  const visible = getVisibleRoutines()
+  const idx = getCurrentIndex()
+  if (idx < visible.length - 1) {
+    currentRoutineId = visible[idx + 1].id
     saveState()
-    return visibleRoutines[currentRoutineIndex]
+    return visible[idx + 1]
   }
   return null
 }
 
 export function goToPrev(): Routine | null {
   if (!currentCompetition) return null
-  if (currentRoutineIndex > 0) {
-    currentRoutineIndex--
+  const visible = getVisibleRoutines()
+  const idx = getCurrentIndex()
+  if (idx > 0) {
+    currentRoutineId = visible[idx - 1].id
     saveState()
-    const visibleRoutines = currentCompetition.routines.filter((r) => r.status !== 'skipped')
-    return visibleRoutines[currentRoutineIndex]
+    return visible[idx - 1]
   }
   return null
 }
 
 export function jumpToRoutine(routineId: string): Routine | null {
   if (!currentCompetition) return null
-  const visibleRoutines = currentCompetition.routines.filter((r) => r.status !== 'skipped')
-  const idx = visibleRoutines.findIndex((r) => r.id === routineId)
-  if (idx >= 0) {
-    currentRoutineIndex = idx
+  const visible = getVisibleRoutines()
+  const found = visible.find(r => r.id === routineId)
+  if (found) {
+    currentRoutineId = routineId
     saveState()
-    logger.app.info(`Jumped to routine #${visibleRoutines[idx].entryNumber} (index ${idx})`)
-    return visibleRoutines[idx]
+    logger.app.info(`Jumped to routine #${found.entryNumber} (id ${routineId})`)
+    return found
   }
   // If routine is skipped, unskip it first and jump
-  const allIdx = currentCompetition.routines.findIndex((r) => r.id === routineId)
-  if (allIdx >= 0 && currentCompetition.routines[allIdx].status === 'skipped') {
-    currentCompetition.routines[allIdx].status = 'pending'
-    const newVisible = currentCompetition.routines.filter((r) => r.status !== 'skipped')
-    const newIdx = newVisible.findIndex((r) => r.id === routineId)
-    if (newIdx >= 0) {
-      currentRoutineIndex = newIdx
-      saveState()
-      return newVisible[newIdx]
-    }
+  const allRoutine = currentCompetition.routines.find(r => r.id === routineId)
+  if (allRoutine && allRoutine.status === 'skipped') {
+    allRoutine.status = 'pending'
+    currentRoutineId = routineId
+    saveState()
+    return allRoutine
   }
   return null
 }
@@ -191,7 +256,14 @@ export function updateRoutineStatus(
   }
 
   logger.app.info(`Routine ${routine.entryNumber} "${routine.routineTitle}": ${oldStatus} → ${status}`)
-  saveState()
+
+  // Critical transitions get immediate flush
+  if (status === 'recording' || oldStatus === 'recording') {
+    saveStateImmediate()
+  } else {
+    saveState()
+  }
+
   return routine
 }
 
@@ -218,14 +290,12 @@ export function exportReport(): string {
   const lines: string[] = []
   const now = new Date()
 
-  // Header
   lines.push(`CompSync Media — Session Report`)
   lines.push(`Competition: ${currentCompetition.name}`)
   lines.push(`Generated: ${now.toLocaleString()}`)
   lines.push(`Source: ${currentCompetition.source}`)
   lines.push('')
 
-  // Summary
   const total = currentCompetition.routines.length
   const recorded = currentCompetition.routines.filter((r) => r.status !== 'pending' && r.status !== 'skipped').length
   const errors = currentCompetition.routines.filter((r) => r.status === 'failed' || r.error).length
@@ -236,7 +306,6 @@ export function exportReport(): string {
   lines.push(`With notes: ${withNotes}`)
   lines.push('')
 
-  // CSV header
   lines.push('Entry#,Title,Studio,Category,Status,Notes,Error,RecordStart,RecordStop,Duration')
 
   for (const r of currentCompetition.routines) {
@@ -263,4 +332,12 @@ export function exportReport(): string {
   }
 
   return lines.join('\n')
+}
+
+export function cleanup(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  doSave()
 }

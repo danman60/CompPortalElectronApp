@@ -62,6 +62,10 @@ export function start(): void {
 
   heartbeatInterval = setInterval(() => {
     for (const ws of clients) {
+      if (ws.readyState !== WebSocket.OPEN) {
+        clients.delete(ws)
+        continue
+      }
       if (!ws.isAlive) {
         ws.terminate()
         clients.delete(ws)
@@ -105,52 +109,56 @@ function handleMessage(ws: TaggedSocket, msg: Record<string, unknown>): void {
 }
 
 async function handleCommand(cmd: WSCommandMessage): Promise<void> {
-  logger.app.info(`WebSocket command: ${cmd.action}${cmd.element ? ' ' + cmd.element : ''}`)
-  const obsState = obs.getState()
+  try {
+    logger.app.info(`WebSocket command: ${cmd.action}${cmd.element ? ' ' + cmd.element : ''}`)
+    const obsState = obs.getState()
 
-  switch (cmd.action) {
-    case 'nextFull':
-      await recording.nextFull()
-      break
-    case 'nextRoutine':
-      await recording.next()
-      break
-    case 'prev':
-      await recording.prev()
-      break
-    case 'skip': {
-      const current = stateService.getCurrentRoutine()
-      if (current) {
-        if (current.status === 'skipped') stateService.unskipRoutine(current.id)
-        else stateService.skipRoutine(current.id)
-        recording.broadcastFullState()
+    switch (cmd.action) {
+      case 'nextFull':
+        await recording.nextFull()
+        break
+      case 'nextRoutine':
+        await recording.next()
+        break
+      case 'prev':
+        await recording.prev()
+        break
+      case 'skip': {
+        const current = stateService.getCurrentRoutine()
+        if (current) {
+          if (current.status === 'skipped') stateService.unskipRoutine(current.id)
+          else stateService.skipRoutine(current.id)
+          recording.broadcastFullState()
+        }
+        break
       }
-      break
+      case 'toggleRecord':
+        if (obsState.connectionStatus === 'connected') {
+          if (obsState.isRecording) await obs.stopRecord()
+          else await obs.startRecord()
+        }
+        break
+      case 'toggleStream':
+        if (obsState.connectionStatus === 'connected') {
+          if (obsState.isStreaming) await obs.stopStream()
+          else await obs.startStream()
+        }
+        break
+      case 'saveReplay':
+        if (obsState.connectionStatus === 'connected') {
+          await obs.saveReplay()
+        }
+        break
+      case 'toggleOverlay':
+        if (cmd.element) {
+          overlay.toggleElement(cmd.element)
+        }
+        break
     }
-    case 'toggleRecord':
-      if (obsState.connectionStatus === 'connected') {
-        if (obsState.isRecording) await obs.stopRecord()
-        else await obs.startRecord()
-      }
-      break
-    case 'toggleStream':
-      if (obsState.connectionStatus === 'connected') {
-        if (obsState.isStreaming) await obs.stopStream()
-        else await obs.startStream()
-      }
-      break
-    case 'saveReplay':
-      if (obsState.connectionStatus === 'connected') {
-        await obs.saveReplay()
-      }
-      break
-    case 'toggleOverlay':
-      if (cmd.element) {
-        overlay.toggleElement(cmd.element)
-      }
-      break
+    broadcastState()
+  } catch (err) {
+    logger.app.error(`WebSocket command ${cmd.action} failed:`, err instanceof Error ? err.message : String(err))
   }
-  broadcastState()
 }
 
 function buildStateMessage(): WSStateMessage {

@@ -269,6 +269,17 @@ export const IPC_CHANNELS = {
   PREVIEW_START: 'preview:start',
   PREVIEW_STOP: 'preview:stop',
   PREVIEW_FRAME: 'preview:frame',
+
+  // Import
+  RECORDING_IMPORT_FILE: 'recording:import-file',
+  RECORDING_IMPORT_FOLDER: 'recording:import-folder',
+  RECORDING_IMPORT_CONFIRM: 'recording:import-confirm',
+
+  // Job Queue
+  JOB_QUEUE_GET: 'job:queue-get',
+  JOB_QUEUE_RETRY: 'job:queue-retry',
+  JOB_QUEUE_CANCEL: 'job:queue-cancel',
+  JOB_QUEUE_PROGRESS: 'job:queue-progress',
 } as const
 
 // --- FFmpeg ---
@@ -339,6 +350,39 @@ export interface OverlayState {
   clock: OverlayElementState
   logo: OverlayLogoState
   lowerThird: OverlayLowerThirdState
+}
+
+// --- Job Queue ---
+
+export type JobType = 'encode' | 'upload' | 'photo-import'
+export type JobStatus = 'pending' | 'running' | 'done' | 'failed'
+
+export interface JobRecord {
+  id: string
+  type: JobType
+  routineId: string
+  status: JobStatus
+  attempts: number
+  maxAttempts: number
+  payload: Record<string, unknown>
+  createdAt: string   // ISO
+  updatedAt: string   // ISO
+  error?: string
+  progress?: number   // 0-100
+}
+
+export interface ImportMatch {
+  file: string
+  routineId: string
+  confidence: 'exact' | 'probable' | 'timestamp' | 'unmatched'
+}
+
+export interface StartupReport {
+  ffmpegAvailable: boolean
+  diskFreeGB: number
+  diskWarning: boolean
+  resumedJobs: number
+  orphanedFiles: number
 }
 
 // --- WebSocket Hub ---
