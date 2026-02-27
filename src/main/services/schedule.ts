@@ -181,24 +181,34 @@ export function clearResolvedConnection(): void {
   resolvedConnection = null
 }
 
+const API_TIMEOUT_MS = 30000
+
 /** Resolve a share code to tenant + competition details */
 export async function resolveShareCode(shareCode: string): Promise<ResolvedConnection> {
   const code = shareCode.trim().toUpperCase()
   logger.schedule.info(`Resolving share code: ${code}`)
 
-  const response = await fetch(`https://www.compsync.net/api/plugin/resolve/${encodeURIComponent(code)}`)
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
+  try {
+    const response = await fetch(`https://www.compsync.net/api/plugin/resolve/${encodeURIComponent(code)}`, {
+      signal: abort.signal,
+    })
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Share code resolution failed: ${response.status} ${text}`)
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Share code resolution failed: ${response.status} ${text}`)
+    }
+
+    const data = await response.json()
+    logger.schedule.info(`Share code resolved: ${data.name} (${data.tenant})`)
+
+    // Store for use by upload service
+    resolvedConnection = data
+    return data
+  } finally {
+    clearTimeout(timer)
   }
-
-  const data = await response.json()
-  logger.schedule.info(`Share code resolved: ${data.name} (${data.tenant})`)
-
-  // Store for use by upload service
-  resolvedConnection = data
-  return data
 }
 
 /** Load schedule via share code — resolves code then fetches schedule */
@@ -207,18 +217,26 @@ export async function loadFromShareCode(shareCode: string): Promise<Competition>
 
   logger.schedule.info(`Loading schedule from ${resolved.apiBase}/api/plugin/schedule/${resolved.competitionId}`)
 
-  const response = await fetch(`${resolved.apiBase}/api/plugin/schedule/${resolved.competitionId}`, {
-    headers: {
-      Authorization: `Bearer ${resolved.apiKey}`,
-    },
-  })
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
+  let data: unknown
+  try {
+    const response = await fetch(`${resolved.apiBase}/api/plugin/schedule/${resolved.competitionId}`, {
+      headers: {
+        Authorization: `Bearer ${resolved.apiKey}`,
+      },
+      signal: abort.signal,
+    })
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`API schedule load failed: ${response.status} ${text}`)
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`API schedule load failed: ${response.status} ${text}`)
+    }
+
+    data = await response.json()
+  } finally {
+    clearTimeout(timer)
   }
-
-  const data = await response.json()
   logger.schedule.info(`Loaded ${data.routines.length} routines from share code`)
   return data as Competition
 }

@@ -15,6 +15,9 @@ import { logger } from '../logger'
 // --- Active recording tracking ---
 let activeRecordingRoutineId: string | null = null
 
+// --- Navigation busy guard (prevents rapid double-advance) ---
+let navBusy = false
+
 // --- Auto-fire lower third ---
 let autoFireEnabled = false
 let autoFireTimer: NodeJS.Timeout | null = null
@@ -216,10 +219,23 @@ export async function handleRecordingStopped(
   await waitForFileLock(outputPath)
 
   try {
-    await fs.promises.rename(outputPath, newPath)
+    // Try rename first (fast, same-drive). Fall back to copy+delete for cross-drive (EXDEV).
+    try {
+      await fs.promises.rename(outputPath, newPath)
+    } catch (renameErr: unknown) {
+      const code = (renameErr as NodeJS.ErrnoException).code
+      if (code === 'EXDEV') {
+        logger.app.info(`Cross-drive detected, copying: ${outputPath} → ${newPath}`)
+        await fs.promises.copyFile(outputPath, newPath)
+        await fs.promises.unlink(outputPath)
+      } else {
+        throw renameErr
+      }
+    }
+
     const stat = await fs.promises.stat(newPath)
     const fileSizeMB = (stat.size / (1024 * 1024)).toFixed(1)
-    logger.app.info(`Renamed: ${outputPath} → ${newPath} (${fileSizeMB} MB)`)
+    logger.app.info(`Moved: ${outputPath} → ${newPath} (${fileSizeMB} MB)`)
 
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath, outputDir: routineDir })
 
@@ -239,7 +255,7 @@ export async function handleRecordingStopped(
       })
     }
   } catch (err) {
-    logger.app.error('File rename failed:', err)
+    logger.app.error('File move failed:', err)
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath, error: String(err) })
   }
 
@@ -275,93 +291,105 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
 }
 
 export async function next(): Promise<void> {
-  const settings = getSettings()
-  const obsState = obs.getState()
+  if (navBusy) { logger.app.debug('next() blocked — already in progress'); return }
+  navBusy = true
+  try {
+    const settings = getSettings()
+    const obsState = obs.getState()
 
-  // If recording, stop first
-  if (obsState.isRecording && obsState.connectionStatus === 'connected') {
-    try {
-      await obs.stopRecord()
-    } catch (err) {
-      logger.app.error('Failed to stop recording on Next:', err instanceof Error ? err.message : err)
+    // If recording, stop first
+    if (obsState.isRecording && obsState.connectionStatus === 'connected') {
+      try {
+        await obs.stopRecord()
+      } catch (err) {
+        logger.app.error('Failed to stop recording on Next:', err instanceof Error ? err.message : err)
+      }
+      // RecordStateChanged event will handle file rename and encoding
     }
-    // RecordStateChanged event will handle file rename and encoding
-  }
 
-  // Advance to next routine
-  const nextRoutine = state.advanceToNext()
-  if (!nextRoutine) {
-    logger.app.info('No more routines')
-    return
-  }
-
-  // Update overlay data
-  if (settings.behavior.syncLowerThird) {
-    const comp = state.getCompetition()
-    const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
-    overlay.updateRoutineData({
-      entryNumber: nextRoutine.entryNumber,
-      routineTitle: nextRoutine.routineTitle,
-      dancers: nextRoutine.dancers,
-      studioName: nextRoutine.studioName,
-      category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
-      current: state.getCurrentRoutineIndex() + 1,
-      total: visibleCount,
-    })
-  }
-
-  // Auto-fire: schedule 3s delay. Manual fire still works independently.
-  if (autoFireEnabled) {
-    scheduleAutoFire()
-  }
-
-  // Auto-record if enabled
-  if (settings.behavior.autoRecordOnNext && obsState.connectionStatus === 'connected') {
-    try {
-      await obs.startRecord()
-    } catch (err) {
-      logger.app.error('Auto-record failed:', err instanceof Error ? err.message : err)
+    // Advance to next routine
+    const nextRoutine = state.advanceToNext()
+    if (!nextRoutine) {
+      logger.app.info('No more routines')
+      return
     }
-  }
 
-  broadcastFullState()
+    // Update overlay data
+    if (settings.behavior.syncLowerThird) {
+      const comp = state.getCompetition()
+      const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
+      overlay.updateRoutineData({
+        entryNumber: nextRoutine.entryNumber,
+        routineTitle: nextRoutine.routineTitle,
+        dancers: nextRoutine.dancers,
+        studioName: nextRoutine.studioName,
+        category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
+        current: state.getCurrentRoutineIndex() + 1,
+        total: visibleCount,
+      })
+    }
+
+    // Auto-fire: schedule 3s delay. Manual fire still works independently.
+    if (autoFireEnabled) {
+      scheduleAutoFire()
+    }
+
+    // Auto-record if enabled
+    if (settings.behavior.autoRecordOnNext && obsState.connectionStatus === 'connected') {
+      try {
+        await obs.startRecord()
+      } catch (err) {
+        logger.app.error('Auto-record failed:', err instanceof Error ? err.message : err)
+      }
+    }
+
+    broadcastFullState()
+  } finally {
+    navBusy = false
+  }
 }
 
 export async function nextFull(): Promise<void> {
-  const connected = obs.getState().connectionStatus === 'connected'
+  if (navBusy) { logger.app.debug('nextFull() blocked — already in progress'); return }
+  navBusy = true
+  try {
+    const connected = obs.getState().connectionStatus === 'connected'
 
-  if (connected && obs.getState().isRecording) {
-    try {
-      // Wait for OBS to confirm recording stopped (event-driven, 15s timeout fallback)
-      const stopPromise = obs.waitForRecordStop()
-      await obs.stopRecord()
-      await stopPromise
-    } catch (err) {
-      logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
+    if (connected && obs.getState().isRecording) {
+      try {
+        // Wait for OBS to confirm recording stopped (event-driven, 15s timeout fallback)
+        const stopPromise = obs.waitForRecordStop()
+        await obs.stopRecord()
+        await stopPromise
+      } catch (err) {
+        logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
+      }
     }
-  }
 
-  const nextRoutine = state.advanceToNext()
-  if (!nextRoutine) {
-    logger.app.info('nextFull: no more routines')
-    return
-  }
-
-  broadcastFullState()
-
-  if (connected) {
-    try {
-      await obs.startRecord()
-    } catch (err) {
-      logger.app.error('nextFull: start recording failed:', err instanceof Error ? err.message : err)
+    const nextRoutine = state.advanceToNext()
+    if (!nextRoutine) {
+      logger.app.info('nextFull: no more routines')
+      return
     }
+
+    broadcastFullState()
+
+    if (connected) {
+      try {
+        await obs.startRecord()
+      } catch (err) {
+        logger.app.error('nextFull: start recording failed:', err instanceof Error ? err.message : err)
+      }
+    }
+
+    setTimeout(() => {
+      overlay.fireLowerThird()
+    }, 5000)
+
+    logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
+  } finally {
+    navBusy = false
   }
-
-  setTimeout(() => {
-    overlay.fireLowerThird()
-  }, 5000)
-
-  logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
 }
 
 export async function prev(): Promise<void> {

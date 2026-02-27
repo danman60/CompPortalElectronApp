@@ -153,8 +153,8 @@ export function startServer(): void {
     })
   })
 
-  server = app.listen(PORT, () => {
-    logger.app.info(`Overlay server running on http://localhost:${PORT}`)
+  server = app.listen(PORT, '127.0.0.1', () => {
+    logger.app.info(`Overlay server running on http://127.0.0.1:${PORT}`)
   })
 
   server.on('error', (err: NodeJS.ErrnoException) => {

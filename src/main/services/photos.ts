@@ -37,8 +37,14 @@ export async function browseForFolder(): Promise<string | null> {
 
 async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
   try {
-    const buffer = fs.readFileSync(filePath)
-    const tags = ExifReader.load(buffer.buffer as ArrayBuffer)
+    // Read only first 128KB — EXIF data is always in the file header
+    const EXIF_HEADER_SIZE = 128 * 1024
+    const fh = await fs.promises.open(filePath, 'r')
+    const buf = Buffer.alloc(EXIF_HEADER_SIZE)
+    const { bytesRead } = await fh.read(buf, 0, EXIF_HEADER_SIZE, 0)
+    await fh.close()
+    const buffer = buf.subarray(0, bytesRead)
+    const tags = ExifReader.load(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer)
     const dateTime = tags['DateTimeOriginal']?.description
     if (!dateTime) return null
 

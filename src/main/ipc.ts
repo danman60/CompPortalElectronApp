@@ -121,7 +121,7 @@ export function registerAllHandlers(): void {
     const routine = comp.routines.find((r) => r.id === routineId)
     if (!routine || !routine.outputPath) return { error: 'Routine not found or not recorded' }
     const s = settings.getSettings()
-    const dir = routine.outputPath.replace(/\.[^.]+$/, '')
+    const dir = routine.outputDir || path.dirname(routine.outputPath)
     ffmpegService.enqueueJob({
       routineId: routine.id,
       inputPath: routine.outputPath,
@@ -140,7 +140,7 @@ export function registerAllHandlers(): void {
     const s = settings.getSettings()
     for (const routine of comp.routines) {
       if (routine.status === 'recorded' && routine.outputPath) {
-        const dir = routine.outputPath.replace(/\.[^.]+$/, '')
+        const dir = routine.outputDir || path.dirname(routine.outputPath)
         ffmpegService.enqueueJob({
           routineId: routine.id,
           inputPath: routine.outputPath,

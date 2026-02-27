@@ -12,6 +12,7 @@ import * as hotkeys from './services/hotkeys'
 import * as jobQueue from './services/jobQueue'
 import * as ffmpegService from './services/ffmpeg'
 import * as state from './services/state'
+import * as systemMonitor from './services/systemMonitor'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -195,8 +196,9 @@ app.on('before-quit', async (event) => {
   state.saveStateImmediate()
   jobQueue.cleanup()
 
-  // Stop servers + hotkeys
+  // Stop servers + hotkeys + monitors
   hotkeys.unregister()
+  systemMonitor.stopMonitoring()
   wsHub.stop()
   overlay.stopServer()
 

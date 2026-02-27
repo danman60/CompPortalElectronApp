@@ -21,6 +21,8 @@ interface UploadPayload {
   role?: string // 'performance' | 'judge1' etc for videos
 }
 
+const API_TIMEOUT_MS = 30000
+
 let isUploading = false
 let isPaused = false
 let currentAbortController: AbortController | null = null
@@ -195,6 +197,17 @@ async function processLoop(): Promise<void> {
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err)
           logger.upload.error(`Plugin complete failed for ${payload.routineId}:`, errMsg)
+          // Files ARE uploaded to storage — mark as encoded so user can retry completion
+          state.updateRoutineStatus(payload.routineId, 'encoded', {
+            error: `Files uploaded but completion call failed: ${errMsg}`,
+          })
+          sendProgress(payload.routineId, {
+            state: 'failed',
+            percent: 100,
+            filesCompleted: updatedJobs.length,
+            filesTotal: updatedJobs.length,
+            error: `Completion failed: ${errMsg}. Files uploaded — retry upload to re-send.`,
+          })
         }
       }
     } catch (err) {
@@ -226,27 +239,34 @@ async function getSignedUploadUrl(
   contentType: string,
 ): Promise<{ signedUrl: string; storagePath: string }> {
   const { apiBase, apiKey } = getConnection()
-  const response = await fetch(`${apiBase}/api/plugin/upload-url`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      entryId,
-      competitionId,
-      type,
-      filename,
-      contentType,
-    }),
-  })
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${apiBase}/api/plugin/upload-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        entryId,
+        competitionId,
+        type,
+        filename,
+        contentType,
+      }),
+      signal: abort.signal,
+    })
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Failed to get upload URL: ${response.status} ${text}`)
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Failed to get upload URL: ${response.status} ${text}`)
+    }
+
+    return response.json()
+  } finally {
+    clearTimeout(timer)
   }
-
-  return response.json()
 }
 
 function uploadFileToSignedUrl(
@@ -363,21 +383,28 @@ async function callPluginComplete(info: {
   }
 
   logger.upload.info(`Calling plugin/complete for routine ${info.routineId}`)
-  const response = await fetch(`${apiBase}/api/plugin/complete`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  })
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${apiBase}/api/plugin/complete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: abort.signal,
+    })
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Plugin complete failed: ${response.status} ${text}`)
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Plugin complete failed: ${response.status} ${text}`)
+    }
+
+    logger.upload.info(`Plugin complete success for routine ${info.routineId}`)
+  } finally {
+    clearTimeout(timer)
   }
-
-  logger.upload.info(`Plugin complete success for routine ${info.routineId}`)
 }
 
 export function getQueueLength(): number {
