@@ -97,27 +97,41 @@ function getRoutineOutputDir(routine: Routine, obsOutputPath?: string): string {
   return path.join(baseDir, buildFileName(routine))
 }
 
+/** Retry opening a file until the lock is released (OBS finishes writing). */
+async function waitForFileLock(filePath: string, maxWaitMs = 30000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const fd = fs.openSync(filePath, 'r+')
+      fs.closeSync(fd)
+      return // file is free
+    } catch {
+      await new Promise(r => setTimeout(r, 500))
+    }
+  }
+  // File may still be usable — log warning but don't throw
+  logger.app.warn(`File may still be locked after ${maxWaitMs / 1000}s: ${filePath}`)
+}
+
 async function archiveExistingFiles(routineDir: string): Promise<void> {
   if (!fs.existsSync(routineDir)) return
 
-  // Find next version number
   const archiveDir = path.join(routineDir, '_archive')
   let version = 1
   if (fs.existsSync(archiveDir)) {
-    const versions = fs.readdirSync(archiveDir).filter((d) => d.startsWith('v'))
+    const versions = (await fs.promises.readdir(archiveDir)).filter((d) => d.startsWith('v'))
     version = versions.length + 1
   }
 
   const versionDir = path.join(archiveDir, `v${version}`)
-  fs.mkdirSync(versionDir, { recursive: true })
+  await fs.promises.mkdir(versionDir, { recursive: true })
 
-  // Move all files (not _archive folder) to version dir
-  const entries = fs.readdirSync(routineDir)
+  const entries = await fs.promises.readdir(routineDir)
   for (const entry of entries) {
     if (entry === '_archive') continue
     const src = path.join(routineDir, entry)
     const dest = path.join(versionDir, entry)
-    fs.renameSync(src, dest)
+    await fs.promises.rename(src, dest)
   }
 
   logger.app.info(`Archived existing files to ${versionDir}`)
@@ -185,7 +199,7 @@ export async function handleRecordingStopped(
 
   // Create routine directory
   if (!fs.existsSync(routineDir)) {
-    fs.mkdirSync(routineDir, { recursive: true })
+    await fs.promises.mkdir(routineDir, { recursive: true })
     logger.app.info(`Created routine directory: ${routineDir}`)
   }
 
@@ -193,12 +207,13 @@ export async function handleRecordingStopped(
   const ext = path.extname(outputPath)
   const newPath = path.join(routineDir, `${fileName}${ext}`)
 
-  // Wait for file lock release (OBS may still be writing)
-  await new Promise((resolve) => setTimeout(resolve, 2000))
+  // Wait for file lock release (OBS may still be writing) — retry loop instead of fixed 2s wait
+  await waitForFileLock(outputPath)
 
   try {
-    fs.renameSync(outputPath, newPath)
-    const fileSizeMB = (fs.statSync(newPath).size / (1024 * 1024)).toFixed(1)
+    await fs.promises.rename(outputPath, newPath)
+    const stat = await fs.promises.stat(newPath)
+    const fileSizeMB = (stat.size / (1024 * 1024)).toFixed(1)
     logger.app.info(`Renamed: ${outputPath} → ${newPath} (${fileSizeMB} MB)`)
 
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath, outputDir: routineDir })
