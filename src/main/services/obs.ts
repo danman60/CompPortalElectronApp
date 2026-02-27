@@ -22,6 +22,8 @@ export function onRecordStopped(cb: RecordingCallback): void {
 
 let reconnectTimer: NodeJS.Timeout | null = null
 let reconnectAttempts = 0
+let lastUrl = ''
+let lastPassword = ''
 
 let state: OBSState = {
   connectionStatus: 'disconnected',
@@ -61,6 +63,8 @@ export async function connect(url: string, password: string): Promise<void> {
     logger.obs.info(`Connected in ${Date.now() - start}ms`)
     state.connectionStatus = 'connected'
     reconnectAttempts = 0
+    lastUrl = url
+    lastPassword = password
 
     // Sync initial state
     await syncState()
@@ -175,6 +179,32 @@ export async function stopRecord(): Promise<string | undefined> {
   return result.outputPath
 }
 
+/** Returns a promise that resolves when OBS fires RecordStateChanged → STOPPED, with a max timeout. */
+export function waitForRecordStop(timeoutMs = 15000): Promise<void> {
+  return new Promise((resolve) => {
+    let resolved = false
+    const handler = (event: any): void => {
+      if (event.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPED') {
+        if (!resolved) {
+          resolved = true
+          obs.off('RecordStateChanged' as any, handler)
+          clearTimeout(timer)
+          resolve()
+        }
+      }
+    }
+    obs.on('RecordStateChanged' as any, handler)
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true
+        obs.off('RecordStateChanged' as any, handler)
+        logger.obs.warn(`waitForRecordStop: timed out after ${timeoutMs / 1000}s, proceeding`)
+        resolve()
+      }
+    }, timeoutMs)
+  })
+}
+
 function startRecordingTimer(): void {
   if (recordingTimer) clearInterval(recordingTimer)
   state.recordTimeSec = 0
@@ -286,13 +316,17 @@ function registerOBSEvents(): void {
     }],
     ['ConnectionClosed', () => {
       if (state.connectionStatus === 'connected') {
-        logger.obs.warn('Connection lost')
+        logger.obs.warn('Connection lost — will auto-reconnect')
       }
       state.connectionStatus = 'disconnected'
       state.isRecording = false
       state.isStreaming = false
       stopRecordingTimer()
       broadcastState()
+      // Auto-reconnect with saved credentials
+      if (lastUrl) {
+        scheduleReconnect(lastUrl, lastPassword)
+      }
     }],
   ]
 

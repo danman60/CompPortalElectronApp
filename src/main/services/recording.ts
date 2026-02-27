@@ -144,13 +144,16 @@ export async function handleRecordingStopped(
   const routineId = activeRecordingRoutineId
   activeRecordingRoutineId = null
 
+  if (!routineId) {
+    logger.app.error(`Recording stopped but no activeRecordingRoutineId — raw file preserved at: ${outputPath}`)
+    return
+  }
+
   const comp = state.getCompetition()
-  const routine = routineId
-    ? comp?.routines.find((r) => r.id === routineId) ?? null
-    : state.getCurrentRoutine()
+  const routine = comp?.routines.find((r) => r.id === routineId) ?? null
 
   if (!routine) {
-    logger.app.warn('Recording stopped but no current routine')
+    logger.app.warn(`Recording stopped for unknown routine ${routineId} — raw file preserved at: ${outputPath}`)
     return
   }
 
@@ -327,9 +330,10 @@ export async function nextFull(): Promise<void> {
 
   if (connected && obs.getState().isRecording) {
     try {
+      // Wait for OBS to confirm recording stopped (event-driven, 15s timeout fallback)
+      const stopPromise = obs.waitForRecordStop()
       await obs.stopRecord()
-      // Wait for OBS to fully stop before starting new recording
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      await stopPromise
     } catch (err) {
       logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
     }

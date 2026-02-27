@@ -326,11 +326,12 @@ function spawnFFmpegWithTimeout(ffmpegPath: string, args: string[], timeoutMs = 
     // Timeout — kill if FFmpeg hangs
     const timer = setTimeout(() => {
       logger.ffmpeg.error(`FFmpeg timed out after ${timeoutMs / 1000}s, killing process`)
-      if (ffmpegProcess) {
-        ffmpegProcess.kill('SIGTERM')
+      const proc = ffmpegProcess
+      if (proc) {
+        proc.kill('SIGTERM')
         setTimeout(() => {
-          if (ffmpegProcess && !ffmpegProcess.killed) {
-            ffmpegProcess.kill('SIGKILL')
+          if (!proc.killed) {
+            proc.kill('SIGKILL')
           }
         }, 5000)
       }
@@ -409,15 +410,16 @@ export function getQueueLength(): number {
 
 export function cancelCurrent(): void {
   if (ffmpegProcess) {
-    ffmpegProcess.kill('SIGTERM')
-    setTimeout(() => {
-      if (ffmpegProcess && !ffmpegProcess.killed) {
-        ffmpegProcess.kill('SIGKILL')
-      }
-    }, 5000)
+    const proc = ffmpegProcess
     ffmpegProcess = null
     isProcessing = false
     clearPid()
+    proc.kill('SIGTERM')
+    setTimeout(() => {
+      if (!proc.killed) {
+        proc.kill('SIGKILL')
+      }
+    }, 5000)
     logger.ffmpeg.warn('Current FFmpeg process cancelled')
   }
 }

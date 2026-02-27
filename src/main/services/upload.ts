@@ -151,7 +151,8 @@ async function processLoop(): Promise<void> {
       // Step 2: Upload file with timeout
       await uploadFileToSignedUrl(signedUrl, payload)
 
-      jobQueue.updateStatus(job.id, 'done')
+      // Persist storagePath in the job for plugin/complete
+      jobQueue.updateStatus(job.id, 'done', { storagePath })
       logger.upload.info(`Uploaded: ${payload.objectName} for routine ${payload.routineId}`)
 
       // Check if all uploads for this routine are done
@@ -159,13 +160,22 @@ async function processLoop(): Promise<void> {
       const allDone = updatedJobs.every(j => j.status === 'done')
 
       if (allDone) {
-        // Call plugin/complete
+        // Call plugin/complete — collect storagePaths from completed jobs
         try {
           const storagePaths: Record<string, string> = {}
           const photoStoragePaths: string[] = []
 
-          // We stored storagePath in each job — re-derive from completed uploads
-          // For now, call complete with available info
+          for (const doneJob of updatedJobs) {
+            const jp = doneJob.payload as unknown as UploadPayload
+            const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
+            if (!sp) continue
+            if (jp.type === 'photos') {
+              photoStoragePaths.push(sp)
+            } else if (jp.role) {
+              storagePaths[jp.role] = sp
+            }
+          }
+
           await callPluginComplete({
             routineId: payload.routineId,
             entryId: payload.entryId,
@@ -298,6 +308,7 @@ function uploadFileToSignedUrl(
       clearTimeout(timer)
       req.destroy()
       fileStream.destroy()
+      reject(new Error('Upload aborted'))
     })
 
     req.on('error', (err) => {
