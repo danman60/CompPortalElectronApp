@@ -13,6 +13,7 @@ import * as photoService from './services/photos'
 import * as overlay from './services/overlay'
 import * as wsHub from './services/wsHub'
 import * as systemMonitor from './services/systemMonitor'
+import * as jobQueue from './services/jobQueue'
 import { checkAndRecover } from './services/crashRecovery'
 import { logger } from './logger'
 
@@ -494,6 +495,93 @@ export function registerAllHandlers(): void {
     clipboard.writeText(diagnostics)
     logger.app.info('Diagnostics copied to clipboard')
     return { copied: true, length: diagnostics.length }
+  })
+
+  // --- Import ---
+  safeHandle(IPC_CHANNELS.RECORDING_IMPORT_FILE, async (routineId: unknown, filePath: unknown) => {
+    logIPC(IPC_CHANNELS.RECORDING_IMPORT_FILE, { routineId, filePath })
+    const comp = stateService.getCompetition()
+    if (!comp) return { error: 'No competition loaded' }
+    const routine = comp.routines.find(r => r.id === routineId)
+    if (!routine) return { error: 'Routine not found' }
+
+    const s = settings.getSettings()
+    const outputDir = s.fileNaming.outputDirectory
+    if (!outputDir) return { error: 'No output directory configured' }
+
+    const ext = path.extname(filePath as string)
+    const routineDir = path.join(outputDir, routine.entryNumber)
+    await fs.promises.mkdir(routineDir, { recursive: true })
+
+    const destPath = path.join(routineDir, `${routine.entryNumber}_${routine.routineTitle.replace(/[<>:"/\\|?*\s]+/g, '_')}${ext}`)
+    await fs.promises.copyFile(filePath as string, destPath)
+
+    stateService.updateRoutineStatus(routine.id, 'recorded', {
+      outputPath: destPath,
+      outputDir: routineDir,
+    })
+
+    // Auto-encode if enabled
+    if (s.behavior.autoEncodeRecordings) {
+      ffmpegService.enqueueJob({
+        routineId: routine.id,
+        inputPath: destPath,
+        outputDir: routineDir,
+        judgeCount: s.competition.judgeCount,
+        trackMapping: s.audioTrackMapping,
+        processingMode: s.ffmpeg.processingMode,
+        filePrefix: schedule.buildFilePrefix(routine.entryNumber),
+      })
+    }
+
+    recording.broadcastFullState()
+    return { success: true, path: destPath }
+  })
+
+  safeHandle(IPC_CHANNELS.RECORDING_IMPORT_FOLDER, async (folderPath: unknown) => {
+    logIPC(IPC_CHANNELS.RECORDING_IMPORT_FOLDER, { folderPath })
+    const comp = stateService.getCompetition()
+    if (!comp) return { error: 'No competition loaded' }
+
+    const videoExts = ['.mkv', '.mp4', '.flv', '.avi', '.mov']
+    const files = (await fs.promises.readdir(folderPath as string))
+      .filter(f => videoExts.includes(path.extname(f).toLowerCase()))
+
+    const matches: { file: string; routineId: string; confidence: string }[] = []
+    const unmatched: string[] = []
+
+    for (const file of files) {
+      const baseName = path.basename(file, path.extname(file)).toLowerCase()
+      // Try to match by entry number in filename
+      let matched = false
+      for (const routine of comp.routines) {
+        if (baseName.includes(routine.entryNumber.toLowerCase())) {
+          matches.push({ file, routineId: routine.id, confidence: 'exact' })
+          matched = true
+          break
+        }
+      }
+      if (!matched) {
+        unmatched.push(file)
+      }
+    }
+
+    return { matches, unmatched, folderPath }
+  })
+
+  // --- Job Queue ---
+  safeHandle(IPC_CHANNELS.JOB_QUEUE_GET, () => {
+    return jobQueue.getAll()
+  })
+
+  safeHandle(IPC_CHANNELS.JOB_QUEUE_RETRY, (jobId: unknown) => {
+    logIPC(IPC_CHANNELS.JOB_QUEUE_RETRY, { jobId })
+    return jobQueue.retry(jobId as string)
+  })
+
+  safeHandle(IPC_CHANNELS.JOB_QUEUE_CANCEL, (jobId: unknown) => {
+    logIPC(IPC_CHANNELS.JOB_QUEUE_CANCEL, { jobId })
+    return jobQueue.remove(jobId as string)
   })
 
   // Start system monitor
