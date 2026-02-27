@@ -35,6 +35,8 @@ let state: OBSState = {
 
 let recordingTimer: NodeJS.Timeout | null = null
 let eventHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = []
+let lastMeterSendTime = 0
+const METER_THROTTLE_MS = 66 // ~15 Hz
 
 function broadcastState(): void {
   sendToRenderer(IPC_CHANNELS.OBS_STATE, state)
@@ -308,6 +310,9 @@ function registerOBSEvents(): void {
       sendToRenderer('obs:replay-saved', { path: event.savedReplayPath })
     }],
     ['InputVolumeMeters', (event: any) => {
+      const now = Date.now()
+      if (now - lastMeterSendTime < METER_THROTTLE_MS) return
+      lastMeterSendTime = now
       const levels: AudioLevel[] = event.inputs.map((input: any) => ({
         inputName: input.inputName as string,
         levels: (input.inputLevelsMul as number[][]).map((ch) => ch[0] || 0),

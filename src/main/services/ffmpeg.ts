@@ -153,91 +153,91 @@ export function enqueueJob(job: FFmpegJob): void {
 
 async function processNext(): Promise<void> {
   if (isProcessing) return
-
-  const jobRecord = jobQueue.getNext('encode')
-  if (!jobRecord) return
-
   isProcessing = true
-  jobQueue.updateStatus(jobRecord.id, 'running')
 
-  const job = jobRecord.payload as unknown as FFmpegJob
+  // Iterative loop — no recursion, no deep call stacks
+  while (true) {
+    const jobRecord = jobQueue.getNext('encode')
+    if (!jobRecord) break
 
-  logger.ffmpeg.info(`Processing routine ${job.routineId}: ${job.inputPath}`)
-  state.updateRoutineStatus(job.routineId, 'encoding')
-  broadcastFullState()
-  sendProgress({
-    routineId: job.routineId,
-    state: 'encoding',
-    tracksCompleted: 0,
-    tracksTotal: job.judgeCount + 1,
-  })
+    jobQueue.updateStatus(jobRecord.id, 'running')
+    const job = jobRecord.payload as unknown as FFmpegJob
 
-  try {
-    await runFFmpeg(job)
-    logger.ffmpeg.info(`Encoding complete for routine ${job.routineId}`)
-
-    const encodedFiles: EncodedFile[] = []
-    const perfPath = path.join(job.outputDir, perfFileName(job.filePrefix))
-    if (fs.existsSync(perfPath)) {
-      encodedFiles.push({ role: 'performance', filePath: perfPath, uploaded: false })
-    } else {
-      logger.ffmpeg.warn(`Expected output file not found: ${perfPath}`)
-    }
-    for (let i = 1; i <= job.judgeCount; i++) {
-      const judgePath = path.join(job.outputDir, judgeFileName(job.filePrefix, i))
-      if (fs.existsSync(judgePath)) {
-        encodedFiles.push({ role: `judge${i}` as EncodedFile['role'], filePath: judgePath, uploaded: false })
-      } else {
-        logger.ffmpeg.warn(`Expected output file not found: ${judgePath}`)
-      }
-    }
-
-    if (encodedFiles.length === 0) {
-      logger.ffmpeg.error(`No output files found after encoding routine ${job.routineId}`)
-    }
-
-    state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles })
-    jobQueue.updateStatus(jobRecord.id, 'done')
+    logger.ffmpeg.info(`Processing routine ${job.routineId}: ${job.inputPath}`)
+    state.updateRoutineStatus(job.routineId, 'encoding')
     broadcastFullState()
-
-    // Auto-upload if enabled
-    const settings = getSettings()
-    if (settings.behavior.autoUploadAfterEncoding) {
-      const comp = state.getCompetition()
-      const routine = comp?.routines.find((r) => r.id === job.routineId)
-      if (routine) {
-        uploadService.enqueueRoutine(routine)
-        uploadService.startUploads()
-      }
-    }
-
     sendProgress({
       routineId: job.routineId,
-      state: 'done',
-      tracksCompleted: job.judgeCount + 1,
-      tracksTotal: job.judgeCount + 1,
-    })
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err)
-    logger.ffmpeg.error(`Encoding failed for routine ${job.routineId}:`, errMsg)
-    jobQueue.updateStatus(jobRecord.id, 'failed', { error: errMsg })
-
-    // Clean up any temp files on failure
-    cleanupTempFiles(job.outputDir)
-
-    sendProgress({
-      routineId: job.routineId,
-      state: 'error',
+      state: 'encoding',
       tracksCompleted: 0,
       tracksTotal: job.judgeCount + 1,
-      error: errMsg,
     })
+
+    try {
+      await runFFmpeg(job)
+      logger.ffmpeg.info(`Encoding complete for routine ${job.routineId}`)
+
+      const encodedFiles: EncodedFile[] = []
+      const perfPath = path.join(job.outputDir, perfFileName(job.filePrefix))
+      if (fs.existsSync(perfPath)) {
+        encodedFiles.push({ role: 'performance', filePath: perfPath, uploaded: false })
+      } else {
+        logger.ffmpeg.warn(`Expected output file not found: ${perfPath}`)
+      }
+      for (let i = 1; i <= job.judgeCount; i++) {
+        const judgePath = path.join(job.outputDir, judgeFileName(job.filePrefix, i))
+        if (fs.existsSync(judgePath)) {
+          encodedFiles.push({ role: `judge${i}` as EncodedFile['role'], filePath: judgePath, uploaded: false })
+        } else {
+          logger.ffmpeg.warn(`Expected output file not found: ${judgePath}`)
+        }
+      }
+
+      if (encodedFiles.length === 0) {
+        logger.ffmpeg.error(`No output files found after encoding routine ${job.routineId}`)
+      }
+
+      state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles })
+      jobQueue.updateStatus(jobRecord.id, 'done')
+      broadcastFullState()
+
+      // Auto-upload if enabled
+      const settings = getSettings()
+      if (settings.behavior.autoUploadAfterEncoding) {
+        const comp = state.getCompetition()
+        const routine = comp?.routines.find((r) => r.id === job.routineId)
+        if (routine) {
+          uploadService.enqueueRoutine(routine)
+          uploadService.startUploads()
+        }
+      }
+
+      sendProgress({
+        routineId: job.routineId,
+        state: 'done',
+        tracksCompleted: job.judgeCount + 1,
+        tracksTotal: job.judgeCount + 1,
+      })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      logger.ffmpeg.error(`Encoding failed for routine ${job.routineId}:`, errMsg)
+      jobQueue.updateStatus(jobRecord.id, 'failed', { error: errMsg })
+
+      cleanupTempFiles(job.outputDir)
+
+      sendProgress({
+        routineId: job.routineId,
+        state: 'error',
+        tracksCompleted: 0,
+        tracksTotal: job.judgeCount + 1,
+        error: errMsg,
+      })
+    }
+
+    clearPid()
   }
 
   isProcessing = false
-  clearPid()
-  // Process next job (properly awaited)
-  await processNext()
 }
 
 async function runFFmpeg(job: FFmpegJob): Promise<void> {

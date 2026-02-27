@@ -156,6 +156,9 @@ app.whenReady().then(async () => {
     }
   })
 
+  // Load persisted state BEFORE creating window (so renderer gets correct data on first IPC)
+  state.loadState()
+
   // Create window
   createWindow()
 
@@ -165,9 +168,6 @@ app.whenReady().then(async () => {
 
   // Register global hotkeys
   hotkeys.register()
-
-  // Load persisted state
-  state.loadState()
 
   // Check for crash recovery
   checkAndRecover().catch((err) => {
@@ -185,7 +185,7 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', async (event) => {
   logger.app.info('Graceful shutdown starting...')
 
   // Cancel active FFmpeg
@@ -199,7 +199,14 @@ app.on('before-quit', () => {
   hotkeys.unregister()
   wsHub.stop()
   overlay.stopServer()
-  obs.disconnect()
+
+  // Disconnect OBS with timeout to avoid blocking shutdown
+  try {
+    await Promise.race([
+      obs.disconnect(),
+      new Promise(r => setTimeout(r, 3000)),
+    ])
+  } catch {}
 
   logger.app.info('Graceful shutdown complete')
 })

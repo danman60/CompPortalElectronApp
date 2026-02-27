@@ -59,13 +59,14 @@ function calcOffset(scheduledTime: string, actual: Date): string {
 
 function buildFileName(routine: Routine): string {
   const settings = getSettings()
+  const now = new Date()
   let name = settings.fileNaming.pattern
     .replace('{entry_number}', routine.entryNumber)
     .replace('{routine_title}', routine.routineTitle.replace(/\s+/g, '_'))
     .replace('{studio_code}', routine.studioCode)
     .replace('{category}', routine.category.replace(/\s+/g, '_'))
-    .replace('{date}', new Date().toISOString().split('T')[0])
-    .replace('{time}', new Date().toTimeString().split(' ')[0].replace(/:/g, '-'))
+    .replace('{date}', now.toISOString().split('T')[0])
+    .replace('{time}', now.toTimeString().split(' ')[0].replace(/:/g, '-'))
 
   // Sanitize for filesystem
   name = name.replace(/[<>:"/\\|?*]/g, '_')
@@ -102,8 +103,8 @@ async function waitForFileLock(filePath: string, maxWaitMs = 30000): Promise<voi
   const start = Date.now()
   while (Date.now() - start < maxWaitMs) {
     try {
-      const fd = fs.openSync(filePath, 'r+')
-      fs.closeSync(fd)
+      const fh = await fs.promises.open(filePath, 'r+')
+      await fh.close()
       return // file is free
     } catch {
       await new Promise(r => setTimeout(r, 500))
@@ -120,7 +121,8 @@ async function archiveExistingFiles(routineDir: string): Promise<void> {
   let version = 1
   if (fs.existsSync(archiveDir)) {
     const versions = (await fs.promises.readdir(archiveDir)).filter((d) => d.startsWith('v'))
-    version = versions.length + 1
+    const nums = versions.map(v => parseInt(v.slice(1), 10)).filter(n => !isNaN(n))
+    version = nums.length > 0 ? Math.max(...nums) + 1 : 1
   }
 
   const versionDir = path.join(archiveDir, `v${version}`)

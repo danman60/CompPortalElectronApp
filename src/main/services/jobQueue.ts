@@ -240,14 +240,26 @@ export function getAll(): JobRecord[] {
 
 // --- Init ---
 
+const PRUNE_INTERVAL_MS = 3600000 // 1 hour
+const PRUNE_AGE_MS = 86400000 // 24 hours
+let pruneTimer: NodeJS.Timeout | null = null
+
 export function init(): void {
   load()
+  // Prune completed jobs older than 24h on startup
+  pruneCompleted(PRUNE_AGE_MS)
+  // Prune periodically every hour
+  pruneTimer = setInterval(() => pruneCompleted(PRUNE_AGE_MS), PRUNE_INTERVAL_MS)
 }
 
 export function cleanup(): void {
   if (saveTimer) {
     clearTimeout(saveTimer)
     saveTimer = null
+  }
+  if (pruneTimer) {
+    clearInterval(pruneTimer)
+    pruneTimer = null
   }
   flushSync()
 }
