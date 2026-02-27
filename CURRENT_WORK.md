@@ -27,6 +27,41 @@
 20. Startup report toast — auto-dismissing notification showing system check results
 21. Preload API — importFile, importFolder, jobQueueGet/Retry/Cancel, removeAllListeners
 
+**Code review fixes (round 1):**
+22. Header importFolder crash — settingsBrowseFile→settingsBrowseDir
+23. IPC listener leak — cleanup captured and returned from useEffect
+24. importConfirm dead code — removed from preload and types
+25. Magic string channel — APP_STARTUP_REPORT added to IPC_CHANNELS
+26. file.path type safety — guarded cast in RoutineTable drag-drop
+
+**Production safety (round 2 — showstoppers + high-risk):**
+27. storagePaths persistence — storagePath saved in job payload for plugin/complete
+28. nextFull race — event-driven waitForRecordStop() replaces 1.5s sleep
+29. OBS auto-reconnect — ConnectionClosed triggers scheduleReconnect()
+30. Upload abort stall — reject() called on abort signal
+31. FFmpeg cancel zombie — local var ref pattern for SIGKILL timer
+32. Recording attribution — no getCurrentRoutine() fallback, logs error + preserves raw file
+
+**Medium/low hardening (round 3):**
+33. FFmpeg processNext — recursive → iterative while loop
+34. Job queue pruning — startup (24h) + hourly auto-prune
+35. Audio meter throttle — InputVolumeMeters IPC limited to ~15Hz
+36. Async file lock — fs.promises.open instead of openSync
+37. Archive version — max+1 instead of count+1
+38. Startup order — state.loadState() before createWindow()
+39. Single Date instance — buildFileName consistency
+40. OBS disconnect — await with 3s timeout on shutdown
+
+**Production hardening (round 4):**
+41. Cross-drive rename — copy+delete fallback on EXDEV error
+42. Fetch timeouts — 30s AbortController on all API calls
+43. Navigation debounce — navBusy guard on next()/nextFull()
+44. Upload completion recovery — callPluginComplete failure → 'encoded' + error msg
+45. Server security — overlay + WebSocket bound to 127.0.0.1
+46. Photo EXIF memory — read 128KB header instead of entire file
+47. systemMonitor cleanup — stopMonitoring() on shutdown
+48. Manual encode dir — uses routine.outputDir, not path derivation
+
 ## Known Bugs
 
 (none currently tracked)
