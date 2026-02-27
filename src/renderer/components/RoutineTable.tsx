@@ -154,6 +154,7 @@ export default function RoutineTable(): React.ReactElement {
   const compactMode = useStore((s) => s.compactMode)
   const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
   let routines = competition?.routines ?? []
 
@@ -184,6 +185,31 @@ export default function RoutineTable(): React.ReactElement {
     }
   }
 
+  function handleDragOver(e: React.DragEvent, routineId: string): void {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(routineId)
+  }
+
+  function handleDragLeave(e: React.DragEvent): void {
+    e.preventDefault()
+    setDropTargetId(null)
+  }
+
+  async function handleDrop(e: React.DragEvent, routine: Routine): Promise<void> {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTargetId(null)
+    const files = Array.from(e.dataTransfer.files)
+    const videoFiles = files.filter((f) =>
+      /\.(mp4|mkv|mov|avi|webm|ts|mts)$/i.test(f.name),
+    )
+    if (videoFiles.length === 0) return
+    for (const file of videoFiles) {
+      await window.api.importFile(routine.id, file.path)
+    }
+  }
+
   return (
     <div className="table-scroll">
       <table className="upload-table">
@@ -209,8 +235,11 @@ export default function RoutineTable(): React.ReactElement {
             return (
               <tr
                 key={routine.id}
-                className={isCurrent ? 'current-row' : ''}
+                className={`${isCurrent ? 'current-row' : ''}${dropTargetId === routine.id ? ' drop-target' : ''}`}
                 onClick={() => handleJumpTo(routine)}
+                onDragOver={(e) => handleDragOver(e, routine.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, routine)}
                 style={{
                   cursor: obsState.isRecording ? 'not-allowed' : 'pointer',
                   ...(isLive
@@ -220,6 +249,9 @@ export default function RoutineTable(): React.ReactElement {
                     ? { background: 'rgba(99,102,241,0.08)', borderLeft: '3px solid var(--accent)' }
                     : {}),
                   ...(isNotRecorded && !isCurrent ? { opacity: 0.35 } : {}),
+                  ...(dropTargetId === routine.id
+                    ? { background: 'rgba(99,102,241,0.15)', outline: '2px dashed var(--accent)', outlineOffset: '-2px' }
+                    : {}),
                 }}
               >
                 <td style={{ paddingLeft: isLive || isCurrent ? '7px' : '10px' }}>

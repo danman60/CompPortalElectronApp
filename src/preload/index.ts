@@ -88,6 +88,19 @@ const api = {
   setZoom: (direction: string) => ipcRenderer.invoke(IPC_CHANNELS.APP_SET_ZOOM, direction),
   getZoom: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_ZOOM),
 
+  // Import
+  importFile: (routineId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_IMPORT_FILE, routineId, filePath),
+  importFolder: (folderPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_IMPORT_FOLDER, folderPath),
+  importConfirm: (matches: { file: string; routineId: string }[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_IMPORT_CONFIRM, matches),
+
+  // Job Queue
+  jobQueueGet: () => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_GET),
+  jobQueueRetry: (jobId: string) => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_RETRY, jobId),
+  jobQueueCancel: (jobId: string) => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_CANCEL, jobId),
+
   // Preview
   previewStart: (fps?: number) => ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_START, fps),
   previewStop: () => ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_STOP),
@@ -105,6 +118,10 @@ const api = {
 
   once: (channel: string, callback: (...args: unknown[]) => void) => {
     ipcRenderer.once(channel, (_event, ...args) => callback(...args))
+  },
+
+  removeAllListeners: (channel: string) => {
+    ipcRenderer.removeAllListeners(channel)
   },
 }
 

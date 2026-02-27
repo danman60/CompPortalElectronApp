@@ -1,6 +1,6 @@
 {
   "name": "compsync-media",
-  "version": "2.4.4",
+  "version": "2.5.0",
   "description": "CompSync Media — OBS recording control, audio splitting, photo import, and upload for dance competitions",
   "author": "CompSync <danieljohnabrahamson@gmail.com>",
   "main": "./out/main/index.js",

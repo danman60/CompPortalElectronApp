@@ -1,7 +1,66 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
 import RoutineTable from './RoutineTable'
+import type { JobRecord } from '../../shared/types'
 import '../styles/rightpanel.css'
+
+function JobQueuePanel(): React.ReactElement | null {
+  const jobQueue = useStore((s) => s.jobQueue)
+  const jobQueuePanelOpen = useStore((s) => s.jobQueuePanelOpen)
+  const setJobQueuePanelOpen = useStore((s) => s.setJobQueuePanelOpen)
+
+  const pending = jobQueue.filter((j) => j.status === 'pending').length
+  const running = jobQueue.filter((j) => j.status === 'running').length
+  const failed = jobQueue.filter((j) => j.status === 'failed')
+  const totalActive = pending + running + failed.length
+
+  if (totalActive === 0 && !jobQueuePanelOpen) return null
+
+  async function handleRetry(job: JobRecord): Promise<void> {
+    await window.api.jobQueueRetry(job.id)
+  }
+
+  async function handleCancel(job: JobRecord): Promise<void> {
+    await window.api.jobQueueCancel(job.id)
+  }
+
+  return (
+    <div className="job-queue-panel">
+      <div
+        className="job-queue-header"
+        onClick={() => setJobQueuePanelOpen(!jobQueuePanelOpen)}
+      >
+        <span className="job-queue-title">Jobs</span>
+        <div className="job-queue-counts">
+          {running > 0 && (
+            <span className="jq-badge running">{running} running</span>
+          )}
+          {pending > 0 && (
+            <span className="jq-badge pending">{pending} queued</span>
+          )}
+          {failed.length > 0 && (
+            <span className="jq-badge failed">{failed.length} failed</span>
+          )}
+        </div>
+        <span className="job-queue-toggle">{jobQueuePanelOpen ? '\u25B2' : '\u25BC'}</span>
+      </div>
+      {jobQueuePanelOpen && failed.length > 0 && (
+        <div className="job-queue-list">
+          {failed.map((job) => (
+            <div key={job.id} className="job-queue-item failed">
+              <span className="jq-type">{job.type}</span>
+              <span className="jq-error" title={job.error}>{job.error || 'Unknown error'}</span>
+              <div className="jq-actions">
+                <button className="jq-btn retry" onClick={() => handleRetry(job)}>Retry</button>
+                <button className="jq-btn cancel" onClick={() => handleCancel(job)}>Cancel</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function RightPanel(): React.ReactElement {
   const competition = useStore((s) => s.competition)
@@ -70,6 +129,8 @@ export default function RightPanel(): React.ReactElement {
       </div>
 
       <RoutineTable />
+
+      <JobQueuePanel />
 
       <div className="stats-bar">
         {outputDir ? (

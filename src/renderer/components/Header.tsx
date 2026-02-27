@@ -79,6 +79,15 @@ export default function Header(): React.ReactElement {
     }
   }
 
+  async function handleImportVideo(): Promise<void> {
+    const filePath = await window.api.settingsBrowseFile([
+      { name: 'Video Files', extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'mts'] },
+    ])
+    if (filePath) {
+      await window.api.importFolder(filePath)
+    }
+  }
+
   const appVersion = useAppVersion()
   const obsColor =
     obsState.connectionStatus === 'connected'
@@ -121,6 +130,9 @@ export default function Header(): React.ReactElement {
             </button>
             <button className="action-btn" style={{ background: 'var(--upload-blue)', borderColor: 'var(--upload-blue)', color: 'white' }} onClick={() => window.api.uploadAll()}>
               Upload All
+            </button>
+            <button className="action-btn" onClick={handleImportVideo}>
+              Import Video
             </button>
             <button className="action-btn photos" onClick={handleImportPhotos}>
               Import Photos

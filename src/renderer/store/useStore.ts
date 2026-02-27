@@ -10,6 +10,8 @@ import {
   type SystemStats,
   type AudioMeterData,
   type AudioLevel,
+  type JobRecord,
+  type StartupReport,
 } from '../../shared/types'
 
 interface FFmpegProgressMap {
@@ -43,6 +45,14 @@ interface AppStore {
   // System stats
   systemStats: SystemStats | null
 
+  // Job queue
+  jobQueue: JobRecord[]
+  jobQueuePanelOpen: boolean
+
+  // Startup report
+  startupReport: StartupReport | null
+  startupToastVisible: boolean
+
   // Status counts
   encodingCount: number
   uploadingCount: number
@@ -67,6 +77,10 @@ interface AppStore {
   updateRoutine: (routineId: string, update: Partial<Routine>) => void
   updateFFmpegProgress: (progress: FFmpegProgress) => void
   updateUploadProgress: (routineId: string, progress: UploadProgress) => void
+  setJobQueue: (jobs: JobRecord[]) => void
+  setJobQueuePanelOpen: (open: boolean) => void
+  setStartupReport: (report: StartupReport) => void
+  dismissStartupToast: () => void
   recalcCounts: () => void
 }
 
@@ -97,6 +111,12 @@ export const useStore = create<AppStore>((set, get) => ({
   audioMeters: { performance: -Infinity, judges: [] },
 
   systemStats: null,
+
+  jobQueue: [],
+  jobQueuePanelOpen: false,
+
+  startupReport: null,
+  startupToastVisible: false,
 
   encodingCount: 0,
   uploadingCount: 0,
@@ -147,6 +167,11 @@ export const useStore = create<AppStore>((set, get) => ({
   updateUploadProgress: (routineId, progress) => {
     get().updateRoutine(routineId, { uploadProgress: progress })
   },
+
+  setJobQueue: (jobQueue) => set({ jobQueue }),
+  setJobQueuePanelOpen: (jobQueuePanelOpen) => set({ jobQueuePanelOpen }),
+  setStartupReport: (startupReport) => set({ startupReport, startupToastVisible: true }),
+  dismissStartupToast: () => set({ startupToastVisible: false }),
 
   recalcCounts: () => {
     const comp = get().competition
@@ -245,14 +270,26 @@ export function initIPCListeners(): () => void {
     })
   })
 
+  // Job queue progress
+  window.api.on(IPC_CHANNELS.JOB_QUEUE_PROGRESS, (data: unknown) => {
+    useStore.setState({ jobQueue: data as JobRecord[] })
+  })
+
+  // Startup report
+  window.api.on('app:startup-report', (data: unknown) => {
+    store().setStartupReport(data as StartupReport)
+  })
+
   // Return cleanup function
   return () => {
-    window.api.removeAllListeners?.(IPC_CHANNELS.STATE_UPDATE)
-    window.api.removeAllListeners?.(IPC_CHANNELS.OBS_STATE)
-    window.api.removeAllListeners?.(IPC_CHANNELS.FFMPEG_PROGRESS)
-    window.api.removeAllListeners?.(IPC_CHANNELS.UPLOAD_PROGRESS)
-    window.api.removeAllListeners?.(IPC_CHANNELS.PREVIEW_FRAME)
-    window.api.removeAllListeners?.(IPC_CHANNELS.SYSTEM_STATS)
-    window.api.removeAllListeners?.(IPC_CHANNELS.OBS_AUDIO_LEVELS)
+    window.api.removeAllListeners(IPC_CHANNELS.STATE_UPDATE)
+    window.api.removeAllListeners(IPC_CHANNELS.OBS_STATE)
+    window.api.removeAllListeners(IPC_CHANNELS.FFMPEG_PROGRESS)
+    window.api.removeAllListeners(IPC_CHANNELS.UPLOAD_PROGRESS)
+    window.api.removeAllListeners(IPC_CHANNELS.PREVIEW_FRAME)
+    window.api.removeAllListeners(IPC_CHANNELS.SYSTEM_STATS)
+    window.api.removeAllListeners(IPC_CHANNELS.OBS_AUDIO_LEVELS)
+    window.api.removeAllListeners(IPC_CHANNELS.JOB_QUEUE_PROGRESS)
+    window.api.removeAllListeners('app:startup-report')
   }
 }
