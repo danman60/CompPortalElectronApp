@@ -13,6 +13,7 @@ import * as jobQueue from './services/jobQueue'
 import * as ffmpegService from './services/ffmpeg'
 import * as state from './services/state'
 import { checkAndRecover } from './services/crashRecovery'
+import { runStartupChecks } from './services/startup'
 
 // --- Global error handlers ---
 process.on('uncaughtException', (error) => {
@@ -171,6 +172,11 @@ app.whenReady().then(async () => {
   // Check for crash recovery
   checkAndRecover().catch((err) => {
     logger.app.warn('Crash recovery check failed:', err)
+  })
+
+  // Run startup validation (after window is ready so we can send report to renderer)
+  runStartupChecks().catch((err) => {
+    logger.app.warn('Startup checks failed:', err)
   })
 })
 
