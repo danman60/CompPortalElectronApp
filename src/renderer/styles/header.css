@@ -36,6 +36,47 @@
   gap: 3px;
 }
 
+/* Animated meter bars for CPU and Disk */
+.meter-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.meter-label {
+  color: var(--text-muted);
+  min-width: 24px;
+  text-align: right;
+}
+
+.meter-track {
+  width: 50px;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+  animation: meterPulse 2s ease-in-out infinite;
+}
+
+@keyframes meterPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.meter-value {
+  color: var(--text-secondary);
+  min-width: 28px;
+  text-align: left;
+}
+
 .settings-btn {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);

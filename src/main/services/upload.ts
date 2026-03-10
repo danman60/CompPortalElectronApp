@@ -125,16 +125,22 @@ async function processLoop(): Promise<void> {
     jobQueue.updateStatus(job.id, 'running')
     const payload = job.payload as unknown as UploadPayload
 
-    // Set routine status to uploading
-    state.updateRoutineStatus(payload.routineId, 'uploading')
+    // Set routine status to uploading (only if not already uploading)
+    const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
+    if (routine && routine.status !== 'uploading') {
+      state.updateRoutineStatus(payload.routineId, 'uploading')
+    }
 
     const allRoutineJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
     const completedCount = allRoutineJobs.filter(j => j.status === 'done').length
     const totalCount = allRoutineJobs.length
 
+    // Initial progress: show completed files, 0% for current file
+    const initialPercent = Math.round((completedCount / totalCount) * 100)
+
     sendProgress(payload.routineId, {
       state: 'uploading',
-      percent: Math.round((completedCount / totalCount) * 100),
+      percent: initialPercent,
       currentFile: path.basename(payload.filePath),
       filesCompleted: completedCount,
       filesTotal: totalCount,
@@ -339,20 +345,26 @@ function uploadFileToSignedUrl(
 
     fileStream.on('data', (chunk) => {
       bytesUploaded += chunk.length
-      const percent = Math.round((bytesUploaded / fileSize) * 100)
+      const filePercent = Math.round((bytesUploaded / fileSize) * 100)
 
-      const milestone = Math.floor(percent / 25) * 25
+      const milestone = Math.floor(filePercent / 25) * 25
       if (milestone > lastLoggedMilestone) {
         lastLoggedMilestone = milestone
-        logger.upload.info(`Upload ${payload.objectName}: ${percent}%`)
+        logger.upload.info(`Upload ${payload.objectName}: ${filePercent}%`)
       }
+
+      // Calculate overall progress: completed files + current file progress
+      const allRoutineJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
+      const completedCount = allRoutineJobs.filter(j => j.status === 'done').length
+      const totalCount = allRoutineJobs.length
+      const overallPercent = Math.round(((completedCount + (filePercent / 100)) / totalCount) * 100)
 
       sendProgress(payload.routineId, {
         state: 'uploading',
-        percent,
+        percent: overallPercent,
         currentFile: path.basename(payload.filePath),
-        filesCompleted: 0,
-        filesTotal: 1,
+        filesCompleted: completedCount,
+        filesTotal: totalCount,
       })
     })
 

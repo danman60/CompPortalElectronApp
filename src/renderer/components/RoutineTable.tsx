@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
 import '../styles/table.css'
 
-function statusToLabel(status: RoutineStatus, uploadProgress?: { state: string; percent: number } | null): { text: string; className: string } {
+function statusToLabel(status: RoutineStatus): { text: string; className: string } {
   switch (status) {
     case 'pending':
       return { text: 'Not recorded', className: 'waiting' }

@@ -49,20 +49,46 @@ function SystemMonitor(): React.ReactElement | null {
   const stats = useStore((s) => s.systemStats)
   if (!stats) return null
 
-  const cpuColor = stats.cpuPercent > 95 ? 'var(--danger)' : stats.cpuPercent > 80 ? 'var(--warning)' : 'var(--text-muted)'
-  const diskColor = stats.diskFreeGB >= 0
-    ? (stats.diskFreeGB < 2 ? 'var(--danger)' : stats.diskFreeGB < 10 ? 'var(--warning)' : 'var(--text-muted)')
-    : 'var(--text-muted)'
+  // CPU: higher is worse (usage), so fill shows utilization
+  const cpuPercent = Math.min(100, Math.max(0, stats.cpuPercent))
+  const cpuColor = cpuPercent > 95 ? 'var(--danger)' : cpuPercent > 80 ? 'var(--warning)' : 'var(--success)'
+
+  // Disk: show used percentage (inverse of free)
+  // Assuming typical competition drive is 500GB-2TB, show relative fill
+  const diskUsedPercent = stats.diskTotalGB > 0
+    ? Math.min(100, Math.max(0, ((stats.diskTotalGB - stats.diskFreeGB) / stats.diskTotalGB) * 100))
+    : 0
+  const diskColor = stats.diskFreeGB < 2 ? 'var(--danger)' : stats.diskFreeGB < 10 ? 'var(--warning)' : 'var(--success)'
 
   return (
-    <div className="header-status" style={{ gap: '6px' }}>
-      <span className="si" style={{ color: cpuColor }}>
-        CPU {stats.cpuPercent}%
-      </span>
+    <div className="header-status" style={{ gap: '10px' }}>
+      <div className="meter-bar" title={`CPU: ${cpuPercent.toFixed(0)}%`}>
+        <span className="meter-label">CPU</span>
+        <div className="meter-track">
+          <div
+            className="meter-fill"
+            style={{
+              width: `${cpuPercent}%`,
+              background: cpuColor,
+            }}
+          />
+        </div>
+        <span className="meter-value">{cpuPercent.toFixed(0)}%</span>
+      </div>
       {stats.diskFreeGB >= 0 && (
-        <span className="si" style={{ color: diskColor }}>
-          Disk {stats.diskFreeGB}GB
-        </span>
+        <div className="meter-bar" title={`Disk: ${stats.diskFreeGB.toFixed(1)}GB free`}>
+          <span className="meter-label">Disk</span>
+          <div className="meter-track">
+            <div
+              className="meter-fill"
+              style={{
+                width: `${diskUsedPercent}%`,
+                background: diskColor,
+              }}
+            />
+          </div>
+          <span className="meter-value">{stats.diskFreeGB.toFixed(0)}GB</span>
+        </div>
       )}
     </div>
   )
