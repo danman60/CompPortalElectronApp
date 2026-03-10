@@ -1,5 +1,39 @@
 import React, { useEffect, useRef, useState } from 'react'
 
+function UploadAllButton(): React.ReactElement {
+  const uploadingCount = useStore((s) => s.uploadingCount)
+  const [isUploading, setIsUploading] = useState(false)
+
+  async function handleUploadAll(): Promise<void> {
+    if (isUploading || uploadingCount > 0) return
+    setIsUploading(true)
+    try {
+      await window.api.uploadAll()
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const disabled = isUploading || uploadingCount > 0
+
+  return (
+    <button
+      className="action-btn"
+      style={{
+        background: disabled ? 'var(--text-muted)' : 'var(--upload-blue)',
+        borderColor: disabled ? 'var(--text-muted)' : 'var(--upload-blue)',
+        color: 'white',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.6 : 1,
+      }}
+      onClick={handleUploadAll}
+      disabled={disabled}
+    >
+      {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : 'Upload All'}
+    </button>
+  )
+}
+
 function useAppVersion(): string {
   const [version, setVersion] = useState('')
   useEffect(() => {
@@ -126,9 +160,7 @@ export default function Header(): React.ReactElement {
             <button className="action-btn primary" onClick={handleProcessVideo}>
               Process Video
             </button>
-            <button className="action-btn" style={{ background: 'var(--upload-blue)', borderColor: 'var(--upload-blue)', color: 'white' }} onClick={() => window.api.uploadAll()}>
-              Upload All
-            </button>
+            <UploadAllButton />
             <button className="action-btn" onClick={handleImportVideo}>
               Import Video
             </button>

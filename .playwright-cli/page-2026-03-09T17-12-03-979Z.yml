@@ -1,0 +1,535 @@
+- generic [active] [ref=e1]:
+  - main [ref=e6]:
+    - navigation [ref=e7]:
+      - generic [ref=e9]:
+        - link "StreamStage.live" [ref=e10] [cursor=pointer]:
+          - /url: /
+          - img "StreamStage.live" [ref=e11]
+        - generic [ref=e12]:
+          - link "Dance & Stage" [ref=e13] [cursor=pointer]:
+            - /url: "#dance-media"
+          - link "Software" [ref=e14] [cursor=pointer]:
+            - /url: "#software"
+          - link "Business" [ref=e15] [cursor=pointer]:
+            - /url: "#business-video"
+          - link "Team" [ref=e16] [cursor=pointer]:
+            - /url: "#team"
+          - link "FAQ" [ref=e17] [cursor=pointer]:
+            - /url: "#faq"
+          - link "Contact" [ref=e18] [cursor=pointer]:
+            - /url: "#contact"
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - heading "Where Dance Meets Technology" [level=1] [ref=e21]
+        - paragraph [ref=e22]: Canada's dance industry partner — media production, software, and live broadcast
+        - generic [ref=e23]:
+          - link "Our Work" [ref=e24] [cursor=pointer]:
+            - /url: "#dance-media"
+          - link "Our Software" [ref=e25] [cursor=pointer]:
+            - /url: "#software"
+      - button "Scroll down" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+    - generic [ref=e30]:
+      - generic [ref=e32]:
+        - heading "Built for the Stage" [level=2] [ref=e33]
+        - paragraph [ref=e34]: We live and breathe dance. From multi-camera broadcasts to competition management software, we build the tools and create the media that powers Canada's dance community — serving studios, competitions, and performing arts organizations across Ontario and beyond.
+      - generic [ref=e35]:
+        - generic [ref=e37]:
+          - img [ref=e38]
+          - generic [ref=e44]: 100+
+          - generic [ref=e45]: Events Streamed
+        - generic [ref=e47]:
+          - img [ref=e48]
+          - generic [ref=e51]: 500+
+          - generic [ref=e52]: Videos Produced
+        - generic [ref=e54]:
+          - img [ref=e55]
+          - generic [ref=e60]: 50+
+          - generic [ref=e61]: Studios Served
+        - generic [ref=e63]:
+          - img [ref=e64]
+          - generic [ref=e66]: 10+
+          - generic [ref=e67]: Years Experience
+    - generic [ref=e70]:
+      - generic [ref=e72]:
+        - generic [ref=e73]: Dance & Stage Media
+        - heading "Your Performance, Elevated" [level=2] [ref=e74]
+        - paragraph [ref=e75]: From multi-camera livestreams to cinematic highlight reels, we bring the stage to every screen.
+      - generic [ref=e76]:
+        - generic [ref=e78]:
+          - img [ref=e80]
+          - heading "Livestreaming" [level=3] [ref=e86]
+          - paragraph [ref=e87]: Multi-camera live broadcast for competitions, recitals, and showcases. Professional quality your audience can watch from anywhere.
+        - generic [ref=e89]:
+          - img [ref=e91]
+          - heading "Videography & Editing" [level=3] [ref=e94]
+          - paragraph [ref=e95]: Full-service video production from capture to final cut. Highlight reels, performance archives, and promotional content.
+        - generic [ref=e97]:
+          - img [ref=e99]
+          - heading "Promotional Videos" [level=3] [ref=e101]
+          - paragraph [ref=e102]: Cinematic promotional content that captures the energy and artistry of your studio, company, or production.
+        - generic [ref=e104]:
+          - img [ref=e106]
+          - heading "Social Content" [level=3] [ref=e112]
+          - paragraph [ref=e113]: Short-form, platform-optimized content for Instagram, TikTok, and YouTube that drives engagement and enrollment.
+      - generic [ref=e114]:
+        - generic [ref=e117]:
+          - heading "Reels & Highlights" [level=3] [ref=e118]
+          - generic [ref=e119]:
+            - region "Reels & Highlights" [ref=e120]:
+              - generic [ref=e121]:
+                - generic [ref=e122]:
+                  - generic [ref=e124]:
+                    - button "Unmute" [ref=e125] [cursor=pointer]:
+                      - img [ref=e126]
+                    - button "Fullscreen" [ref=e130] [cursor=pointer]:
+                      - img [ref=e131]
+                  - generic [ref=e136]:
+                    - paragraph [ref=e137]: UDC
+                    - paragraph [ref=e138]: Burlington Brings the Heat
+                    - paragraph [ref=e139]: Competition Highlight
+                - generic [ref=e142]:
+                  - paragraph [ref=e143]: UDC
+                  - paragraph [ref=e144]: London Steals the Show
+                  - paragraph [ref=e145]: Competition Highlight
+                - generic [ref=e148]:
+                  - paragraph [ref=e149]: JJ Dance Arts
+                  - paragraph [ref=e150]: Light Heavy Light Highlights
+                  - paragraph [ref=e151]: Show Highlight
+                - generic [ref=e154]:
+                  - paragraph [ref=e155]: UDC
+                  - paragraph [ref=e156]: Season 26 Is Coming
+                  - paragraph [ref=e157]: Promo
+                - generic [ref=e160]:
+                  - paragraph [ref=e161]: Generations
+                  - paragraph [ref=e162]: Every Generation, Every Beat
+                  - paragraph [ref=e163]: Recital Highlight
+                - generic [ref=e166]:
+                  - paragraph [ref=e167]: Paul Penna
+                  - paragraph [ref=e168]: High School Musical Live!
+                  - paragraph [ref=e169]: Show Highlight
+                - generic [ref=e172]:
+                  - paragraph [ref=e173]: Shuffle Dance
+                  - paragraph [ref=e174]: Shuffle Into the Spotlight
+                  - paragraph [ref=e175]: Recital Highlight
+                - generic [ref=e178]:
+                  - paragraph [ref=e179]: Revolutions Dance
+                  - paragraph [ref=e180]: Revolutions in Motion
+                  - paragraph [ref=e181]: Recital Highlight
+                - generic [ref=e184]:
+                  - paragraph [ref=e185]: Lindsay Dance Studio
+                  - paragraph [ref=e186]: Lindsay Lights Up the Stage
+                  - paragraph [ref=e187]: Recital Highlight
+                - generic [ref=e190]:
+                  - paragraph [ref=e191]: Lindsay Dance Studio
+                  - paragraph [ref=e192]: Double Feature, Double Energy
+                  - paragraph [ref=e193]: Recital Highlight
+                - generic [ref=e196]:
+                  - paragraph [ref=e197]: JJ Dance Arts
+                  - paragraph [ref=e198]: Showcase Showstopper
+                  - paragraph [ref=e199]: Showcase Highlight
+              - button "Previous slide" [ref=e200] [cursor=pointer]:
+                - img [ref=e201]
+              - button "Next slide" [ref=e203] [cursor=pointer]:
+                - img [ref=e204]
+            - tablist "Carousel navigation" [ref=e206]:
+              - 'tab "Go to slide 1: Burlington Brings the Heat" [selected] [ref=e207] [cursor=pointer]'
+              - 'tab "Go to slide 2: London Steals the Show" [ref=e208] [cursor=pointer]'
+              - 'tab "Go to slide 3: Light Heavy Light Highlights" [ref=e209] [cursor=pointer]'
+              - 'tab "Go to slide 4: Season 26 Is Coming" [ref=e210] [cursor=pointer]'
+              - 'tab "Go to slide 5: Every Generation, Every Beat" [ref=e211] [cursor=pointer]'
+              - 'tab "Go to slide 6: High School Musical Live!" [ref=e212] [cursor=pointer]'
+              - 'tab "Go to slide 7: Shuffle Into the Spotlight" [ref=e213] [cursor=pointer]'
+              - 'tab "Go to slide 8: Revolutions in Motion" [ref=e214] [cursor=pointer]'
+              - 'tab "Go to slide 9: Lindsay Lights Up the Stage" [ref=e215] [cursor=pointer]'
+              - 'tab "Go to slide 10: Double Feature, Double Energy" [ref=e216] [cursor=pointer]'
+              - 'tab "Go to slide 11: Showcase Showstopper" [ref=e217] [cursor=pointer]'
+        - generic [ref=e220]:
+          - heading "Promos & Showcases" [level=3] [ref=e221]
+          - generic [ref=e222]:
+            - region "Promos & Showcases" [ref=e223]:
+              - generic [ref=e224]:
+                - generic [ref=e225]:
+                  - generic [ref=e227]:
+                    - button "Unmute" [ref=e228] [cursor=pointer]:
+                      - img [ref=e229]
+                    - button "Fullscreen" [ref=e233] [cursor=pointer]:
+                      - img [ref=e234]
+                  - generic [ref=e239]:
+                    - paragraph [ref=e240]: UDC
+                    - paragraph [ref=e241]: Synergy in Motion
+                    - paragraph [ref=e242]: Showcase
+                - generic [ref=e245]:
+                  - paragraph [ref=e246]: UDC
+                  - paragraph [ref=e247]: Season 26 — The Hype Reel
+                  - paragraph [ref=e248]: Promo
+                - generic [ref=e251]:
+                  - paragraph [ref=e252]: Bruno
+                  - paragraph [ref=e253]: "Bruno: Behind the Curtain"
+                  - paragraph [ref=e254]: EPK
+                - generic [ref=e257]:
+                  - paragraph [ref=e258]: Theatre Woodstock
+                  - paragraph [ref=e259]: Jesus Christ Superstar
+                  - paragraph [ref=e260]: Show Film
+                - generic [ref=e263]:
+                  - paragraph [ref=e264]: Theatre Woodstock
+                  - paragraph [ref=e265]: Superstar — The Trailer
+                  - paragraph [ref=e266]: Trailer
+                - generic [ref=e269]:
+                  - paragraph [ref=e270]: Backwoods Barbie
+                  - paragraph [ref=e271]: Backwoods Barbie Takes the Stage
+                  - paragraph [ref=e272]: Promo
+                - generic [ref=e275]:
+                  - paragraph [ref=e276]: Dance Attack
+                  - paragraph [ref=e277]: High-Energy Moves, One Stage
+                  - paragraph [ref=e278]: Promo
+                - generic [ref=e281]:
+                  - paragraph [ref=e282]: WSDY
+                  - paragraph [ref=e283]: Where Stars Dance Young
+                  - paragraph [ref=e284]: Showcase
+                - generic [ref=e287]:
+                  - paragraph [ref=e288]: HFN
+                  - paragraph [ref=e289]: Hope for Nicole 2025
+                  - paragraph [ref=e290]: Event Film
+              - button "Previous slide" [ref=e291] [cursor=pointer]:
+                - img [ref=e292]
+              - button "Next slide" [ref=e294] [cursor=pointer]:
+                - img [ref=e295]
+            - tablist "Carousel navigation" [ref=e297]:
+              - 'tab "Go to slide 1: Synergy in Motion" [selected] [ref=e298] [cursor=pointer]'
+              - 'tab "Go to slide 2: Season 26 — The Hype Reel" [ref=e299] [cursor=pointer]'
+              - 'tab "Go to slide 3: Bruno: Behind the Curtain" [ref=e300] [cursor=pointer]'
+              - 'tab "Go to slide 4: Jesus Christ Superstar" [ref=e301] [cursor=pointer]'
+              - 'tab "Go to slide 5: Superstar — The Trailer" [ref=e302] [cursor=pointer]'
+              - 'tab "Go to slide 6: Backwoods Barbie Takes the Stage" [ref=e303] [cursor=pointer]'
+              - 'tab "Go to slide 7: High-Energy Moves, One Stage" [ref=e304] [cursor=pointer]'
+              - 'tab "Go to slide 8: Where Stars Dance Young" [ref=e305] [cursor=pointer]'
+              - 'tab "Go to slide 9: Hope for Nicole 2025" [ref=e306] [cursor=pointer]'
+      - generic [ref=e307]:
+        - figure "Amy Sky Juno-nominated Singer-Songwriter & Performer" [ref=e309]:
+          - img [ref=e310]
+          - blockquote [ref=e313]: “StreamStage captured the magic of our show in a way that truly honored the performers and the music.”
+          - generic [ref=e315]:
+            - generic [ref=e316]: Amy Sky
+            - text: Juno-nominated Singer-Songwriter & Performer
+        - figure "Andrea Donaldson Artistic Director, Nightwood Theatre (Toronto)" [ref=e318]:
+          - img [ref=e319]
+          - blockquote [ref=e322]: “Professional, creative, and deeply committed to quality. They understand the performing arts.”
+          - generic [ref=e324]:
+            - generic [ref=e325]: Andrea Donaldson
+            - text: Artistic Director, Nightwood Theatre (Toronto)
+        - figure "Andrew Tribe Director, Original Kids Theatre Company (London, ON)" [ref=e327]:
+          - img [ref=e328]
+          - blockquote [ref=e331]: “Our families love being able to watch the performances live. The quality is outstanding every time.”
+          - generic [ref=e333]:
+            - generic [ref=e334]: Andrew Tribe
+            - text: Director, Original Kids Theatre Company (London, ON)
+    - generic [ref=e337]:
+      - generic [ref=e339]:
+        - generic [ref=e340]: Dance Software
+        - heading "Software Built for Dance" [level=2] [ref=e341]
+        - paragraph [ref=e342]: Purpose-built tools for the dance industry — because generic software was never designed for what you do.
+      - generic [ref=e343]:
+        - link "CompSync Competition Management Platform The all-in-one platform for dance competitions. Registration, scheduling, scoring, and live results — built by people who understand competitions." [ref=e345] [cursor=pointer]:
+          - /url: https://compsync.net
+          - generic [ref=e346]:
+            - img [ref=e348]
+            - heading "CompSync" [level=3] [ref=e350]:
+              - text: CompSync
+              - img [ref=e351]
+            - paragraph [ref=e355]: Competition Management Platform
+            - paragraph [ref=e356]: The all-in-one platform for dance competitions. Registration, scheduling, scoring, and live results — built by people who understand competitions.
+        - link "StudioSage AI-Powered Studio Assistant AI-powered assistant for dance studio owners. Answers parent questions, manages communication, and reduces administrative workload — so you can focus on teaching." [ref=e358] [cursor=pointer]:
+          - /url: "#contact"
+          - generic [ref=e359]:
+            - img [ref=e361]
+            - heading "StudioSage" [level=3] [ref=e371]:
+              - text: StudioSage
+              - img [ref=e372]
+            - paragraph [ref=e376]: AI-Powered Studio Assistant
+            - paragraph [ref=e377]: AI-powered assistant for dance studio owners. Answers parent questions, manages communication, and reduces administrative workload — so you can focus on teaching.
+        - link "StudioSync Unified Studio Management Platform All-in-one studio management — class scheduling, attendance tracking, billing, and parent communication in a single platform built for dance studios." [ref=e379] [cursor=pointer]:
+          - /url: "#contact"
+          - generic [ref=e380]:
+            - img [ref=e382]
+            - heading "StudioSync" [level=3] [ref=e384]:
+              - text: StudioSync
+              - img [ref=e385]
+            - paragraph [ref=e389]: Unified Studio Management Platform
+            - paragraph [ref=e390]: All-in-one studio management — class scheduling, attendance tracking, billing, and parent communication in a single platform built for dance studios.
+    - generic [ref=e393]:
+      - generic [ref=e395]:
+        - generic [ref=e396]: Business Video
+        - heading "Full-Stack Video for Your Business" [level=2] [ref=e397]
+        - paragraph [ref=e398]: Professional video production that drives real results — from events to social content.
+      - generic [ref=e399]:
+        - generic [ref=e401]:
+          - img [ref=e403]
+          - heading "Hybrid Events" [level=3] [ref=e405]
+          - paragraph [ref=e406]: Live + virtual event production that extends your reach beyond the room. Multi-camera, switched, and streamed.
+        - generic [ref=e408]:
+          - img [ref=e410]
+          - heading "Social Highlights" [level=3] [ref=e412]
+          - paragraph [ref=e413]: Short, punchy content designed for social media engagement. Reels, stories, and clips that convert.
+        - generic [ref=e415]:
+          - img [ref=e417]
+          - heading "Promotional Content" [level=3] [ref=e420]
+          - paragraph [ref=e421]: Brand videos, product launches, and marketing content that tells your story with cinematic quality.
+        - generic [ref=e423]:
+          - img [ref=e425]
+          - heading "Planning & Strategy" [level=3] [ref=e428]
+          - paragraph [ref=e429]: End-to-end video strategy from concept through delivery. We handle the creative so you can focus on your business.
+      - generic [ref=e430]:
+        - generic [ref=e433]:
+          - heading "Reels & Highlights" [level=3] [ref=e434]
+          - generic [ref=e435]:
+            - region "Reels & Highlights" [ref=e436]:
+              - generic [ref=e437]:
+                - generic [ref=e438]:
+                  - generic [ref=e440]:
+                    - button "Unmute" [ref=e441] [cursor=pointer]:
+                      - img [ref=e442]
+                    - button "Fullscreen" [ref=e446] [cursor=pointer]:
+                      - img [ref=e447]
+                  - generic [ref=e452]:
+                    - paragraph [ref=e453]: SGC Fitness
+                    - paragraph [ref=e454]: Strength Meets Style
+                    - paragraph [ref=e455]: Social Reel
+                - generic [ref=e458]:
+                  - paragraph [ref=e459]: SGC Fitness
+                  - paragraph [ref=e460]: No Limits, All Gains
+                  - paragraph [ref=e461]: Social Reel
+                - generic [ref=e464]:
+                  - paragraph [ref=e465]: Grand River
+                  - paragraph [ref=e466]: Grand River, Grand Night
+                  - paragraph [ref=e467]: Event Highlight
+                - generic [ref=e470]:
+                  - paragraph [ref=e471]: Embro Tractor Pull
+                  - paragraph [ref=e472]: Horsepower & Heart
+                  - paragraph [ref=e473]: Event Reel
+                - generic [ref=e476]:
+                  - paragraph [ref=e477]: Embro Tractor Pull
+                  - paragraph [ref=e478]: Dirt, Diesel & Glory
+                  - paragraph [ref=e479]: Event Reel
+                - generic [ref=e482]:
+                  - paragraph [ref=e483]: Embro Tractor Pull
+                  - paragraph [ref=e484]: Full Throttle Friday
+                  - paragraph [ref=e485]: Event Reel
+                - generic [ref=e488]:
+                  - paragraph [ref=e489]: Embro Tractor Pull
+                  - paragraph [ref=e490]: Pull for the Win
+                  - paragraph [ref=e491]: Event Reel
+              - button "Previous slide" [ref=e492] [cursor=pointer]:
+                - img [ref=e493]
+              - button "Next slide" [ref=e495] [cursor=pointer]:
+                - img [ref=e496]
+            - tablist "Carousel navigation" [ref=e498]:
+              - 'tab "Go to slide 1: Strength Meets Style" [selected] [ref=e499] [cursor=pointer]'
+              - 'tab "Go to slide 2: No Limits, All Gains" [ref=e500] [cursor=pointer]'
+              - 'tab "Go to slide 3: Grand River, Grand Night" [ref=e501] [cursor=pointer]'
+              - 'tab "Go to slide 4: Horsepower & Heart" [ref=e502] [cursor=pointer]'
+              - 'tab "Go to slide 5: Dirt, Diesel & Glory" [ref=e503] [cursor=pointer]'
+              - 'tab "Go to slide 6: Full Throttle Friday" [ref=e504] [cursor=pointer]'
+              - 'tab "Go to slide 7: Pull for the Win" [ref=e505] [cursor=pointer]'
+        - generic [ref=e508]:
+          - heading "Client Work" [level=3] [ref=e509]
+          - generic [ref=e510]:
+            - region "Client Work" [ref=e511]:
+              - generic [ref=e512]:
+                - generic [ref=e513]:
+                  - generic [ref=e515]:
+                    - button "Unmute" [ref=e516] [cursor=pointer]:
+                      - img [ref=e517]
+                    - button "Fullscreen" [ref=e521] [cursor=pointer]:
+                      - img [ref=e522]
+                  - generic [ref=e527]:
+                    - paragraph [ref=e528]: Trevino
+                    - paragraph [ref=e529]: Aloha in 30 Seconds
+                    - paragraph [ref=e530]: Commercial
+                - generic [ref=e533]:
+                  - paragraph [ref=e534]: Uvalux
+                  - paragraph [ref=e535]: Wellness, Amplified
+                  - paragraph [ref=e536]: Brand
+                - generic [ref=e539]:
+                  - paragraph [ref=e540]: YFC Woodstock
+                  - paragraph [ref=e541]: Community Champions
+                  - paragraph [ref=e542]: Event
+                - generic [ref=e545]:
+                  - paragraph [ref=e546]: Caledonia Dance
+                  - paragraph [ref=e547]: One Minute, One Studio
+                  - paragraph [ref=e548]: Promo
+                - generic [ref=e551]:
+                  - paragraph [ref=e552]: United Way Oxford
+                  - paragraph [ref=e553]: Burger Battle Showdown
+                  - paragraph [ref=e554]: Event
+                - generic [ref=e557]:
+                  - paragraph [ref=e558]: United Way Oxford
+                  - paragraph [ref=e559]: Local Love Stories
+                  - paragraph [ref=e560]: Campaign
+              - button "Previous slide" [ref=e561] [cursor=pointer]:
+                - img [ref=e562]
+              - button "Next slide" [ref=e564] [cursor=pointer]:
+                - img [ref=e565]
+            - tablist "Carousel navigation" [ref=e567]:
+              - 'tab "Go to slide 1: Aloha in 30 Seconds" [selected] [ref=e568] [cursor=pointer]'
+              - 'tab "Go to slide 2: Wellness, Amplified" [ref=e569] [cursor=pointer]'
+              - 'tab "Go to slide 3: Community Champions" [ref=e570] [cursor=pointer]'
+              - 'tab "Go to slide 4: One Minute, One Studio" [ref=e571] [cursor=pointer]'
+              - 'tab "Go to slide 5: Burger Battle Showdown" [ref=e572] [cursor=pointer]'
+              - 'tab "Go to slide 6: Local Love Stories" [ref=e573] [cursor=pointer]'
+      - generic [ref=e574]:
+        - figure "Sarah Higgins Founder, Cedar Nook Creative" [ref=e576]:
+          - img [ref=e577]
+          - blockquote [ref=e580]: “StreamStage understood our brand instantly and delivered video content that exceeded our expectations.”
+          - generic [ref=e582]:
+            - generic [ref=e583]: Sarah Higgins
+            - text: Founder, Cedar Nook Creative
+        - figure "Jan Arp Director, Holt Xchange" [ref=e585]:
+          - img [ref=e586]
+          - blockquote [ref=e589]: “They made the whole process seamless. From planning through final delivery, everything was professional and on time.”
+          - generic [ref=e591]:
+            - generic [ref=e592]: Jan Arp
+            - text: Director, Holt Xchange
+    - generic [ref=e595]:
+      - heading "Trusted By" [level=2] [ref=e598]
+      - generic [ref=e599]:
+        - generic [ref=e602]: EMPWR Dance
+        - generic [ref=e605]: Glow Dance Competition
+        - generic [ref=e608]: Original Kids Theatre
+        - generic [ref=e611]: Nightwood Theatre
+        - generic [ref=e614]: Cristini Crossfit
+        - generic [ref=e617]: Goat Yoga Toronto
+        - generic [ref=e620]: Raw Rock Shop
+        - generic [ref=e623]: Uvalux
+        - generic [ref=e626]: Cedar Nook Creative
+        - generic [ref=e629]: Holt Xchange
+        - generic [ref=e632]: Amy Sky
+        - generic [ref=e635]: Ultimate Dance Connection
+    - generic [ref=e638]:
+      - generic [ref=e640]:
+        - generic [ref=e641]: Our Team
+        - heading "Canadian-Based. Dance-Focused." [level=2] [ref=e642]
+        - generic [ref=e643]:
+          - img [ref=e644]
+          - generic [ref=e647]: Based in Ontario, Canada
+      - generic [ref=e648]:
+        - generic [ref=e650]:
+          - img [ref=e652]
+          - heading "Daniel Abrahamson" [level=3] [ref=e655]
+          - paragraph [ref=e656]: Founder & Creative Director
+          - paragraph [ref=e657]: Bridging technology and the performing arts for over a decade.
+        - generic [ref=e659]:
+          - img [ref=e661]
+          - heading "Team Member" [level=3] [ref=e664]
+          - paragraph [ref=e665]: Production Lead
+          - paragraph [ref=e666]: Multi-camera specialist with deep roots in the dance community.
+        - generic [ref=e668]:
+          - img [ref=e670]
+          - heading "Team Member" [level=3] [ref=e673]
+          - paragraph [ref=e674]: Software Developer
+          - paragraph [ref=e675]: Building purpose-built tools for the dance industry.
+    - generic [ref=e678]:
+      - generic [ref=e680]:
+        - generic [ref=e681]: FAQ
+        - heading "Frequently Asked Questions" [level=2] [ref=e682]
+        - paragraph [ref=e683]: Common questions about our services and software.
+      - generic [ref=e684]:
+        - generic [ref=e686]:
+          - button "What is StreamStage?" [ref=e687] [cursor=pointer]:
+            - heading "What is StreamStage?" [level=3] [ref=e688]
+            - img [ref=e689]
+          - paragraph [ref=e691]: StreamStage is Canada's dance industry partner, combining media production, purpose-built software, and live broadcast services. With over 100 events streamed and 500+ videos produced for 50+ studios across Canada, we provide everything from multi-camera livestreaming to competition management platforms like CompSync.
+        - generic [ref=e693]:
+          - button "How does dance competition livestreaming work?" [ref=e694] [cursor=pointer]:
+            - heading "How does dance competition livestreaming work?" [level=3] [ref=e695]
+            - img [ref=e696]
+          - paragraph [ref=e698]: Our livestreaming service uses professional multi-camera setups with real-time switching and broadcast-quality audio. Families and fans can watch competitions, recitals, and showcases live from any device, anywhere in the world. We handle all technical production so organizers can focus on running their event.
+        - generic [ref=e700]:
+          - button "What is CompSync and how much does it cost?" [ref=e701] [cursor=pointer]:
+            - heading "What is CompSync and how much does it cost?" [level=3] [ref=e702]
+            - img [ref=e703]
+          - paragraph [ref=e705]: CompSync is our all-in-one dance competition management platform. It handles registration, scheduling, scoring, live results, and integrates directly with our livestream services. CompSync is free to use — visit compsync.net to get started.
+        - generic [ref=e707]:
+          - button "Do you offer video production for businesses outside of dance?" [ref=e708] [cursor=pointer]:
+            - heading "Do you offer video production for businesses outside of dance?" [level=3] [ref=e709]
+            - img [ref=e710]
+          - paragraph [ref=e712]: Yes. We provide full-stack video production for any business — hybrid event production, social media content for Instagram, TikTok, and YouTube, brand and promotional videos, and end-to-end video strategy. Our clients include fitness studios, retail brands, theatre companies, and creative agencies across Ontario.
+        - generic [ref=e714]:
+          - button "What areas do you serve?" [ref=e715] [cursor=pointer]:
+            - heading "What areas do you serve?" [level=3] [ref=e716]
+            - img [ref=e717]
+          - paragraph [ref=e719]: StreamStage serves clients across Canada, with a focus on Ontario. We regularly travel for dance competitions, recitals, and events. For business video production, we primarily serve the Greater Toronto Area and surrounding regions.
+    - generic [ref=e722]:
+      - generic [ref=e724]:
+        - heading "Let's Build Something Together" [level=2] [ref=e725]
+        - paragraph [ref=e726]: Whether it's a livestream, a promo video, or a software solution — we'd love to hear about your project.
+      - generic [ref=e728]:
+        - generic [ref=e729]:
+          - generic [ref=e730]:
+            - generic [ref=e731]: Name
+            - textbox "Name" [ref=e732]:
+              - /placeholder: Your name
+          - generic [ref=e733]:
+            - generic [ref=e734]: Email
+            - textbox "Email" [ref=e735]:
+              - /placeholder: you@email.com
+        - generic [ref=e736]:
+          - generic [ref=e737]: Project Type
+          - combobox "Project Type" [ref=e738] [cursor=pointer]:
+            - option "Select a project type" [selected]
+            - option "Livestreaming"
+            - option "Videography"
+            - option "Promotional Video"
+            - option "Social Content"
+            - option "Hybrid Event"
+            - option "Software Inquiry"
+            - option "Other"
+        - generic [ref=e739]:
+          - generic [ref=e740]: Message
+          - textbox "Message" [ref=e741]:
+            - /placeholder: Tell us about your project...
+        - button "Send Message" [ref=e742] [cursor=pointer]:
+          - text: Send Message
+          - img [ref=e743]
+    - generic [ref=e747]:
+      - generic [ref=e748]:
+        - link "StreamStage.live" [ref=e749] [cursor=pointer]:
+          - /url: /
+          - img "StreamStage.live" [ref=e750]
+        - navigation "Footer navigation" [ref=e751]:
+          - list [ref=e752]:
+            - listitem [ref=e753]:
+              - link "Dance & Stage" [ref=e754] [cursor=pointer]:
+                - /url: "#dance-media"
+            - listitem [ref=e755]:
+              - link "Business" [ref=e756] [cursor=pointer]:
+                - /url: "#business-video"
+            - listitem [ref=e757]:
+              - link "Software" [ref=e758] [cursor=pointer]:
+                - /url: "#software"
+            - listitem [ref=e759]:
+              - link "Team" [ref=e760] [cursor=pointer]:
+                - /url: "#team"
+            - listitem [ref=e761]:
+              - link "FAQ" [ref=e762] [cursor=pointer]:
+                - /url: "#faq"
+            - listitem [ref=e763]:
+              - link "Contact" [ref=e764] [cursor=pointer]:
+                - /url: "#contact"
+        - generic [ref=e765]:
+          - link "Instagram" [ref=e766] [cursor=pointer]:
+            - /url: https://instagram.com/streamstage
+            - img [ref=e767]
+          - link "Facebook" [ref=e770] [cursor=pointer]:
+            - /url: https://facebook.com/streamstage
+            - img [ref=e771]
+          - link "Email" [ref=e773] [cursor=pointer]:
+            - /url: mailto:hello@streamstage.live
+            - img [ref=e774]
+      - generic [ref=e777]:
+        - paragraph [ref=e778]:
+          - text: Ontario, Canada ·
+          - link "hello@streamstage.live" [ref=e779] [cursor=pointer]:
+            - /url: mailto:hello@streamstage.live
+        - paragraph [ref=e780]: © 2026 StreamStage. All rights reserved.
+  - alert [ref=e781]

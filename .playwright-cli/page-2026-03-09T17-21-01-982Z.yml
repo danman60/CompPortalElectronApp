@@ -1,0 +1,43 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "StudioBeat" [ref=e5] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e11]: StudioBeat
+        - navigation [ref=e12]:
+          - link "Browse Classes" [ref=e13] [cursor=pointer]:
+            - /url: /classes
+          - link "Sign In" [ref=e14] [cursor=pointer]:
+            - /url: /login
+    - main [ref=e15]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - img [ref=e19]
+          - text: Dance Studio Management Platform
+        - heading "Modern Studio Management, Simplified" [level=1] [ref=e22]
+        - paragraph [ref=e23]: Browse classes, register online, and manage your dance studio experience — all in one place. No account needed to start exploring.
+        - generic [ref=e24]:
+          - link "Browse Classes" [ref=e25] [cursor=pointer]:
+            - /url: /classes
+            - text: Browse Classes
+            - img [ref=e26]
+          - link "Parent Login" [ref=e28] [cursor=pointer]:
+            - /url: /login
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - img [ref=e33]
+          - heading "Browse First" [level=3] [ref=e35]
+          - paragraph [ref=e36]: Explore the full class catalog — no login required. Find the perfect class before creating an account.
+        - generic [ref=e37]:
+          - img [ref=e39]
+          - heading "Easy Registration" [level=3] [ref=e44]
+          - paragraph [ref=e45]: Register your student in a few clicks. Magic link login — no passwords to remember.
+        - generic [ref=e46]:
+          - img [ref=e48]
+          - heading "Simple Payments" [level=3] [ref=e50]
+          - paragraph [ref=e51]: Secure online payments with Stripe. Set up auto-pay for monthly tuition and never miss a payment.
+    - contentinfo [ref=e52]:
+      - paragraph [ref=e54]: Powered by StudioBeat
+  - alert [ref=e55]

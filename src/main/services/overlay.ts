@@ -331,7 +331,7 @@ function buildOverlayHTML(): string {
       }
       lastCounterEntry = o.counter.entryNumber;
       counterNum.textContent = o.counter.entryNumber;
-      counterLabel.textContent = o.counter.current + ' / ' + o.counter.total;
+      counterLabel.textContent = o.counter.entryNumber;
     } else {
       counterEl.classList.remove('visible');
     }

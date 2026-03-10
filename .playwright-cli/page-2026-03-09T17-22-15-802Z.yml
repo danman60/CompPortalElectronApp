@@ -1,0 +1,313 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e55]
+  - generic [ref=e519]:
+    - banner [ref=e520]:
+      - generic [ref=e521]:
+        - link "Rhythm & Grace Dance Studio" [ref=e522] [cursor=pointer]:
+          - /url: /
+          - img [ref=e524]
+          - generic [ref=e528]: Rhythm & Grace Dance Studio
+        - link "Sign In" [ref=e529] [cursor=pointer]:
+          - /url: /login
+    - generic [ref=e530]:
+      - generic [ref=e531]:
+        - heading "Spring 2026 Catalog" [level=1] [ref=e532]
+        - paragraph [ref=e533]: Browse our classes and find the perfect fit. No account needed to explore.
+      - generic [ref=e534]:
+        - complementary [ref=e535]:
+          - generic [ref=e537]:
+            - heading "Filters" [level=2] [ref=e539]
+            - generic [ref=e540]:
+              - heading "Style" [level=3] [ref=e541]
+              - generic [ref=e542]:
+                - button "Ballet" [ref=e543]
+                - button "Jazz" [ref=e544]
+                - button "Hip Hop" [ref=e545]
+                - button "Contemporary" [ref=e546]
+                - button "Tap" [ref=e547]
+                - button "Lyrical" [ref=e548]
+            - generic [ref=e549]:
+              - heading "Level" [level=3] [ref=e550]
+              - generic [ref=e551]:
+                - button "Tiny Tots" [ref=e552]
+                - button "Beginner" [ref=e553]
+                - button "Intermediate" [ref=e554]
+                - button "Advanced" [ref=e555]
+                - button "Adult" [ref=e556]
+            - generic [ref=e557]:
+              - heading "Day" [level=3] [ref=e558]
+              - generic [ref=e559]:
+                - button "Sun" [ref=e560]
+                - button "Mon" [ref=e561]
+                - button "Tue" [ref=e562]
+                - button "Wed" [ref=e563]
+                - button "Thu" [ref=e564]
+                - button "Fri" [ref=e565]
+                - button "Sat" [ref=e566]
+        - generic [ref=e567]:
+          - paragraph [ref=e569]: 12 classes
+          - generic [ref=e570]:
+            - link "Ballet Tiny Tots Ages 3–5 Tiny Tots Ballet A magical introduction to ballet for our littlest dancers Mondays 9:30 AM–10:15 AM Studio A with Maria Santos $65/mo 11 spots open" [ref=e572] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0001-4000-8000-000000000001
+              - generic [ref=e574]:
+                - generic [ref=e575]:
+                  - generic [ref=e576]: Ballet
+                  - generic [ref=e577]: Tiny Tots
+                  - generic [ref=e578]: Ages 3–5
+                - heading "Tiny Tots Ballet" [level=3] [ref=e579]
+                - paragraph [ref=e580]: A magical introduction to ballet for our littlest dancers
+                - generic [ref=e581]:
+                  - generic [ref=e582]:
+                    - img [ref=e583]
+                    - text: Mondays 9:30 AM–10:15 AM
+                  - generic [ref=e586]:
+                    - img [ref=e587]
+                    - text: Studio A
+                - paragraph [ref=e590]: with Maria Santos
+                - generic [ref=e591]:
+                  - generic [ref=e592]: $65/mo
+                  - generic [ref=e593]:
+                    - img [ref=e594]
+                    - text: 11 spots open
+            - link "Jazz Beginner Ages 6–8 Beginner Jazz Fun and energetic introduction to jazz dance Mondays 4:00 PM–4:55 PM Studio B with James Chen $75/mo 14 spots open" [ref=e600] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0002-4000-8000-000000000002
+              - generic [ref=e602]:
+                - generic [ref=e603]:
+                  - generic [ref=e604]: Jazz
+                  - generic [ref=e605]: Beginner
+                  - generic [ref=e606]: Ages 6–8
+                - heading "Beginner Jazz" [level=3] [ref=e607]
+                - paragraph [ref=e608]: Fun and energetic introduction to jazz dance
+                - generic [ref=e609]:
+                  - generic [ref=e610]:
+                    - img [ref=e611]
+                    - text: Mondays 4:00 PM–4:55 PM
+                  - generic [ref=e614]:
+                    - img [ref=e615]
+                    - text: Studio B
+                - paragraph [ref=e618]: with James Chen
+                - generic [ref=e619]:
+                  - generic [ref=e620]: $75/mo
+                  - generic [ref=e621]:
+                    - img [ref=e622]
+                    - text: 14 spots open
+            - link "Ballet Intermediate Ages 9–12 Intermediate Ballet Refining technique with barre and center work Tuesdays 4:30 PM–5:30 PM Studio A with Maria Santos $85/mo 14 spots open" [ref=e628] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0003-4000-8000-000000000003
+              - generic [ref=e630]:
+                - generic [ref=e631]:
+                  - generic [ref=e632]: Ballet
+                  - generic [ref=e633]: Intermediate
+                  - generic [ref=e634]: Ages 9–12
+                - heading "Intermediate Ballet" [level=3] [ref=e635]
+                - paragraph [ref=e636]: Refining technique with barre and center work
+                - generic [ref=e637]:
+                  - generic [ref=e638]:
+                    - img [ref=e639]
+                    - text: Tuesdays 4:30 PM–5:30 PM
+                  - generic [ref=e642]:
+                    - img [ref=e643]
+                    - text: Studio A
+                - paragraph [ref=e646]: with Maria Santos
+                - generic [ref=e647]:
+                  - generic [ref=e648]: $85/mo
+                  - generic [ref=e649]:
+                    - img [ref=e650]
+                    - text: 14 spots open
+            - link "Hip Hop Intermediate Ages 9–12 Intermediate Hip Hop Breaking, popping, and locking fundamentals Tuesdays 5:30 PM–6:30 PM Studio B with Aisha Williams $85/mo 17 spots open" [ref=e656] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0004-4000-8000-000000000004
+              - generic [ref=e658]:
+                - generic [ref=e659]:
+                  - generic [ref=e660]: Hip Hop
+                  - generic [ref=e661]: Intermediate
+                  - generic [ref=e662]: Ages 9–12
+                - heading "Intermediate Hip Hop" [level=3] [ref=e663]
+                - paragraph [ref=e664]: Breaking, popping, and locking fundamentals
+                - generic [ref=e665]:
+                  - generic [ref=e666]:
+                    - img [ref=e667]
+                    - text: Tuesdays 5:30 PM–6:30 PM
+                  - generic [ref=e670]:
+                    - img [ref=e671]
+                    - text: Studio B
+                - paragraph [ref=e674]: with Aisha Williams
+                - generic [ref=e675]:
+                  - generic [ref=e676]: $85/mo
+                  - generic [ref=e677]:
+                    - img [ref=e678]
+                    - text: 17 spots open
+            - link "Tap Beginner Ages 6–8 Beginner Tap Learn the basics of rhythm and tap technique Wednesdays 4:00 PM–4:55 PM Studio B with Aisha Williams $75/mo 12 spots open" [ref=e684] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0006-4000-8000-000000000006
+              - generic [ref=e686]:
+                - generic [ref=e687]:
+                  - generic [ref=e688]: Tap
+                  - generic [ref=e689]: Beginner
+                  - generic [ref=e690]: Ages 6–8
+                - heading "Beginner Tap" [level=3] [ref=e691]
+                - paragraph [ref=e692]: Learn the basics of rhythm and tap technique
+                - generic [ref=e693]:
+                  - generic [ref=e694]:
+                    - img [ref=e695]
+                    - text: Wednesdays 4:00 PM–4:55 PM
+                  - generic [ref=e698]:
+                    - img [ref=e699]
+                    - text: Studio B
+                - paragraph [ref=e702]: with Aisha Williams
+                - generic [ref=e703]:
+                  - generic [ref=e704]: $75/mo
+                  - generic [ref=e705]:
+                    - img [ref=e706]
+                    - text: 12 spots open
+            - link "Contemporary Advanced Ages 13–17 Advanced Contemporary Exploring movement vocabulary and improvisation Wednesdays 5:00 PM–6:15 PM Studio A with James Chen $95/mo 10 spots open" [ref=e712] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0005-4000-8000-000000000005
+              - generic [ref=e714]:
+                - generic [ref=e715]:
+                  - generic [ref=e716]: Contemporary
+                  - generic [ref=e717]: Advanced
+                  - generic [ref=e718]: Ages 13–17
+                - heading "Advanced Contemporary" [level=3] [ref=e719]
+                - paragraph [ref=e720]: Exploring movement vocabulary and improvisation
+                - generic [ref=e721]:
+                  - generic [ref=e722]:
+                    - img [ref=e723]
+                    - text: Wednesdays 5:00 PM–6:15 PM
+                  - generic [ref=e726]:
+                    - img [ref=e727]
+                    - text: Studio A
+                - paragraph [ref=e730]: with James Chen
+                - generic [ref=e731]:
+                  - generic [ref=e732]: $95/mo
+                  - generic [ref=e733]:
+                    - img [ref=e734]
+                    - text: 10 spots open
+            - link "Lyrical Intermediate Ages 9–12 Intermediate Lyrical Emotional storytelling through dance Thursdays 4:30 PM–5:30 PM Studio A with Maria Santos $85/mo 13 spots open" [ref=e740] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0007-4000-8000-000000000007
+              - generic [ref=e742]:
+                - generic [ref=e743]:
+                  - generic [ref=e744]: Lyrical
+                  - generic [ref=e745]: Intermediate
+                  - generic [ref=e746]: Ages 9–12
+                - heading "Intermediate Lyrical" [level=3] [ref=e747]
+                - paragraph [ref=e748]: Emotional storytelling through dance
+                - generic [ref=e749]:
+                  - generic [ref=e750]:
+                    - img [ref=e751]
+                    - text: Thursdays 4:30 PM–5:30 PM
+                  - generic [ref=e754]:
+                    - img [ref=e755]
+                    - text: Studio A
+                - paragraph [ref=e758]: with Maria Santos
+                - generic [ref=e759]:
+                  - generic [ref=e760]: $85/mo
+                  - generic [ref=e761]:
+                    - img [ref=e762]
+                    - text: 13 spots open
+            - link "Ballet Advanced Ages 13–17 Advanced Ballet Pre-professional pointe and variations Thursdays 5:30 PM–7:00 PM Studio A with Maria Santos $120/mo 9 spots open" [ref=e768] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0008-4000-8000-000000000008
+              - generic [ref=e770]:
+                - generic [ref=e771]:
+                  - generic [ref=e772]: Ballet
+                  - generic [ref=e773]: Advanced
+                  - generic [ref=e774]: Ages 13–17
+                - heading "Advanced Ballet" [level=3] [ref=e775]
+                - paragraph [ref=e776]: Pre-professional pointe and variations
+                - generic [ref=e777]:
+                  - generic [ref=e778]:
+                    - img [ref=e779]
+                    - text: Thursdays 5:30 PM–7:00 PM
+                  - generic [ref=e782]:
+                    - img [ref=e783]
+                    - text: Studio A
+                - paragraph [ref=e786]: with Maria Santos
+                - generic [ref=e787]:
+                  - generic [ref=e788]: $120/mo
+                  - generic [ref=e789]:
+                    - img [ref=e790]
+                    - text: 9 spots open
+            - link "Hip Hop Advanced Ages 13–17 Advanced Hip Hop Choreography and freestyle for experienced dancers Fridays 5:00 PM–6:15 PM Studio B with Aisha Williams $95/mo 16 spots open" [ref=e796] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0009-4000-8000-000000000009
+              - generic [ref=e798]:
+                - generic [ref=e799]:
+                  - generic [ref=e800]: Hip Hop
+                  - generic [ref=e801]: Advanced
+                  - generic [ref=e802]: Ages 13–17
+                - heading "Advanced Hip Hop" [level=3] [ref=e803]
+                - paragraph [ref=e804]: Choreography and freestyle for experienced dancers
+                - generic [ref=e805]:
+                  - generic [ref=e806]:
+                    - img [ref=e807]
+                    - text: Fridays 5:00 PM–6:15 PM
+                  - generic [ref=e810]:
+                    - img [ref=e811]
+                    - text: Studio B
+                - paragraph [ref=e814]: with Aisha Williams
+                - generic [ref=e815]:
+                  - generic [ref=e816]: $95/mo
+                  - generic [ref=e817]:
+                    - img [ref=e818]
+                    - text: 16 spots open
+            - link "Ballet Beginner Ages 6–8 Beginner Ballet Classical ballet basics for young dancers Saturdays 9:00 AM–9:55 AM Studio A with Maria Santos $75/mo 14 spots open" [ref=e824] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0010-4000-8000-000000000010
+              - generic [ref=e826]:
+                - generic [ref=e827]:
+                  - generic [ref=e828]: Ballet
+                  - generic [ref=e829]: Beginner
+                  - generic [ref=e830]: Ages 6–8
+                - heading "Beginner Ballet" [level=3] [ref=e831]
+                - paragraph [ref=e832]: Classical ballet basics for young dancers
+                - generic [ref=e833]:
+                  - generic [ref=e834]:
+                    - img [ref=e835]
+                    - text: Saturdays 9:00 AM–9:55 AM
+                  - generic [ref=e838]:
+                    - img [ref=e839]
+                    - text: Studio A
+                - paragraph [ref=e842]: with Maria Santos
+                - generic [ref=e843]:
+                  - generic [ref=e844]: $75/mo
+                  - generic [ref=e845]:
+                    - img [ref=e846]
+                    - text: 14 spots open
+            - link "Jazz Intermediate Ages 9–12 Intermediate Jazz Progressions, turns, and jazz combinations Saturdays 10:00 AM–11:00 AM Studio A with James Chen $85/mo 18 spots open" [ref=e852] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0011-4000-8000-000000000011
+              - generic [ref=e854]:
+                - generic [ref=e855]:
+                  - generic [ref=e856]: Jazz
+                  - generic [ref=e857]: Intermediate
+                  - generic [ref=e858]: Ages 9–12
+                - heading "Intermediate Jazz" [level=3] [ref=e859]
+                - paragraph [ref=e860]: Progressions, turns, and jazz combinations
+                - generic [ref=e861]:
+                  - generic [ref=e862]:
+                    - img [ref=e863]
+                    - text: Saturdays 10:00 AM–11:00 AM
+                  - generic [ref=e866]:
+                    - img [ref=e867]
+                    - text: Studio A
+                - paragraph [ref=e870]: with James Chen
+                - generic [ref=e871]:
+                  - generic [ref=e872]: $85/mo
+                  - generic [ref=e873]:
+                    - img [ref=e874]
+                    - text: 18 spots open
+            - link "Jazz Adult Ages 18–99 Adult Jazz All-levels jazz for adult beginners and returners Saturdays 11:15 AM–12:15 PM Studio B with James Chen $85/mo 20 spots open" [ref=e880] [cursor=pointer]:
+              - /url: /classes/eeeeeeee-0012-4000-8000-000000000012
+              - generic [ref=e882]:
+                - generic [ref=e883]:
+                  - generic [ref=e884]: Jazz
+                  - generic [ref=e885]: Adult
+                  - generic [ref=e886]: Ages 18–99
+                - heading "Adult Jazz" [level=3] [ref=e887]
+                - paragraph [ref=e888]: All-levels jazz for adult beginners and returners
+                - generic [ref=e889]:
+                  - generic [ref=e890]:
+                    - img [ref=e891]
+                    - text: Saturdays 11:15 AM–12:15 PM
+                  - generic [ref=e894]:
+                    - img [ref=e895]
+                    - text: Studio B
+                - paragraph [ref=e898]: with James Chen
+                - generic [ref=e899]:
+                  - generic [ref=e900]: $85/mo
+                  - generic [ref=e901]:
+                    - img [ref=e902]
+                    - text: 20 spots open

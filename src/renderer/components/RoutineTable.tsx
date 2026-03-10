@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
 import '../styles/table.css'
 
-function statusToLabel(status: RoutineStatus): { text: string; className: string } {
+function statusToLabel(status: RoutineStatus, uploadProgress?: { state: string; percent: number } | null): { text: string; className: string } {
   switch (status) {
     case 'pending':
       return { text: 'Not recorded', className: 'waiting' }
@@ -301,7 +301,7 @@ export default function RoutineTable(): React.ReactElement {
                       </div>
                       <span className={`status-label ${statusInfo.className}`}>
                         {statusInfo.text}
-                        {routine.uploadProgress?.percent
+                        {routine.status === 'uploading' && routine.uploadProgress?.percent !== undefined
                           ? ` \u2014 ${routine.uploadProgress.percent}%`
                           : ''}
                       </span>

@@ -26,8 +26,9 @@ function HotkeyInput({
       }
 
       const parts: string[] = []
-      if (e.ctrlKey) parts.push('Ctrl')
+      // Enforce SHIFT-CONTROL order
       if (e.shiftKey) parts.push('Shift')
+      if (e.ctrlKey) parts.push('Control')
       if (e.altKey) parts.push('Alt')
 
       const key = e.key
@@ -45,17 +46,22 @@ function HotkeyInput({
     [capturing, onChange],
   )
 
+  // Format display to show Shift+Control+Key
+  const displayValue = value
+    .replace(/Ctrl\+Shift/g, 'Shift+Control')
+    .replace(/Control\+Shift/g, 'Shift+Control')
+
   return (
     <input
       ref={inputRef}
       type="text"
       className={`hotkey-input ${capturing ? 'capturing' : ''}`}
-      value={capturing ? 'Press a key...' : value}
+      value={capturing ? 'Press a key...' : displayValue}
       readOnly
       onFocus={() => setCapturing(true)}
       onBlur={() => setCapturing(false)}
       onKeyDown={handleKeyDown}
-      style={{ width: '120px', cursor: 'pointer', textAlign: 'center' }}
+      style={{ width: '140px', cursor: 'pointer', textAlign: 'center' }}
     />
   )
 }
@@ -67,7 +73,6 @@ export default function Settings(): React.ReactElement {
   const [obsInputs, setObsInputs] = useState<string[]>([])
   const [namingPreview, setNamingPreview] = useState('')
   const [diagCopied, setDiagCopied] = useState(false)
-  const [overlayCopied, setOverlayCopied] = useState(false)
 
   useEffect(() => {
     if (currentSettings) {
@@ -151,63 +156,7 @@ export default function Settings(): React.ReactElement {
       </div>
 
       <div className="settings-body">
-        {/* OBS Connection */}
-        <div className="settings-section">
-          <div className="settings-section-title">OBS Connection</div>
-          <div className="settings-grid">
-            <div className="field">
-              <label>WebSocket URL</label>
-              <input
-                type="text"
-                value={draft.obs.url}
-                onChange={(e) => update('obs', { url: e.target.value })}
-                placeholder="ws://localhost:4455"
-              />
-            </div>
-            <div className="field">
-              <label>Password</label>
-              <input
-                type="password"
-                value={draft.obs.password}
-                onChange={(e) => update('obs', { password: e.target.value })}
-                placeholder="OBS WebSocket password"
-              />
-              <span className="hint">Set in OBS &gt; Tools &gt; WebSocket Server Settings</span>
-            </div>
-            <div className="field">
-              <label>Recording Format</label>
-              <select
-                value={draft.obs.recordingFormat}
-                onChange={(e) => update('obs', { recordingFormat: e.target.value as 'mkv' | 'mp4' | 'flv' })}
-              >
-                <option value="mkv">MKV (recommended — crash-safe)</option>
-                <option value="mp4">MP4</option>
-                <option value="flv">FLV</option>
-              </select>
-              <span className="hint">Applied to OBS on save (Simple output mode)</span>
-            </div>
-          </div>
-        </div>
-
-        {/* CompSync Connection — simplified to share code */}
-        <div className="settings-section">
-          <div className="settings-section-title">CompSync Connection</div>
-          <div className="settings-grid single">
-            <div className="field">
-              <label>Share Code</label>
-              <input
-                type="text"
-                value={draft.compsync.shareCode}
-                onChange={(e) => update('compsync', { shareCode: e.target.value.toUpperCase() })}
-                placeholder="e.g. EMPWR-SPRING-26"
-                style={{ letterSpacing: '1px', fontWeight: 600 }}
-              />
-              <span className="hint">Enter the share code provided by your competition director. This replaces manual tenant/API key setup.</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Competition Setup */}
+        {/* Competition Setup - FIRST */}
         <div className="settings-section">
           <div className="settings-section-title">Competition Setup</div>
           <div className="settings-grid">
@@ -227,7 +176,7 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
-        {/* Unified Audio Configuration */}
+        {/* Audio Configuration - SECOND */}
         <div className="settings-section">
           <div className="settings-section-title">Audio Configuration</div>
           <p className="section-desc">
@@ -319,33 +268,12 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
-        {/* FFmpeg */}
+        {/* FFmpeg - without path option */}
         <div className="settings-section">
-          <div className="settings-section-title">FFmpeg</div>
+          <div className="settings-section-title">FFmpeg Processing</div>
           <div className="settings-grid">
             <div className="field">
-              <label>FFmpeg Path</label>
-              <div className="field-row">
-                <input
-                  type="text"
-                  value={draft.ffmpeg.path}
-                  onChange={(e) => update('ffmpeg', { path: e.target.value })}
-                  style={{ flex: 1 }}
-                />
-                <button
-                  className="back-btn"
-                  onClick={async () => {
-                    const file = await window.api.settingsBrowseFile()
-                    if (file) update('ffmpeg', { path: file })
-                  }}
-                >
-                  Browse...
-                </button>
-              </div>
-              <span className="hint">Uses bundled FFmpeg by default.</span>
-            </div>
-            <div className="field">
-              <label>Processing</label>
+              <label>Processing Mode</label>
               <select
                 value={draft.ffmpeg.processingMode}
                 onChange={(e) => update('ffmpeg', { processingMode: e.target.value as 'copy' | 'smart' | '720p' | '1080p' })}
@@ -371,10 +299,48 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
+        {/* OBS Connection - LOWER in menu */}
+        <div className="settings-section">
+          <div className="settings-section-title">OBS Connection</div>
+          <div className="settings-grid">
+            <div className="field">
+              <label>WebSocket URL</label>
+              <input
+                type="text"
+                value={draft.obs.url}
+                onChange={(e) => update('obs', { url: e.target.value })}
+                placeholder="ws://localhost:4455"
+              />
+            </div>
+            <div className="field">
+              <label>Password</label>
+              <input
+                type="password"
+                value={draft.obs.password}
+                onChange={(e) => update('obs', { password: e.target.value })}
+                placeholder="OBS WebSocket password"
+              />
+              <span className="hint">Set in OBS &gt; Tools &gt; WebSocket Server Settings</span>
+            </div>
+            <div className="field">
+              <label>Recording Format</label>
+              <select
+                value={draft.obs.recordingFormat}
+                onChange={(e) => update('obs', { recordingFormat: e.target.value as 'mkv' | 'mp4' | 'flv' })}
+              >
+                <option value="mkv">MKV (recommended — crash-safe)</option>
+                <option value="mp4">MP4</option>
+                <option value="flv">FLV</option>
+              </select>
+              <span className="hint">Applied to OBS on save (Simple output mode)</span>
+            </div>
+          </div>
+        </div>
+
         {/* Global Hotkeys */}
         <div className="settings-section">
           <div className="settings-section-title">Global Hotkeys</div>
-          <p className="section-desc">Click a field and press a key combination. Works even when the app is not focused.</p>
+          <p className="section-desc">Click a field and press Shift+Control+[key]. Works even when the app is not focused.</p>
           <div className="settings-grid">
             <div className="field">
               <label>Start / Stop Recording</label>
@@ -403,93 +369,6 @@ export default function Settings(): React.ReactElement {
                 value={draft.hotkeys.saveReplay}
                 onChange={(v) => update('hotkeys', { saveReplay: v })}
               />
-            </div>
-          </div>
-        </div>
-
-        {/* Overlay */}
-        <div className="settings-section">
-          <div className="settings-section-title">Overlay</div>
-          <div className="settings-grid">
-            <div className="field">
-              <label>Animation Style</label>
-              <select
-                value={draft.overlay.animation}
-                onChange={(e) => update('overlay', { animation: e.target.value as AppSettings['overlay']['animation'] })}
-              >
-                <option value="random">Random (varies each fire)</option>
-                <option value="slide">Slide</option>
-                <option value="zoom">Zoom</option>
-                <option value="fade">Fade</option>
-                <option value="rise">Rise</option>
-                <option value="sparkle">Sparkle</option>
-              </select>
-            </div>
-            <div className="field">
-              <label>Auto-hide After (seconds)</label>
-              <input
-                type="number"
-                min="0"
-                max="120"
-                value={draft.overlay.autoHideSeconds}
-                onChange={(e) => update('overlay', { autoHideSeconds: parseInt(e.target.value) || 0 })}
-                style={{ width: '80px' }}
-              />
-              <span className="hint">0 = never auto-hide (manual only)</span>
-            </div>
-          </div>
-          {[
-            { key: 'defaultClock', label: 'Show Clock', desc: 'Display clock on overlay' },
-            { key: 'showEntryNumber', label: 'Show Entry Number', desc: 'Display entry number badge on lower third' },
-            { key: 'showRoutineTitle', label: 'Show Routine Title', desc: 'Display routine title on lower third' },
-            { key: 'showDancers', label: 'Show Dancers', desc: 'Display dancer names on lower third' },
-            { key: 'showStudioName', label: 'Show Studio Name', desc: 'Display studio name on lower third' },
-            { key: 'showCategory', label: 'Show Category', desc: 'Display category on lower third' },
-          ].map(({ key, label, desc }) => (
-            <div className="toggle-row" key={key}>
-              <div>
-                <div className="toggle-label">{label}</div>
-                <div className="toggle-desc">{desc}</div>
-              </div>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={draft.overlay[key as keyof typeof draft.overlay] as boolean}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      overlay: { ...draft.overlay, [key]: e.target.checked },
-                    })
-                  }
-                />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-          ))}
-          <div className="settings-grid" style={{ marginTop: '12px' }}>
-            <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label>Overlay URL (Browser Source in OBS)</label>
-              <div className="field-row">
-                <input
-                  type="text"
-                  value={draft.overlay.overlayUrl}
-                  readOnly
-                  style={{ flex: 1, opacity: 0.8 }}
-                />
-                <button
-                  className="back-btn"
-                  onClick={() => {
-                    navigator.clipboard.writeText(draft.overlay.overlayUrl)
-                    setOverlayCopied(true)
-                    setTimeout(() => setOverlayCopied(false), 2000)
-                  }}
-                >
-                  {overlayCopied ? 'Copied!' : 'Copy URL'}
-                </button>
-              </div>
-              <span className="hint">
-                Add this URL as a Browser Source in OBS (1920x1080, transparent background).
-              </span>
             </div>
           </div>
         </div>

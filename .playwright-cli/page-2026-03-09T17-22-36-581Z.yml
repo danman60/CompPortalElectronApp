@@ -1,0 +1,59 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e55]
+  - generic [ref=e907]:
+    - link "StudioBeat" [ref=e908] [cursor=pointer]:
+      - /url: /
+      - img [ref=e910]
+      - generic [ref=e914]: StudioBeat
+    - generic [ref=e915]:
+      - heading "Sign In" [level=1] [ref=e916]
+      - paragraph [ref=e917]: Enter your email to receive a magic sign-in link.
+      - generic [ref=e918]:
+        - generic [ref=e919]:
+          - generic [ref=e920]: Email address
+          - generic [ref=e921]:
+            - generic:
+              - img
+            - textbox "Email address" [ref=e922]:
+              - /placeholder: you@example.com
+        - button "Send Magic Link" [ref=e923]
+      - generic [ref=e924]:
+        - paragraph [ref=e925]: Dev Logins
+        - generic [ref=e926]:
+          - paragraph [ref=e927]: Staff
+          - generic [ref=e928]:
+            - button "Daniel" [ref=e929]:
+              - img [ref=e930]
+              - text: Daniel
+            - button "Sarah" [ref=e932]:
+              - img [ref=e933]
+              - text: Sarah
+        - generic [ref=e945]:
+          - paragraph [ref=e946]: Instructors
+          - generic [ref=e947]:
+            - button "Maria" [ref=e948]:
+              - img [ref=e949]
+              - text: Maria
+            - button "James" [ref=e952]:
+              - img [ref=e953]
+              - text: James
+            - button "Aisha" [ref=e956]:
+              - img [ref=e957]
+              - text: Aisha
+        - generic [ref=e960]:
+          - paragraph [ref=e961]: Parents
+          - generic [ref=e962]:
+            - button "Jennifer" [ref=e963]:
+              - img [ref=e964]
+              - text: Jennifer
+            - button "Michael" [ref=e969]:
+              - img [ref=e970]
+              - text: Michael
+            - button "Lisa" [ref=e975]:
+              - img [ref=e976]
+              - text: Lisa
+      - paragraph [ref=e981]:
+        - text: Don't have an account?
+        - link "Browse classes" [ref=e982] [cursor=pointer]:
+          - /url: /classes
+        - text: to register.

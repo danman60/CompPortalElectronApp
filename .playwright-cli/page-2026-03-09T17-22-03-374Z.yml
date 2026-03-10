@@ -1,0 +1,57 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e55]
+  - generic [ref=e448]:
+    - banner [ref=e449]:
+      - generic [ref=e450]:
+        - link "StudioBeat" [ref=e451] [cursor=pointer]:
+          - /url: /
+          - img [ref=e453]
+          - generic [ref=e457]: StudioBeat
+        - link "Sign In" [ref=e458] [cursor=pointer]:
+          - /url: /login
+    - generic [ref=e459]:
+      - link "Back to Classes" [ref=e460] [cursor=pointer]:
+        - /url: /classes
+        - img [ref=e461]
+        - text: Back to Classes
+      - generic [ref=e463]:
+        - generic [ref=e467]:
+          - generic [ref=e468]:
+            - generic [ref=e469]: Hip Hop
+            - generic [ref=e470]: Intermediate
+          - heading "Intermediate Hip Hop" [level=1] [ref=e471]
+          - paragraph [ref=e472]: Breaking, popping, and locking fundamentals
+          - generic [ref=e473]:
+            - generic [ref=e474]:
+              - img [ref=e475]
+              - generic [ref=e477]:
+                - paragraph [ref=e478]: Schedule
+                - paragraph [ref=e479]: Tuesdays
+            - generic [ref=e480]:
+              - img [ref=e481]
+              - generic [ref=e484]:
+                - paragraph [ref=e485]: Time
+                - paragraph [ref=e486]: 5:30 PM – 6:30 PM
+            - generic [ref=e487]:
+              - img [ref=e488]
+              - generic [ref=e491]:
+                - paragraph [ref=e492]: Location
+                - paragraph [ref=e493]: Studio B
+            - generic [ref=e494]:
+              - img [ref=e495]
+              - generic [ref=e500]:
+                - paragraph [ref=e501]: Ages
+                - paragraph [ref=e502]: 9 – 12 years
+          - generic [ref=e503]: "Instructor: Aisha Williams"
+          - generic [ref=e504]: "Season: Spring 2026"
+        - generic [ref=e506]:
+          - generic [ref=e507]:
+            - generic [ref=e508]:
+              - img [ref=e509]
+              - generic [ref=e511]: "85"
+              - generic [ref=e512]: /mo
+            - paragraph [ref=e513]: + $25 registration fee
+          - generic [ref=e516]: 17 of 20 spots available
+          - link "Register Now" [ref=e517] [cursor=pointer]:
+            - /url: /register?class=eeeeeeee-0004-4000-8000-000000000004
+          - paragraph [ref=e518]: No account needed to start registration

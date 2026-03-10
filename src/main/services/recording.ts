@@ -354,6 +354,8 @@ export async function nextFull(): Promise<void> {
   navBusy = true
   try {
     const connected = obs.getState().connectionStatus === 'connected'
+    const { getSettings } = require('./settings')
+    const settings = getSettings()
 
     if (connected && obs.getState().isRecording) {
       try {
@@ -374,11 +376,12 @@ export async function nextFull(): Promise<void> {
 
     broadcastFullState()
 
-    if (connected) {
+    // Auto-record if enabled (respects settings like next() does)
+    if (settings.behavior.autoRecordOnNext && connected) {
       try {
         await obs.startRecord()
       } catch (err) {
-        logger.app.error('nextFull: start recording failed:', err instanceof Error ? err.message : err)
+        logger.app.error('nextFull: auto-record failed:', err instanceof Error ? err.message : err)
       }
     }
 
