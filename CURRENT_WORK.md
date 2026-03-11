@@ -1,6 +1,19 @@
-# CompSync Media — v2.5.1 (In Progress)
+# CompSync Media — v2.6.0 (Shipped 2026-03-10)
 
-## Active: UI/UX Fixes (2026-03-10)
+## Active: Comprehensive Testing Complete
+
+### Test Results (29 tests passed)
+- **23 comprehensive tests** covering all IPC handlers and UI components
+- **6 original tests** for basic functionality
+- All tests verify: app launch, preload API, settings IPC, schedule IPC, job queue IPC, OBS IPC, recording navigation, upload IPC, overlay IPC, UI components, event listeners, error handling, main process state
+
+### v2.6.0 Shipped Items
+- Animated CPU and disk usage meters with progress bars
+- Upload progress accuracy fixed (tracks bytes + files)
+- Status indicator accuracy improved
+- Full test suite with 29 tests
+
+## Previous: UI/UX Fixes (2026-03-10)
 
 ### What was done
 - Fixed BIG NEXT BUTTON to respect `autoRecordOnNext` setting (was always auto-recording)
@@ -12,13 +25,17 @@
 - Removed FFmpeg path option from Settings (uses bundled FFmpeg)
 - Removed Share Code from Settings (on main screen)
 - Updated hotkey capture to enforce Shift+Control order
+- Added animated CPU and disk completion bars
 
 ### Files Changed
 - `src/main/services/recording.ts` — nextFull() now checks autoRecordOnNext
 - `src/main/services/overlay.ts` — counter label now shows entryNumber only
+- `src/main/services/upload.ts` — accurate progress tracking
 - `src/renderer/components/RoutineTable.tsx` — fixed upload % display
-- `src/renderer/components/Header.tsx` — UploadAllButton with disabled state
+- `src/renderer/components/Header.tsx` — UploadAllButton, SystemMonitor with meters
 - `src/renderer/components/Settings.tsx` — reorganized, removed sections
+- `src/renderer/styles/header.css` — meter bar styles + animation
+- `tests/comprehensive.spec.ts` — 23 new comprehensive tests
 
 ## Previous: R2 Storage Migration (Complete 2026-03-09)
 
