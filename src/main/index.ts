@@ -180,17 +180,23 @@ app.whenReady().then(async () => {
     logger.app.warn('Crash recovery check failed:', err)
   })
 
-  // Auto-load share code if saved in settings and no competition already loaded
+  // Resolve share code on startup (needed for upload credentials even if competition is persisted)
   const settings = getSettings()
-  if (settings.compsync?.shareCode && !state.getCompetition()) {
-    schedule.loadFromShareCode(settings.compsync.shareCode)
-      .then((comp) => {
-        state.setCompetition(comp)
-        recording.broadcastFullState()
-        logger.app.info(`Auto-loaded competition from share code: ${comp.name} (${comp.routines.length} routines)`)
+  if (settings.compsync?.shareCode) {
+    schedule.resolveShareCode(settings.compsync.shareCode)
+      .then(async () => {
+        // If no competition loaded from persisted state, fetch the full schedule
+        if (!state.getCompetition()) {
+          const comp = await schedule.loadFromShareCode(settings.compsync.shareCode)
+          state.setCompetition(comp)
+          recording.broadcastFullState()
+          logger.app.info(`Auto-loaded competition from share code: ${comp.name} (${comp.routines.length} routines)`)
+        } else {
+          logger.app.info(`Share code resolved — upload credentials ready`)
+        }
       })
       .catch((err) => {
-        logger.app.warn(`Auto-load share code failed: ${err instanceof Error ? err.message : err}`)
+        logger.app.warn(`Share code resolve failed: ${err instanceof Error ? err.message : err}`)
       })
   }
 
