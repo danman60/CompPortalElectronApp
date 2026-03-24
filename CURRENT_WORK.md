@@ -1,43 +1,40 @@
 # Current Work - CompSync Electron App
 
 ## Last Session Summary
-Planned and queued CLIP Photo Verification & Re-Sort feature. Read the spec from `/mnt/firmament/CLIP_Photo_Routine_Sorter_Spec.md`, explored full codebase architecture, wrote integration plan, created 2 overnight task files for local LLM execution.
+CS-CLIP session (2026-03-24): Built full CLIP photo sorter — backend service with ONNX CLIP inference + IPC wiring, and UI with 5-screen state machine. Both committed and pushed.
 
-## What Changed
-- [new] `docs/plans/2026-03-23-clip-photo-sorter-integration.md` — full integration plan
-- [new] `/tmp/task-compsync-clip-backend.md` — overnight task: clipVerify.ts service + types + IPC
-- [new] `/tmp/task-compsync-clip-ui.md` — overnight task: PhotoSorter UI components
-- [modified] `/home/danman60/overnight-master.sh` — added CS CLIP Backend + CS CLIP UI tasks with "cs-clip" dependency group
+## What Changed (2026-03-24 CS-CLIP session)
+
+**Backend (commit `9c07751`):**
+- `src/main/services/clipVerify.ts` — 6 public functions: verifyImport, analyzeFolder, executeSort, cancel + lazy model loading, embedding cache, cosine similarity
+- 4 CLIP IPC handlers wired in `ipc.ts`
+- 4 CLIP API methods added to preload
+- `asarUnpack` updated for transformers + onnxruntime
+
+**UI (commit `a2bd4bc`):**
+- `src/renderer/components/PhotoSorter.tsx` — 5-screen state machine (setup -> analyzing -> review -> executing -> done/error)
+- `src/renderer/components/TransitionPreview.tsx` — confidence-badged transition cards
+- `src/renderer/styles/photo-sorter.css` — dark theme modal matching app palette
+- Zustand `photoSort` state slice with progress tracking in `useStore.ts`
+- "Sort Photos by Subject" button added to LeftPanel
+- `App.tsx` updated with PhotoSorter integration
 
 ## Build Status
-PASSING — no code changes to app, last commit b18b408 (test suite with 29 passing tests)
+PASSING — `npm run build` clean
 
 ## Known Bugs & Issues
-None introduced this session.
-
-## Incomplete Work
-- CLIP feature is planned but not yet implemented — waiting on overnight queue results
-
-## Overnight Queue Status
-- Cron scheduled: midnight EDT 2026-03-24 (04:00 UTC)
-- 2 CompSync tasks in queue (cs-clip group, sequential dependency)
-- 15 total tasks across all projects in overnight-master.sh
-- Check results: `cat /tmp/task-compsync-clip-backend-status.json` and `cat /tmp/task-compsync-clip-ui-status.json`
+None identified — needs real-world testing.
 
 ## Next Steps (priority order)
-1. Check overnight task results — did CLIP backend + UI tasks complete?
-2. If completed: run `npm run build` to verify, review generated code quality
-3. If failed/incomplete: pick up where the LLM left off using the plan at `docs/plans/2026-03-23-clip-photo-sorter-integration.md`
-4. Test CLIP model loading in packaged Electron (ONNX runtime in asar)
-5. Wire verification into existing `importPhotos()` flow
-6. End-to-end test with real competition photos
+1. Test CLIP model loading in packaged Electron (ONNX runtime in asar)
+2. Wire verification into existing `importPhotos()` flow
+3. End-to-end test with real competition photos on FIRMAMENT
+4. Test confidence thresholds with edge cases (similar routines, group shots)
+5. Package and deploy to FIRMAMENT for user testing
 
 ## Gotchas for Next Session
-- The plan uses `@huggingface/transformers` (Transformers.js) for local CLIP inference — no Python needed
+- Uses `@huggingface/transformers` (Transformers.js) for local CLIP inference — no Python needed
 - Model is `Xenova/clip-vit-base-patch32` (~350MB, downloads on first use)
 - CLIP is a verification/rescue layer on top of existing EXIF time matching, NOT a replacement
-- `onnxruntime-node` may need `asarUnpack` in electron-builder config
-- overnight-master.sh was significantly upgraded (smart model loading, dependency gates, context chaining) — not just our tasks
-
-## Files Touched This Session
-- docs/plans/2026-03-23-clip-photo-sorter-integration.md (created)
+- `onnxruntime-node` needs `asarUnpack` in electron-builder config (already configured)
+- Integration plan at `docs/plans/2026-03-23-clip-photo-sorter-integration.md`
