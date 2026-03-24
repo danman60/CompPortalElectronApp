@@ -1,68 +1,43 @@
-# CompSync Media — v2.6.0 (Shipped 2026-03-10)
+# Current Work - CompSync Electron App
 
-## Active: Comprehensive Testing Complete
+## Last Session Summary
+Planned and queued CLIP Photo Verification & Re-Sort feature. Read the spec from `/mnt/firmament/CLIP_Photo_Routine_Sorter_Spec.md`, explored full codebase architecture, wrote integration plan, created 2 overnight task files for local LLM execution.
 
-### Test Results (29 tests passed)
-- **23 comprehensive tests** covering all IPC handlers and UI components
-- **6 original tests** for basic functionality
-- All tests verify: app launch, preload API, settings IPC, schedule IPC, job queue IPC, OBS IPC, recording navigation, upload IPC, overlay IPC, UI components, event listeners, error handling, main process state
+## What Changed
+- [new] `docs/plans/2026-03-23-clip-photo-sorter-integration.md` — full integration plan
+- [new] `/tmp/task-compsync-clip-backend.md` — overnight task: clipVerify.ts service + types + IPC
+- [new] `/tmp/task-compsync-clip-ui.md` — overnight task: PhotoSorter UI components
+- [modified] `/home/danman60/overnight-master.sh` — added CS CLIP Backend + CS CLIP UI tasks with "cs-clip" dependency group
 
-### v2.6.0 Shipped Items
-- Animated CPU and disk usage meters with progress bars
-- Upload progress accuracy fixed (tracks bytes + files)
-- Status indicator accuracy improved
-- Full test suite with 29 tests
+## Build Status
+PASSING — no code changes to app, last commit b18b408 (test suite with 29 passing tests)
 
-## Previous: UI/UX Fixes (2026-03-10)
+## Known Bugs & Issues
+None introduced this session.
 
-### What was done
-- Fixed BIG NEXT BUTTON to respect `autoRecordOnNext` setting (was always auto-recording)
-- Fixed routine counter overlay to show only entry number (was showing "current / total")
-- Fixed status indicators to only show upload % when actually uploading
-- Fixed UPLOAD ALL button to disable when already uploading
-- Reorganized Settings menu: Competition Setup first, Audio second, OBS lower down
-- Removed Overlay section from Settings (duplicated on main screen)
-- Removed FFmpeg path option from Settings (uses bundled FFmpeg)
-- Removed Share Code from Settings (on main screen)
-- Updated hotkey capture to enforce Shift+Control order
-- Added animated CPU and disk completion bars
+## Incomplete Work
+- CLIP feature is planned but not yet implemented — waiting on overnight queue results
 
-### Files Changed
-- `src/main/services/recording.ts` — nextFull() now checks autoRecordOnNext
-- `src/main/services/overlay.ts` — counter label now shows entryNumber only
-- `src/main/services/upload.ts` — accurate progress tracking
-- `src/renderer/components/RoutineTable.tsx` — fixed upload % display
-- `src/renderer/components/Header.tsx` — UploadAllButton, SystemMonitor with meters
-- `src/renderer/components/Settings.tsx` — reorganized, removed sections
-- `src/renderer/styles/header.css` — meter bar styles + animation
-- `tests/comprehensive.spec.ts` — 23 new comprehensive tests
+## Overnight Queue Status
+- Cron scheduled: midnight EDT 2026-03-24 (04:00 UTC)
+- 2 CompSync tasks in queue (cs-clip group, sequential dependency)
+- 15 total tasks across all projects in overnight-master.sh
+- Check results: `cat /tmp/task-compsync-clip-backend-status.json` and `cat /tmp/task-compsync-clip-ui-status.json`
 
-## Previous: R2 Storage Migration (Complete 2026-03-09)
+## Next Steps (priority order)
+1. Check overnight task results — did CLIP backend + UI tasks complete?
+2. If completed: run `npm run build` to verify, review generated code quality
+3. If failed/incomplete: pick up where the LLM left off using the plan at `docs/plans/2026-03-23-clip-photo-sorter-integration.md`
+4. Test CLIP model loading in packaged Electron (ONNX runtime in asar)
+5. Wire verification into existing `importPhotos()` flow
+6. End-to-end test with real competition photos
 
-### What was done
-- Cloudflare R2 bucket `compsyncmedia` set up and tested
-- CompPortal `media-storage.ts` swapped from Supabase to R2 (commit `1f7a46f7`)
-- New `media-urls.ts` resolves storage paths to signed R2 download URLs
-- All 4 media serving routes updated (dancer, studio, cd/dashboard, download)
-- E2E tested: Electron App upload flow → R2 → plugin/complete → DB verified
-- Electron App needs ZERO code changes (signed URL is opaque)
-- StreamStage 33 videos migrated to separate `streamstagesite` bucket (commit `ec2c3cb`)
-- Cloudinary dependency eliminated from StreamStage
+## Gotchas for Next Session
+- The plan uses `@huggingface/transformers` (Transformers.js) for local CLIP inference — no Python needed
+- Model is `Xenova/clip-vit-base-patch32` (~350MB, downloads on first use)
+- CLIP is a verification/rescue layer on top of existing EXIF time matching, NOT a replacement
+- `onnxruntime-node` may need `asarUnpack` in electron-builder config
+- overnight-master.sh was significantly upgraded (smart model loading, dependency gates, context chaining) — not just our tasks
 
-### Buckets
-- `compsyncmedia` — private, CompPortal media (signed URLs)
-- `streamstagesite` — public, StreamStage marketing videos
-
-### Known Issues
-- Download endpoint (`/api/media/download/[packageId]`) returned 500 during E2E — likely needs tenant-scoped auth, not plugin bearer token. Not blocking (package creation works).
-
-## v2.5.0 Shipped Items (48 total)
-[See previous 48 items — unchanged]
-
-## Known Bugs
-(none currently tracked)
-
-## Next Steps
-- Test Media Portal UI end-to-end with real competition data flowing through R2
-- Consider R2 custom domain (media.compsync.net) to replace signed URLs with public access
-- StreamStage: set up custom domain for R2 bucket to replace r2.dev URL
+## Files Touched This Session
+- docs/plans/2026-03-23-clip-photo-sorter-integration.md (created)
