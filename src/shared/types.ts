@@ -51,12 +51,19 @@ export interface EncodedFile {
   uploadUrl?: string
 }
 
+export interface ClipSuggestion {
+  routineId: string
+  similarity: number
+}
+
 export interface PhotoMatch {
   filePath: string
   thumbnailPath?: string
   captureTime: string // ISO
   confidence: 'exact' | 'gap' | 'ambiguous' | 'unmatched'
   uploaded: boolean
+  clipSuggestion?: ClipSuggestion
+  clipVerified?: boolean
 }
 
 export interface UploadProgress {
@@ -66,6 +73,49 @@ export interface UploadProgress {
   filesCompleted: number
   filesTotal: number
   error?: string
+}
+
+// --- CLIP Verification ---
+
+export interface ClipSortParams {
+  sampleRate: number        // default 5
+  threshold: number         // default 0.80
+  expectedGroups?: number
+}
+
+export interface ClipSortTransition {
+  index: number
+  similarity: number
+  confidence: 'high' | 'medium'
+  beforePath: string
+  afterPath: string
+}
+
+export interface ClipSortResult {
+  transitions: ClipSortTransition[]
+  groups: [number, number][]
+  totalPhotos: number
+  photoPaths: string[]
+  embeddingsComputed: number
+}
+
+export interface ExecuteSortParams {
+  destDir: string
+  startNum: number
+  mode: 'copy' | 'move'
+}
+
+export interface VerificationResult {
+  verified: number
+  reassigned: number
+  rescued: number
+  stillUnmatched: number
+  suggestions: Array<{
+    filePath: string
+    currentRoutineId?: string
+    suggestedRoutineId: string
+    similarity: number
+  }>
 }
 
 // --- Competition ---
@@ -231,6 +281,14 @@ export const IPC_CHANNELS = {
   PHOTOS_BROWSE: 'photos:browse',
   PHOTOS_PROGRESS: 'photos:progress',
   PHOTOS_MATCH_RESULT: 'photos:match-result',
+
+  // CLIP Verification
+  CLIP_VERIFY_IMPORT: 'clip:verify-import',
+  CLIP_ANALYZE_FOLDER: 'clip:analyze-folder',
+  CLIP_EXECUTE_SORT: 'clip:execute-sort',
+  CLIP_CANCEL: 'clip:cancel',
+  CLIP_PROGRESS: 'clip:progress',
+  CLIP_MODEL_PROGRESS: 'clip:model-progress',
 
   // Lower Third
   LT_FIRE: 'lt:fire',

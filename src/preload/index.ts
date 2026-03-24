@@ -105,6 +105,15 @@ const api = {
   rendererLog: (level: string, ...args: unknown[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_RENDERER_LOG, level, ...args),
 
+  // CLIP Verification
+  clipVerifyImport: (matches: unknown, routines: unknown, opts?: unknown) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLIP_VERIFY_IMPORT, matches, routines, opts),
+  clipAnalyzeFolder: (folderPath: string, params: unknown) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLIP_ANALYZE_FOLDER, folderPath, params),
+  clipExecuteSort: (result: unknown, params: unknown) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLIP_EXECUTE_SORT, result, params),
+  clipCancel: () => ipcRenderer.invoke(IPC_CHANNELS.CLIP_CANCEL),
+
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const subscription = (_event: Electron.IpcRendererEvent, ...args: unknown[]) =>

@@ -13,6 +13,7 @@
     "dist:installer": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "electron-log": "^5.1.1",
     "electron-store": "^6.0.1",
     "electron-window-state": "^5.0.3",
@@ -54,7 +55,9 @@
     ],
     "asarUnpack": [
       "node_modules/sharp/**/*",
-      "node_modules/@img/**/*"
+      "node_modules/@img/**/*",
+      "node_modules/@huggingface/transformers/**/*",
+      "node_modules/onnxruntime-node/**/*"
     ],
     "extraResources": [
       {

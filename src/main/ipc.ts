@@ -14,6 +14,7 @@ import * as overlay from './services/overlay'
 import * as wsHub from './services/wsHub'
 import * as systemMonitor from './services/systemMonitor'
 import * as jobQueue from './services/jobQueue'
+import * as clipVerify from './services/clipVerify'
 import { checkAndRecover } from './services/crashRecovery'
 import { logger } from './logger'
 
@@ -318,6 +319,28 @@ export function registerAllHandlers(): void {
     if (!comp) return { error: 'No competition loaded' }
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
   })
+
+  // --- CLIP Verification ---
+  safeHandle(IPC_CHANNELS.CLIP_VERIFY_IMPORT, async (matches: unknown, routines: unknown, opts: unknown) =>
+    clipVerify.verifyImport(
+      matches as import('../shared/types').PhotoMatch[],
+      routines as import('../shared/types').Routine[],
+      opts as { skipExact?: boolean } | undefined,
+    ))
+
+  safeHandle(IPC_CHANNELS.CLIP_ANALYZE_FOLDER, async (folderPath: unknown, params: unknown) =>
+    clipVerify.analyzeFolder(
+      folderPath as string,
+      params as import('../shared/types').ClipSortParams,
+    ))
+
+  safeHandle(IPC_CHANNELS.CLIP_EXECUTE_SORT, async (result: unknown, params: unknown) =>
+    clipVerify.executeSort(
+      result as import('../shared/types').ClipSortResult,
+      params as import('../shared/types').ExecuteSortParams,
+    ))
+
+  safeHandle(IPC_CHANNELS.CLIP_CANCEL, () => clipVerify.cancel())
 
   // --- Overlay ---
   safeHandle(IPC_CHANNELS.OVERLAY_TOGGLE, (element: unknown) => {
