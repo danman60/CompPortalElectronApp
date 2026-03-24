@@ -485,8 +485,9 @@ export interface WSCommandMessage {
   type: 'command'
   action: 'nextFull' | 'nextRoutine' | 'prev' | 'skip'
     | 'toggleRecord' | 'toggleStream' | 'saveReplay'
-    | 'toggleOverlay'
+    | 'toggleOverlay' | 'loadShareCode'
   element?: 'counter' | 'clock' | 'logo' | 'lowerThird'
+  shareCode?: string
 }
 
 export interface WSIdentifyMessage {

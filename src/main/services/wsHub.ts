@@ -155,6 +155,15 @@ async function handleCommand(cmd: WSCommandMessage): Promise<void> {
           overlay.toggleElement(cmd.element)
         }
         break
+      case 'loadShareCode':
+        if (cmd.shareCode) {
+          const schedule = await import('./schedule')
+          const comp = await schedule.loadFromShareCode(cmd.shareCode as string)
+          stateService.setCompetition(comp)
+          recording.broadcastFullState()
+          logger.app.info(`WS hub loaded competition: ${comp.name} (${comp.routines.length} routines)`)
+        }
+        break
     }
     broadcastState()
   } catch (err) {

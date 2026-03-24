@@ -179,6 +179,21 @@ app.whenReady().then(async () => {
     logger.app.warn('Crash recovery check failed:', err)
   })
 
+  // Auto-load share code if saved in settings and no competition already loaded
+  const settings = (await import('./services/settings')).getSettings()
+  if (settings.compsync?.shareCode && !state.getCompetition()) {
+    const schedule = await import('./services/schedule')
+    schedule.loadFromShareCode(settings.compsync.shareCode)
+      .then((comp) => {
+        state.setCompetition(comp)
+        recording.broadcastFullState()
+        logger.app.info(`Auto-loaded competition from share code: ${comp.name} (${comp.routines.length} routines)`)
+      })
+      .catch((err) => {
+        logger.app.warn(`Auto-load share code failed: ${err instanceof Error ? err.message : err}`)
+      })
+  }
+
   // Run startup validation (after window is ready so we can send report to renderer)
   runStartupChecks().catch((err) => {
     logger.app.warn('Startup checks failed:', err)
