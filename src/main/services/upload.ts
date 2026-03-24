@@ -158,6 +158,20 @@ async function processLoop(): Promise<void> {
     })
 
     try {
+      // Pre-check: R2 single PUT limit is 5GB
+      const MAX_SINGLE_PUT = 5 * 1024 * 1024 * 1024
+      try {
+        const fileStat = fs.statSync(payload.filePath)
+        if (fileStat.size > MAX_SINGLE_PUT) {
+          throw new Error(`File too large for single upload (${(fileStat.size / 1024 / 1024 / 1024).toFixed(1)}GB > 5GB limit): ${payload.objectName}`)
+        }
+      } catch (statErr) {
+        if ((statErr as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new Error(`File not found: ${payload.filePath}`)
+        }
+        throw statErr
+      }
+
       // Step 1: Get signed upload URL
       const { signedUrl, storagePath } = await getSignedUploadUrl(
         payload.entryId,
