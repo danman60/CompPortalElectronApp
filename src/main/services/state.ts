@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { app } from 'electron'
 import { Competition, Routine, RoutineStatus } from '../../shared/types'
 import { logger } from '../logger'
 import { getSettings } from './settings'
@@ -23,7 +24,8 @@ function getStatePath(): string {
   if (outputDir) {
     return path.join(outputDir, STATE_FILE)
   }
-  return STATE_FILE
+  // Default to userData (not CWD which may be read-only like C:\Program Files)
+  return path.join(app.getPath('userData'), STATE_FILE)
 }
 
 // --- Persistence (debounced + atomic) ---

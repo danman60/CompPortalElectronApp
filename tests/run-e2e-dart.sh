@@ -37,7 +37,7 @@ fi
 
 # Set up SSH tunnels (background, auto-cleanup)
 echo "Setting up SSH tunnels to DART..."
-ssh -N -L ${LOCAL_WS_PORT}:127.0.0.1:9877 -L ${LOCAL_OVERLAY_PORT}:127.0.0.1:9876 "$DART_HOST" &
+ssh -4 -N -L ${LOCAL_WS_PORT}:127.0.0.1:9877 -L ${LOCAL_OVERLAY_PORT}:127.0.0.1:9876 "$DART_HOST" &
 SSH_PID=$!
 trap "kill $SSH_PID 2>/dev/null; wait $SSH_PID 2>/dev/null" EXIT
 sleep 2
