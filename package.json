@@ -9,7 +9,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
+    "predist": "bash scripts/fetch-ffmpeg-win.sh",
     "dist": "electron-vite build && electron-builder --win --dir",
+    "predist:installer": "bash scripts/fetch-ffmpeg-win.sh",
     "dist:installer": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
@@ -62,7 +64,7 @@
     ],
     "extraResources": [
       {
-        "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+        "from": "resources/ffmpeg/ffmpeg.exe",
         "to": "ffmpeg.exe"
       }
     ],

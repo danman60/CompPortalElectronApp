@@ -10,3 +10,4 @@ release/
 Thumbs.db
 .worktrees/
 .gitnexus
+resources/ffmpeg/
