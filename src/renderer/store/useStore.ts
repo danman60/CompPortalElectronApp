@@ -12,6 +12,7 @@ import {
   type AudioLevel,
   type JobRecord,
   type StartupReport,
+  type ClipSortResult,
 } from '../../shared/types'
 
 interface FFmpegProgressMap {
@@ -53,6 +54,15 @@ interface AppStore {
   startupReport: StartupReport | null
   startupToastVisible: boolean
 
+  // Photo Sorter
+  photoSort: {
+    status: 'idle' | 'analyzing' | 'review' | 'executing' | 'done' | 'error'
+    progress: { phase: string; current: number; total: number } | null
+    result: ClipSortResult | null
+    error: string | null
+  }
+  photoSorterOpen: boolean
+
   // Status counts
   encodingCount: number
   uploadingCount: number
@@ -81,6 +91,12 @@ interface AppStore {
   setJobQueuePanelOpen: (open: boolean) => void
   setStartupReport: (report: StartupReport) => void
   dismissStartupToast: () => void
+  setPhotoSorterOpen: (open: boolean) => void
+  setPhotoSortStatus: (status: 'idle' | 'analyzing' | 'review' | 'executing' | 'done' | 'error') => void
+  setPhotoSortProgress: (progress: { phase: string; current: number; total: number } | null) => void
+  setPhotoSortResult: (result: ClipSortResult | null) => void
+  setPhotoSortError: (error: string | null) => void
+  resetPhotoSort: () => void
   recalcCounts: () => void
 }
 
@@ -111,6 +127,14 @@ export const useStore = create<AppStore>((set, get) => ({
   audioMeters: { performance: -Infinity, judges: [] },
 
   systemStats: null,
+
+  photoSort: {
+    status: 'idle',
+    progress: null,
+    result: null,
+    error: null,
+  },
+  photoSorterOpen: false,
 
   jobQueue: [],
   jobQueuePanelOpen: false,
@@ -172,6 +196,13 @@ export const useStore = create<AppStore>((set, get) => ({
   setJobQueuePanelOpen: (jobQueuePanelOpen) => set({ jobQueuePanelOpen }),
   setStartupReport: (startupReport) => set({ startupReport, startupToastVisible: true }),
   dismissStartupToast: () => set({ startupToastVisible: false }),
+
+  setPhotoSorterOpen: (photoSorterOpen) => set({ photoSorterOpen }),
+  setPhotoSortStatus: (status) => set((s) => ({ photoSort: { ...s.photoSort, status } })),
+  setPhotoSortProgress: (progress) => set((s) => ({ photoSort: { ...s.photoSort, progress } })),
+  setPhotoSortResult: (result) => set((s) => ({ photoSort: { ...s.photoSort, result, status: 'review' as const } })),
+  setPhotoSortError: (error) => set((s) => ({ photoSort: { ...s.photoSort, error, status: 'error' as const } })),
+  resetPhotoSort: () => set({ photoSort: { status: 'idle', progress: null, result: null, error: null } }),
 
   recalcCounts: () => {
     const comp = get().competition

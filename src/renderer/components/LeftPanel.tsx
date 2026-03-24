@@ -9,6 +9,7 @@ import '../styles/leftpanel.css'
 
 export default function LeftPanel(): React.ReactElement {
   const compactMode = useStore((s) => s.compactMode)
+  const setPhotoSorterOpen = useStore((s) => s.setPhotoSorterOpen)
 
   return (
     <div className={`left-panel${compactMode ? ' compact' : ''}`}>
@@ -17,6 +18,14 @@ export default function LeftPanel(): React.ReactElement {
       {!compactMode && <AudioMeters />}
       <Controls />
       <OverlayControls compact={compactMode} />
+      <div className="section">
+        <button
+          className="ps-open-btn"
+          onClick={() => setPhotoSorterOpen(true)}
+        >
+          Sort Photos by Subject
+        </button>
+      </div>
     </div>
   )
 }

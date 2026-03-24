@@ -5,6 +5,7 @@ import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import DragHandle from './components/DragHandle'
 import Settings from './components/Settings'
+import PhotoSorter from './components/PhotoSorter'
 import './styles/app.css'
 
 function StartupToast(): React.ReactElement | null {
@@ -62,6 +63,7 @@ function StartupToast(): React.ReactElement | null {
 
 export default function App(): React.ReactElement {
   const settingsOpen = useStore((s) => s.settingsOpen)
+  const photoSorterOpen = useStore((s) => s.photoSorterOpen)
   const compactMode = useStore((s) => s.compactMode)
   const initialized = useRef(false)
 
@@ -114,6 +116,7 @@ export default function App(): React.ReactElement {
         <RightPanel />
       </div>
       {settingsOpen && <Settings />}
+      {photoSorterOpen && <PhotoSorter />}
       <StartupToast />
     </div>
   )
