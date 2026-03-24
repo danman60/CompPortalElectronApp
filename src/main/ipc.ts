@@ -297,13 +297,13 @@ export function registerAllHandlers(): void {
     return { queued }
   })
 
-  safeHandle(IPC_CHANNELS.UPLOAD_ROUTINE, (routineId: unknown) => {
-    logIPC(IPC_CHANNELS.UPLOAD_ROUTINE, { routineId })
+  safeHandle(IPC_CHANNELS.UPLOAD_ROUTINE, (routineId: unknown, force: unknown) => {
+    logIPC(IPC_CHANNELS.UPLOAD_ROUTINE, { routineId, force })
     const comp = stateService.getCompetition()
     if (!comp) return { error: 'No competition loaded' }
     const routine = comp.routines.find((r) => r.id === routineId)
     if (routine) {
-      uploadService.enqueueRoutine(routine)
+      uploadService.enqueueRoutine(routine, !!force)
     }
   })
 

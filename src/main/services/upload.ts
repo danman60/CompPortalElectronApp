@@ -37,7 +37,7 @@ function getConnection(): { apiBase: string; apiKey: string; competitionId: stri
   return { apiBase: conn.apiBase, apiKey: conn.apiKey, competitionId: conn.competitionId }
 }
 
-export function enqueueRoutine(routine: Routine): void {
+export function enqueueRoutine(routine: Routine, force = false): void {
   const { competitionId } = getConnection()
 
   if (!routine.encodedFiles) return
@@ -50,16 +50,25 @@ export function enqueueRoutine(routine: Routine): void {
 
   let jobCount = 0
 
+  // Collect objectNames of already-done jobs to avoid duplicates on retry
+  const doneObjectNames = new Set(
+    existing
+      .filter(j => j.type === 'upload' && j.status === 'done')
+      .map(j => (j.payload as Record<string, unknown>).objectName as string)
+  )
+
   // Queue video files
   for (const file of routine.encodedFiles) {
-    if (file.uploaded) continue
+    if (!force && file.uploaded) continue
     const role = file.role
+    const objectName = `${role}.mp4`
+    if (doneObjectNames.has(objectName)) continue
     jobQueue.enqueue('upload', routine.id, {
       routineId: routine.id,
       entryId: routine.id,
       competitionId,
       filePath: file.filePath,
-      objectName: `${role}.mp4`,
+      objectName,
       contentType: 'video/mp4',
       type: 'videos',
       role,
@@ -70,13 +79,15 @@ export function enqueueRoutine(routine: Routine): void {
   // Queue photos
   if (routine.photos) {
     for (const photo of routine.photos) {
-      if (photo.uploaded) continue
+      if (!force && photo.uploaded) continue
+      const photoObjectName = path.basename(photo.filePath)
+      if (doneObjectNames.has(photoObjectName)) continue
       jobQueue.enqueue('upload', routine.id, {
         routineId: routine.id,
         entryId: routine.id,
         competitionId,
         filePath: photo.filePath,
-        objectName: path.basename(photo.filePath),
+        objectName: photoObjectName,
         contentType: 'image/jpeg',
         type: 'photos',
       } satisfies UploadPayload as unknown as Record<string, unknown>)
