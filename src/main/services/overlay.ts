@@ -153,8 +153,9 @@ export function startServer(): void {
     })
   })
 
-  server = app.listen(PORT, '127.0.0.1', () => {
-    logger.app.info(`Overlay server running on http://127.0.0.1:${PORT}`)
+  const host = process.env.COMPSYNC_BIND_HOST || '127.0.0.1'
+  server = app.listen(PORT, host, () => {
+    logger.app.info(`Overlay server running on http://${host}:${PORT}`)
   })
 
   server.on('error', (err: NodeJS.ErrnoException) => {

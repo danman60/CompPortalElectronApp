@@ -62,8 +62,17 @@ export interface PhotoMatch {
   captureTime: string // ISO
   confidence: 'exact' | 'gap' | 'ambiguous' | 'unmatched'
   uploaded: boolean
+  matchedRoutineId?: string // routine this photo was matched to
   clipSuggestion?: ClipSuggestion
   clipVerified?: boolean
+}
+
+export interface DriveDetectedEvent {
+  drivePath: string
+  photoPath: string // DCIM path or root
+  photoCount: number
+  isDcim: boolean
+  label: string
 }
 
 export interface UploadProgress {
@@ -281,6 +290,10 @@ export const IPC_CHANNELS = {
   PHOTOS_BROWSE: 'photos:browse',
   PHOTOS_PROGRESS: 'photos:progress',
   PHOTOS_MATCH_RESULT: 'photos:match-result',
+
+  // Drive Monitor
+  DRIVE_DETECTED: 'drive:detected',
+  DRIVE_DISMISS: 'drive:dismiss',
 
   // CLIP Verification
   CLIP_VERIFY_IMPORT: 'clip:verify-import',

@@ -114,6 +114,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CLIP_EXECUTE_SORT, result, params),
   clipCancel: () => ipcRenderer.invoke(IPC_CHANNELS.CLIP_CANCEL),
 
+  // Drive Monitor
+  driveDismiss: (drivePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DRIVE_DISMISS, drivePath),
+
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const subscription = (_event: Electron.IpcRendererEvent, ...args: unknown[]) =>

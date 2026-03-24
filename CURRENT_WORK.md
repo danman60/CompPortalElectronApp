@@ -1,40 +1,44 @@
 # Current Work - CompSync Electron App
 
 ## Last Session Summary
-CS-CLIP session (2026-03-24): Built full CLIP photo sorter — backend service with ONNX CLIP inference + IPC wiring, and UI with 5-screen state machine. Both committed and pushed.
+Testing & UI session (2026-03-24): Built comprehensive test suite, remote-tested on DART Windows, redesigned routine status UI, added SD card auto-detection, fixed silent share code failures, fixed CompPortal tenant_paused blocking API routes.
 
-## What Changed (2026-03-24 CS-CLIP session)
+## Active Task
+Building testing protocols + UI improvements. User is verifying on DART.
 
-**Backend (commit `9c07751`):**
-- `src/main/services/clipVerify.ts` — 6 public functions: verifyImport, analyzeFolder, executeSort, cancel + lazy model loading, embedding cache, cosine similarity
-- 4 CLIP IPC handlers wired in `ipc.ts`
-- 4 CLIP API methods added to preload
-- `asarUnpack` updated for transformers + onnxruntime
+## Recent Changes (2026-03-24)
 
-**UI (commit `a2bd4bc`):**
-- `src/renderer/components/PhotoSorter.tsx` — 5-screen state machine (setup -> analyzing -> review -> executing -> done/error)
-- `src/renderer/components/TransitionPreview.tsx` — confidence-badged transition cards
-- `src/renderer/styles/photo-sorter.css` — dark theme modal matching app palette
-- Zustand `photoSort` state slice with progress tracking in `useStore.ts`
-- "Sort Photos by Subject" button added to LeftPanel
-- `App.tsx` updated with PhotoSorter integration
+### Testing Infrastructure
+- 6 new Playwright test specs: overlay, websocket-hub, system-monitor, upload-dispatch, ffmpeg-pipeline, photo-sorting
+- Human operator checklist: `tests/HUMAN_TEST_CHECKLIST.md`
+- 38/38 remote tests passed on DART Windows via Tailscale
 
-## Build Status
-PASSING — `npm run build` clean
+### UI Improvements
+- **Pipeline status columns** in RoutineTable: REC / SPLIT / PHOTO / UP per row with state icons
+- **Unified Action Bar** in Header: Load/Process/Upload/Video/Photos with AUTO badges
+- **SD Card auto-detection**: `driveMonitor.ts` + `DriveAlert.tsx` modal with real-time progress
 
-## Known Bugs & Issues
-None identified — needs real-world testing.
+### Bug Fixes
+- Silent share code failure in LoadCompetition.tsx (checks `{ error }` from safeHandle)
+- CompPortal: `/api/plugin/*` exempted from tenant_paused middleware (deployed)
+- EXIF UTC fix: DateTimeOriginal parsed as local time
+- PhotoMatch now includes matchedRoutineId
 
-## Next Steps (priority order)
-1. Test CLIP model loading in packaged Electron (ONNX runtime in asar)
-2. Wire verification into existing `importPhotos()` flow
-3. End-to-end test with real competition photos on FIRMAMENT
-4. Test confidence thresholds with edge cases (similar routines, group shots)
-5. Package and deploy to FIRMAMENT for user testing
+## Hot-Deploy Pattern (DART)
+```bash
+cd ~/projects/CompSyncElectronApp && npm run dist
+ssh dart 'cd /mnt/c && /mnt/c/Windows/System32/cmd.exe /c "taskkill /F /IM CompSync*"'
+scp release/win-unpacked/resources/app.asar "dart:/mnt/c/Program Files/CompSync Media/resources/app.asar"
+# User relaunches manually
+```
 
-## Gotchas for Next Session
-- Uses `@huggingface/transformers` (Transformers.js) for local CLIP inference — no Python needed
-- Model is `Xenova/clip-vit-base-patch32` (~350MB, downloads on first use)
-- CLIP is a verification/rescue layer on top of existing EXIF time matching, NOT a replacement
-- `onnxruntime-node` needs `asarUnpack` in electron-builder config (already configured)
-- Integration plan at `docs/plans/2026-03-23-clip-photo-sorter-integration.md`
+## Blockers
+- Bundled ffmpeg.exe missing (ffmpeg-static doesn't cross-compile)
+- SSH can't launch GUI apps on DART desktop session
+
+## Next Steps
+1. Verify UI changes on DART (action bar, pipeline columns, share code)
+2. Test SD card detection with real camera
+3. Commit all changes
+4. Add ffmpeg.exe to build
+5. Full human operator test with OBS cameras

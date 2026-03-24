@@ -49,9 +49,14 @@ async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
     if (!dateTime) return null
 
     // Parse EXIF date format "YYYY:MM:DD HH:MM:SS"
+    // EXIF DateTimeOriginal is LOCAL time (no timezone) — cameras don't store UTC.
+    // Treat as local by NOT appending 'Z'. new Date("2026-03-24T14:30:00") parses as local.
     const [datePart, timePart] = dateTime.split(' ')
+    if (!datePart || !timePart) return null
     const isoString = datePart.replace(/:/g, '-') + 'T' + timePart
-    return new Date(isoString)
+    const d = new Date(isoString)
+    if (isNaN(d.getTime())) return null
+    return d
   } catch (err) {
     logger.photos.warn(`Failed to read EXIF from ${path.basename(filePath)}:`, err)
     return null
@@ -127,6 +132,7 @@ function matchPhotosToRoutines(
         captureTime: photo.captureTime.toISOString(),
         confidence: 'exact' as const,
         uploaded: false,
+        matchedRoutineId: exactMatch.routineId,
       }
     }
 
@@ -143,6 +149,7 @@ function matchPhotosToRoutines(
         captureTime: photo.captureTime.toISOString(),
         confidence: 'gap' as const,
         uploaded: false,
+        matchedRoutineId: gapMatch.routineId,
       }
     }
 

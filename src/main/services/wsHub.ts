@@ -19,7 +19,8 @@ let heartbeatInterval: NodeJS.Timeout | null = null
 
 export function start(): void {
   if (wss) return
-  wss = new WebSocketServer({ port: PORT, host: '127.0.0.1' })
+  const host = process.env.COMPSYNC_BIND_HOST || '127.0.0.1'
+  wss = new WebSocketServer({ port: PORT, host })
 
   wss.on('listening', () => {
     logger.app.info(`WebSocket hub listening on ws://localhost:${PORT}`)

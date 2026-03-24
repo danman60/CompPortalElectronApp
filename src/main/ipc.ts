@@ -15,6 +15,7 @@ import * as wsHub from './services/wsHub'
 import * as systemMonitor from './services/systemMonitor'
 import * as jobQueue from './services/jobQueue'
 import * as clipVerify from './services/clipVerify'
+import * as driveMonitor from './services/driveMonitor'
 import { checkAndRecover } from './services/crashRecovery'
 import { logger } from './logger'
 
@@ -318,6 +319,12 @@ export function registerAllHandlers(): void {
     const s = settings.getSettings()
     if (!comp) return { error: 'No competition loaded' }
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
+  })
+
+  // --- Drive Monitor ---
+  safeHandle(IPC_CHANNELS.DRIVE_DISMISS, async (drivePath: unknown) => {
+    logIPC(IPC_CHANNELS.DRIVE_DISMISS, { drivePath })
+    driveMonitor.dismissDrive(drivePath as string)
   })
 
   // --- CLIP Verification ---

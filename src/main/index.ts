@@ -13,6 +13,7 @@ import * as jobQueue from './services/jobQueue'
 import * as ffmpegService from './services/ffmpeg'
 import * as state from './services/state'
 import * as systemMonitor from './services/systemMonitor'
+import * as driveMonitor from './services/driveMonitor'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -170,6 +171,9 @@ app.whenReady().then(async () => {
   // Register global hotkeys
   hotkeys.register()
 
+  // Start drive monitor for SD card auto-detect
+  driveMonitor.startMonitoring()
+
   // Check for crash recovery
   checkAndRecover().catch((err) => {
     logger.app.warn('Crash recovery check failed:', err)
@@ -199,6 +203,7 @@ app.on('before-quit', async (event) => {
   // Stop servers + hotkeys + monitors
   hotkeys.unregister()
   systemMonitor.stopMonitoring()
+  driveMonitor.stopMonitoring()
   wsHub.stop()
   overlay.stopServer()
 

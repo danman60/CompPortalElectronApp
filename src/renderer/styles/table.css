@@ -82,6 +82,64 @@
 .status-label.recording { color: var(--recording); font-weight: 700; }
 .status-label.failed { color: var(--danger); }
 
+/* ===== Pipeline stage indicators ===== */
+.th-pipeline {
+  text-align: center !important;
+  font-size: 8px !important;
+  width: 40px;
+  min-width: 40px;
+  max-width: 50px;
+}
+
+.td-pipeline {
+  text-align: center;
+  padding: 4px 2px !important;
+  width: 40px;
+  min-width: 40px;
+  max-width: 50px;
+}
+
+.stage-icon {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  width: 16px;
+  height: 16px;
+  text-align: center;
+}
+
+.stage-inactive { color: var(--text-muted); opacity: 0.4; }
+
+.stage-done { color: var(--success); }
+
+.stage-active {
+  color: var(--upload-blue);
+  animation: stage-pulse 1.5s ease-in-out infinite;
+}
+
+.stage-error { color: var(--danger); }
+
+@keyframes stage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.stage-detail {
+  display: block;
+  font-size: 7px;
+  color: var(--text-muted);
+  line-height: 1.1;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50px;
+}
+
+.bar-fill.recording { background: var(--recording); }
+.bar-fill.failed { background: var(--danger); }
+
 .view-btn {
   padding: 2px 6px;
   background: var(--bg-tertiary);

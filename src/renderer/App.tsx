@@ -6,6 +6,7 @@ import RightPanel from './components/RightPanel'
 import DragHandle from './components/DragHandle'
 import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
+import DriveAlert from './components/DriveAlert'
 import './styles/app.css'
 
 function StartupToast(): React.ReactElement | null {
@@ -117,6 +118,7 @@ export default function App(): React.ReactElement {
       </div>
       {settingsOpen && <Settings />}
       {photoSorterOpen && <PhotoSorter />}
+      <DriveAlert />
       <StartupToast />
     </div>
   )

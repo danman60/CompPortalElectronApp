@@ -109,7 +109,83 @@
   filter: brightness(1.15);
 }
 
-/* Action buttons in header */
+/* ===== Action Bar ===== */
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.ab-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+.ab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  min-width: 46px;
+  white-space: nowrap;
+}
+
+.ab-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.ab-icon { font-size: 13px; line-height: 1; }
+.ab-label { font-size: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; line-height: 1; margin-top: 1px; }
+
+/* Auto badge — small green pill */
+.ab-auto-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: var(--success);
+  color: var(--bg-primary);
+  padding: 1px 3px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+/* Button variants */
+.ab-btn.load.has-data { color: var(--success); }
+.ab-btn.load.has-data .ab-icon { color: var(--success); }
+
+.ab-btn.encode:hover { border-color: var(--warning); }
+.ab-btn.encode .ab-icon { color: var(--warning); }
+
+.ab-btn.upload:hover { border-color: var(--upload-blue); }
+.ab-btn.upload .ab-icon { color: var(--upload-blue); }
+.ab-btn.upload.disabled { opacity: 0.4; cursor: not-allowed; }
+.ab-btn.upload.disabled:hover { background: none; border-color: transparent; }
+
+.ab-btn.import-vid:hover { border-color: var(--accent); }
+.ab-btn.import-photo:hover { border-color: #a855f7; }
+
+/* Legacy action-btn kept for any remaining uses */
 .action-btn {
   padding: 4px 10px;
   border: 1px solid var(--border);
@@ -123,10 +199,6 @@
 }
 
 .action-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
-.action-btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
-.action-btn.primary:hover { filter: brightness(1.15); }
-.action-btn.photos { background: linear-gradient(135deg, #7c3aed, #a855f7); border-color: #7c3aed; color: white; }
-.action-btn.photos:hover { filter: brightness(1.15); }
 
 /* Compact mode toggle */
 .compact-toggle-btn {

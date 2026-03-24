@@ -18,7 +18,11 @@ export default function LoadCompetition(): React.ReactElement {
     if (!filePath) return
     setLoading(true)
     try {
-      await window.api.scheduleLoadCSV(filePath)
+      const result = await window.api.scheduleLoadCSV(filePath)
+      if (result && typeof result === 'object' && 'error' in result) {
+        setError(`Failed to load file: ${(result as { error: string }).error}`)
+        return
+      }
       setLoadCompOpen(false)
     } catch (err) {
       setError(`Failed to load file: ${err instanceof Error ? err.message : err}`)
@@ -37,7 +41,11 @@ export default function LoadCompetition(): React.ReactElement {
     }
     setLoading(true)
     try {
-      await window.api.scheduleLoadCSV(file.path)
+      const result = await window.api.scheduleLoadCSV(file.path)
+      if (result && typeof result === 'object' && 'error' in result) {
+        setError(`Failed to load file: ${(result as { error: string }).error}`)
+        return
+      }
       setLoadCompOpen(false)
     } catch (err) {
       setError(`Failed to load file: ${err instanceof Error ? err.message : err}`)
@@ -55,7 +63,12 @@ export default function LoadCompetition(): React.ReactElement {
     setError('')
     setLoading(true)
     try {
-      await window.api.scheduleLoadShareCode(code)
+      const result = await window.api.scheduleLoadShareCode(code)
+      // safeHandle returns { error } on failure instead of throwing
+      if (result && typeof result === 'object' && 'error' in result) {
+        setError(`Share code failed: ${(result as { error: string }).error}`)
+        return
+      }
       // Persist share code to settings
       await window.api.settingsSet({ compsync: { shareCode: code } })
       if (settings) {

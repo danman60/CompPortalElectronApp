@@ -3,22 +3,128 @@ import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
 import '../styles/table.css'
 
+// ── Pipeline stage indicators ──────────────────────────────────────
+// Each routine progresses: Record → Split → Photos → Upload
+// The status column shows a compact pipeline with per-stage icons
+
+type StageState = 'inactive' | 'active' | 'done' | 'error'
+
+interface PipelineStage {
+  label: string
+  state: StageState
+  detail?: string // tooltip or sub-text
+}
+
+function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
+  const total = judgeCount + 1
+  const encoded = routine.encodedFiles?.length ?? 0
+  const videosUploaded = routine.encodedFiles?.filter(f => f.uploaded).length ?? 0
+  const photoCount = routine.photos?.length ?? 0
+  const photosUploaded = routine.photos?.filter(p => p.uploaded).length ?? 0
+
+  // Stage 1: Record
+  const rec: PipelineStage = { label: 'REC', state: 'inactive' }
+  if (routine.status === 'recording') {
+    rec.state = 'active'
+    rec.detail = 'Recording now'
+  } else if (routine.status !== 'pending' && routine.status !== 'skipped') {
+    rec.state = 'done'
+    rec.detail = routine.outputPath ? 'MKV saved' : 'Recorded'
+  }
+
+  // Stage 2: Split (FFmpeg encode into performance + judge tracks)
+  const split: PipelineStage = { label: 'SPLIT', state: 'inactive' }
+  if (routine.status === 'queued') {
+    split.state = 'inactive'
+    split.detail = 'Queued for encoding'
+  } else if (routine.status === 'encoding') {
+    split.state = 'active'
+    split.detail = `Splitting ${encoded}/${total} tracks`
+  } else if (encoded >= total) {
+    split.state = 'done'
+    split.detail = `${encoded}/${total} tracks ready`
+  } else if (encoded > 0) {
+    split.state = 'done'
+    split.detail = `${encoded}/${total} tracks (partial)`
+  } else if (routine.status === 'recorded') {
+    split.state = 'inactive'
+    split.detail = 'Awaiting encode'
+  }
+
+  // Stage 3: Photos
+  const photos: PipelineStage = { label: 'PHOTO', state: 'inactive' }
+  if (photoCount > 0 && photosUploaded === photoCount) {
+    photos.state = 'done'
+    photos.detail = `${photoCount} uploaded`
+  } else if (photoCount > 0 && photosUploaded > 0) {
+    photos.state = 'active'
+    photos.detail = `${photosUploaded}/${photoCount} uploaded`
+  } else if (photoCount > 0) {
+    photos.state = 'done'
+    photos.detail = `${photoCount} matched`
+  }
+  // If no photos, stays inactive (dash)
+
+  // Stage 4: Upload
+  const upload: PipelineStage = { label: 'UP', state: 'inactive' }
+  if (routine.status === 'failed') {
+    upload.state = 'error'
+    upload.detail = routine.error || 'Upload failed'
+  } else if (routine.status === 'uploaded' || routine.status === 'confirmed') {
+    upload.state = 'done'
+    upload.detail = routine.status === 'confirmed' ? 'Confirmed by server' : `${videosUploaded}/${total} videos`
+  } else if (routine.status === 'uploading') {
+    upload.state = 'active'
+    const pct = routine.uploadProgress?.percent
+    const cur = routine.uploadProgress?.currentFile
+    const done = routine.uploadProgress?.filesCompleted ?? 0
+    const tot = routine.uploadProgress?.filesTotal ?? 0
+    upload.detail = pct !== undefined
+      ? `${done}/${tot} files — ${pct}%${cur ? ` (${cur})` : ''}`
+      : `${done}/${tot} files`
+  } else if (videosUploaded > 0) {
+    upload.state = 'active'
+    upload.detail = `${videosUploaded}/${total} videos sent`
+  }
+
+  return [rec, split, photos, upload]
+}
+
+function stageIcon(state: StageState): string {
+  switch (state) {
+    case 'done': return '\u2713'     // ✓
+    case 'active': return '\u25CF'   // ●
+    case 'error': return '\u2717'    // ✗
+    case 'inactive': return '\u2014' // —
+  }
+}
+
+function stageClass(state: StageState): string {
+  switch (state) {
+    case 'done': return 'stage-done'
+    case 'active': return 'stage-active'
+    case 'error': return 'stage-error'
+    case 'inactive': return 'stage-inactive'
+  }
+}
+
+// Overall status text for the primary label
 function statusToLabel(status: RoutineStatus): { text: string; className: string } {
   switch (status) {
     case 'pending':
-      return { text: 'Not recorded', className: 'waiting' }
+      return { text: 'Waiting', className: 'waiting' }
     case 'skipped':
       return { text: 'Skipped', className: 'waiting' }
     case 'recording':
-      return { text: 'LIVE', className: 'recording' }
+      return { text: 'RECORDING', className: 'recording' }
     case 'recorded':
-      return { text: 'Recorded', className: 'processing' }
+      return { text: 'Recorded — awaiting encode', className: 'processing' }
     case 'queued':
-      return { text: 'Queued', className: 'waiting' }
+      return { text: 'Queued for encoding', className: 'waiting' }
     case 'encoding':
-      return { text: 'Processing', className: 'processing' }
+      return { text: 'Splitting tracks...', className: 'processing' }
     case 'encoded':
-      return { text: 'Processed', className: 'complete' }
+      return { text: 'Tracks ready', className: 'complete' }
     case 'uploading':
       return { text: 'Uploading', className: 'uploading' }
     case 'uploaded':
@@ -38,9 +144,11 @@ function getProgressPercent(routine: Routine): number {
     case 'skipped':
       return 0
     case 'recording':
-      return 10
+      return 15
     case 'recorded':
-      return 20
+      return 25
+    case 'queued':
+      return 30
     case 'encoding':
       return 50
     case 'encoded':
@@ -61,8 +169,11 @@ function getProgressPercent(routine: Routine): number {
 
 function getBarClass(status: RoutineStatus): string {
   switch (status) {
+    case 'recording':
+      return 'recording'
     case 'encoding':
     case 'recorded':
+    case 'queued':
       return 'processing'
     case 'uploading':
       return 'uploading'
@@ -70,31 +181,11 @@ function getBarClass(status: RoutineStatus): string {
     case 'confirmed':
     case 'encoded':
       return 'complete'
+    case 'failed':
+      return 'failed'
     default:
       return ''
   }
-}
-
-function getVideoInfo(routine: Routine, judgeCount: number): { text: string; color: string } {
-  const total = judgeCount + 1
-  if (routine.status === 'pending' || routine.status === 'skipped') {
-    return { text: '\u2014', color: 'var(--text-muted)' }
-  }
-  if (routine.status === 'recording' || routine.status === 'recorded' || routine.status === 'queued') {
-    return { text: `0/${total}`, color: 'var(--text-muted)' }
-  }
-  if (!routine.encodedFiles || routine.encodedFiles.length === 0) {
-    return { text: `0/${total}`, color: 'var(--text-muted)' }
-  }
-  const uploaded = routine.encodedFiles.filter((f) => f.uploaded).length
-  const encoded = routine.encodedFiles.length
-  if (uploaded === total) {
-    return { text: `${uploaded}/${total}`, color: 'var(--success)' }
-  }
-  if (uploaded > 0) {
-    return { text: `${uploaded}/${total}`, color: 'var(--upload-blue)' }
-  }
-  return { text: `${encoded}/${total}`, color: 'var(--warning)' }
 }
 
 function NoteEditor({ routine }: { routine: Routine }): React.ReactElement {
@@ -220,8 +311,10 @@ export default function RoutineTable(): React.ReactElement {
           <tr>
             <th style={{ paddingLeft: '10px' }}>#</th>
             <th>Routine</th>
-            {!compactMode && <th>Videos</th>}
-            {!compactMode && <th>Photos</th>}
+            {!compactMode && <th className="th-pipeline">REC</th>}
+            {!compactMode && <th className="th-pipeline">SPLIT</th>}
+            {!compactMode && <th className="th-pipeline">PHOTO</th>}
+            {!compactMode && <th className="th-pipeline">UP</th>}
             <th>Status</th>
             <th></th>
           </tr>
@@ -234,6 +327,7 @@ export default function RoutineTable(): React.ReactElement {
             const statusInfo = statusToLabel(routine.status)
             const progress = getProgressPercent(routine)
             const barClass = getBarClass(routine.status)
+            const pipeline = getPipeline(routine, judgeCount)
 
             return (
               <tr
@@ -275,19 +369,16 @@ export default function RoutineTable(): React.ReactElement {
                     {routine.studioCode} &bull; {routine.ageGroup} {routine.category}
                   </div>
                 </td>
-                {!compactMode && (
-                  <td>
-                    {(() => {
-                      const info = getVideoInfo(routine, judgeCount)
-                      return <span style={{ color: info.color }}>{info.text}</span>
-                    })()}
+                {!compactMode && pipeline.map((stage, i) => (
+                  <td key={i} className="td-pipeline" title={stage.detail || stage.label}>
+                    <span className={`stage-icon ${stageClass(stage.state)}`}>
+                      {stageIcon(stage.state)}
+                    </span>
+                    {stage.state === 'active' && stage.detail && (
+                      <span className="stage-detail">{stage.detail}</span>
+                    )}
                   </td>
-                )}
-                {!compactMode && (
-                  <td style={{ color: routine.photos?.length ? 'var(--success)' : 'var(--text-muted)' }}>
-                    {routine.photos?.length || '\u2014'}
-                  </td>
-                )}
+                ))}
                 <td>
                   {isNotRecorded ? (
                     <span className={`status-label ${statusInfo.className}`}>{statusInfo.text}</span>

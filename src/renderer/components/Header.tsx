@@ -1,8 +1,44 @@
 import React, { useEffect, useRef, useState } from 'react'
 
-function UploadAllButton(): React.ReactElement {
+function useAppVersion(): string {
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    window.api.getVersion().then((v: string) => setVersion(v))
+  }, [])
+  return version
+}
+
+// ── Unified Action Bar ─────────────────────────────────────────────
+// Consolidates: Load Competition, Process Video, Upload All, Import Video, Import Photos
+// Each button shows an "AUTO" badge when auto mode is enabled for that function
+
+function ActionBar(): React.ReactElement {
+  const settings = useStore((s) => s.settings)
+  const competition = useStore((s) => s.competition)
   const uploadingCount = useStore((s) => s.uploadingCount)
+  const loadCompOpen = useStore((s) => s.loadCompOpen)
+  const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
   const [isUploading, setIsUploading] = useState(false)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  const autoEncode = settings?.behavior?.autoEncodeRecordings ?? false
+  const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent): void {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setLoadCompOpen(false)
+      }
+    }
+    if (loadCompOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [loadCompOpen, setLoadCompOpen])
+
+  async function handleProcessVideo(): Promise<void> {
+    await window.api.ffmpegEncodeAll()
+  }
 
   async function handleUploadAll(): Promise<void> {
     if (isUploading || uploadingCount > 0) return
@@ -14,32 +50,91 @@ function UploadAllButton(): React.ReactElement {
     }
   }
 
-  const disabled = isUploading || uploadingCount > 0
+  async function handleImportVideo(): Promise<void> {
+    const folderPath = await window.api.settingsBrowseDir()
+    if (folderPath) {
+      await window.api.importFolder(folderPath)
+    }
+  }
+
+  async function handleImportPhotos(): Promise<void> {
+    const folder = await window.api.photosBrowse()
+    if (folder) {
+      await window.api.photosImport(folder)
+    }
+  }
+
+  const uploadDisabled = isUploading || uploadingCount > 0
 
   return (
-    <button
-      className="action-btn"
-      style={{
-        background: disabled ? 'var(--text-muted)' : 'var(--upload-blue)',
-        borderColor: disabled ? 'var(--text-muted)' : 'var(--upload-blue)',
-        color: 'white',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.6 : 1,
-      }}
-      onClick={handleUploadAll}
-      disabled={disabled}
-    >
-      {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : 'Upload All'}
-    </button>
-  )
-}
+    <div className="action-bar">
+      {/* Load Competition */}
+      <div className="action-bar-item" ref={popoverRef} style={{ position: 'relative' }}>
+        <button
+          className={`ab-btn load${competition ? ' has-data' : ''}`}
+          onClick={() => setLoadCompOpen(!loadCompOpen)}
+          title={competition ? `${competition.name} — ${competition.routines.length} routines` : 'Load competition schedule'}
+        >
+          <span className="ab-icon">{competition ? '\u2713' : '\u25B6'}</span>
+          <span className="ab-label">Load</span>
+        </button>
+        {loadCompOpen && <LoadCompetition />}
+      </div>
 
-function useAppVersion(): string {
-  const [version, setVersion] = useState('')
-  useEffect(() => {
-    window.api.getVersion().then((v: string) => setVersion(v))
-  }, [])
-  return version
+      <div className="ab-divider" />
+
+      {/* Process Video (FFmpeg encode) */}
+      <button
+        className="ab-btn encode"
+        onClick={handleProcessVideo}
+        title={autoEncode ? 'Auto-encode is ON — recordings encode automatically' : 'Manually encode all recorded videos'}
+      >
+        <span className="ab-icon">{'\u2699'}</span>
+        <span className="ab-label">Process</span>
+        {autoEncode && <span className="ab-auto-badge">AUTO</span>}
+      </button>
+
+      {/* Upload All */}
+      <button
+        className={`ab-btn upload${uploadDisabled ? ' disabled' : ''}`}
+        onClick={handleUploadAll}
+        disabled={uploadDisabled}
+        title={
+          uploadingCount > 0
+            ? `Uploading ${uploadingCount} files...`
+            : autoUpload
+              ? 'Auto-upload is ON — files upload after encoding'
+              : 'Upload all encoded videos and photos'
+        }
+      >
+        <span className="ab-icon">{uploadingCount > 0 ? '\u21BB' : '\u2191'}</span>
+        <span className="ab-label">{uploadingCount > 0 ? `Up ${uploadingCount}` : 'Upload'}</span>
+        {autoUpload && <span className="ab-auto-badge">AUTO</span>}
+      </button>
+
+      <div className="ab-divider" />
+
+      {/* Import Video */}
+      <button
+        className="ab-btn import-vid"
+        onClick={handleImportVideo}
+        title="Import video files from a folder"
+      >
+        <span className="ab-icon">{'\u{1F3AC}'}</span>
+        <span className="ab-label">Video</span>
+      </button>
+
+      {/* Import Photos */}
+      <button
+        className="ab-btn import-photo"
+        onClick={handleImportPhotos}
+        title="Import photos from camera/SD card"
+      >
+        <span className="ab-icon">{'\u{1F4F7}'}</span>
+        <span className="ab-label">Photos</span>
+      </button>
+    </div>
+  )
 }
 import { useStore } from '../store/useStore'
 import LoadCompetition from './LoadCompetition'
@@ -97,24 +192,9 @@ function SystemMonitor(): React.ReactElement | null {
 export default function Header(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
   const competition = useStore((s) => s.competition)
-  const loadCompOpen = useStore((s) => s.loadCompOpen)
-  const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const compactMode = useStore((s) => s.compactMode)
   const setCompactMode = useStore((s) => s.setCompactMode)
-  const popoverRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent): void {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setLoadCompOpen(false)
-      }
-    }
-    if (loadCompOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [loadCompOpen, setLoadCompOpen])
 
   // Ctrl+Shift+C to toggle compact mode
   useEffect(() => {
@@ -127,24 +207,6 @@ export default function Header(): React.ReactElement {
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [setCompactMode])
-
-  async function handleProcessVideo(): Promise<void> {
-    await window.api.ffmpegEncodeAll()
-  }
-
-  async function handleImportPhotos(): Promise<void> {
-    const folder = await window.api.photosBrowse()
-    if (folder) {
-      await window.api.photosImport(folder)
-    }
-  }
-
-  async function handleImportVideo(): Promise<void> {
-    const folderPath = await window.api.settingsBrowseDir()
-    if (folderPath) {
-      await window.api.importFolder(folderPath)
-    }
-  }
 
   const appVersion = useAppVersion()
   const obsColor =
@@ -174,27 +236,9 @@ export default function Header(): React.ReactElement {
 
       <SystemMonitor />
 
-      <div className="header-right" ref={popoverRef}>
-        <div style={{ position: 'relative' }}>
-          <button className="load-comp-btn" onClick={() => setLoadCompOpen(!loadCompOpen)}>
-            {compactMode ? 'Load' : 'Load Competition'}
-          </button>
-          {loadCompOpen && <LoadCompetition />}
-        </div>
-        {!compactMode && (
-          <>
-            <button className="action-btn primary" onClick={handleProcessVideo}>
-              Process Video
-            </button>
-            <UploadAllButton />
-            <button className="action-btn" onClick={handleImportVideo}>
-              Import Video
-            </button>
-            <button className="action-btn photos" onClick={handleImportPhotos}>
-              Import Photos
-            </button>
-          </>
-        )}
+      {!compactMode && <ActionBar />}
+
+      <div className="header-right">
         <button
           className={`compact-toggle-btn${compactMode ? ' active' : ''}`}
           onClick={() => setCompactMode(!compactMode)}
