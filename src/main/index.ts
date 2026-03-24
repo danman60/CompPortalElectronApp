@@ -14,6 +14,7 @@ import * as ffmpegService from './services/ffmpeg'
 import * as state from './services/state'
 import * as systemMonitor from './services/systemMonitor'
 import * as driveMonitor from './services/driveMonitor'
+import * as schedule from './services/schedule'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -180,9 +181,8 @@ app.whenReady().then(async () => {
   })
 
   // Auto-load share code if saved in settings and no competition already loaded
-  const settings = (await import('./services/settings')).getSettings()
+  const settings = getSettings()
   if (settings.compsync?.shareCode && !state.getCompetition()) {
-    const schedule = await import('./services/schedule')
     schedule.loadFromShareCode(settings.compsync.shareCode)
       .then((comp) => {
         state.setCompetition(comp)
