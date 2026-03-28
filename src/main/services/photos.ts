@@ -31,7 +31,8 @@ export async function browseForFolder(): Promise<string | null> {
   if (!win) return null
 
   const result = await dialog.showOpenDialog(win, {
-    title: 'Select Photo Folder',
+    title: 'Select Photo Folder (SD Card / DCIM)',
+    defaultPath: '::{20D04FE0-3AEA-1069-A2D8-08002B30309D}', // This PC CLSID
     properties: ['openDirectory'],
   })
 
@@ -73,41 +74,70 @@ function detectClockOffset(
 ): number {
   if (photos.length === 0 || windows.length === 0) return 0
 
-  // Find first photo and nearest recording window
-  const sortedPhotos = [...photos].sort(
-    (a, b) => a.captureTime.getTime() - b.captureTime.getTime(),
-  )
+  // Sample up to 10 evenly-spaced photos to generate candidate offsets
+  const sampleCount = Math.min(10, photos.length)
+  const step = Math.max(1, Math.floor(photos.length / sampleCount))
+  const samplePhotos: typeof photos = []
+  for (let i = 0; i < photos.length && samplePhotos.length < sampleCount; i += step) {
+    samplePhotos.push(photos[i])
+  }
+
+  // For each sample photo, find the 3 nearest windows and generate candidate offsets
+  const candidates: number[] = [0]
   const sortedWindows = [...windows].sort(
     (a, b) => a.recordingStarted.getTime() - b.recordingStarted.getTime(),
   )
-
-  const firstPhoto = sortedPhotos[0]
-  const nearestWindow = sortedWindows.reduce((nearest, w) => {
-    const midpoint =
-      (w.recordingStarted.getTime() + w.recordingStopped.getTime()) / 2
-    const dist = Math.abs(firstPhoto.captureTime.getTime() - midpoint)
-    const nearestDist = Math.abs(
-      firstPhoto.captureTime.getTime() -
-        (nearest.recordingStarted.getTime() + nearest.recordingStopped.getTime()) / 2,
-    )
-    return dist < nearestDist ? w : nearest
-  })
-
-  const windowMidpoint =
-    (nearestWindow.recordingStarted.getTime() +
-      nearestWindow.recordingStopped.getTime()) /
-    2
-  const offset = windowMidpoint - firstPhoto.captureTime.getTime()
-
-  // Only apply if offset seems like a genuine clock difference (> 30s)
-  if (Math.abs(offset) > 30000) {
-    logger.photos.info(
-      `Clock offset detected: ${Math.round(offset / 1000)}s (camera ${offset > 0 ? 'behind' : 'ahead'})`,
-    )
-    return offset
+  for (const photo of samplePhotos) {
+    const distances = sortedWindows.map((w) => ({
+      w,
+      dist: Math.abs(photo.captureTime.getTime() - (w.recordingStarted.getTime() + w.recordingStopped.getTime()) / 2),
+    }))
+    distances.sort((a, b) => a.dist - b.dist)
+    for (const { w } of distances.slice(0, 3)) {
+      const mid = (w.recordingStarted.getTime() + w.recordingStopped.getTime()) / 2
+      candidates.push(mid - photo.captureTime.getTime())
+    }
   }
 
-  return 0
+  // Score each candidate using all photos (but deduplicate candidates first)
+  const BUFFER = 30_000
+  let bestOffset = 0
+  let bestScore = 0
+
+  const tested = new Set<number>()
+  for (const candidate of candidates) {
+    const rounded = Math.round(candidate / 1000) * 1000
+    if (tested.has(rounded)) continue
+    tested.add(rounded)
+
+    let score = 0
+    for (const photo of photos) {
+      const adjusted = photo.captureTime.getTime() + rounded
+      // Binary search would be ideal but linear is fine for ~700 windows
+      for (const w of sortedWindows) {
+        if (adjusted >= w.recordingStarted.getTime() - BUFFER &&
+            adjusted <= w.recordingStopped.getTime() + BUFFER) {
+          score++
+          break
+        }
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score
+      bestOffset = rounded
+    }
+  }
+
+  if (bestOffset !== 0) {
+    logger.photos.info(
+      `Clock offset detected: ${Math.round(bestOffset / 1000)}s (camera ${bestOffset > 0 ? 'behind' : 'ahead'}) — matched ${bestScore}/${photos.length} photos`,
+    )
+  } else {
+    logger.photos.info(`No clock offset needed — ${bestScore}/${photos.length} photos match at zero offset`)
+  }
+
+  return bestOffset
 }
 
 function matchPhotosToRoutines(
@@ -120,8 +150,15 @@ function matchPhotosToRoutines(
   )
   const BUFFER_MS = 30_000
 
+  // Log all recording windows for debugging
+  for (const w of sorted) {
+    logger.photos.info(`  Window: ${w.entryNumber} ${w.routineId.slice(0, 8)} ${w.recordingStarted.toISOString()} → ${w.recordingStopped.toISOString()}`)
+  }
+
   return photos.map((photo) => {
     const adjustedTime = photo.captureTime.getTime() + clockOffsetMs
+    const adjustedDate = new Date(adjustedTime)
+    const fileName = path.basename(photo.path)
 
     // Exact match — within recording window
     const exactMatch = sorted.find(
@@ -131,6 +168,7 @@ function matchPhotosToRoutines(
     )
 
     if (exactMatch) {
+      logger.photos.info(`  ${fileName}: EXIF=${photo.captureTime.toISOString()} adjusted=${adjustedDate.toISOString()} → EXACT match #${exactMatch.entryNumber}`)
       return {
         filePath: photo.path,
         captureTime: photo.captureTime.toISOString(),
@@ -148,6 +186,7 @@ function matchPhotosToRoutines(
     )
 
     if (gapMatch) {
+      logger.photos.info(`  ${fileName}: EXIF=${photo.captureTime.toISOString()} adjusted=${adjustedDate.toISOString()} → GAP match #${gapMatch.entryNumber}`)
       return {
         filePath: photo.path,
         captureTime: photo.captureTime.toISOString(),
@@ -156,6 +195,17 @@ function matchPhotosToRoutines(
         matchedRoutineId: gapMatch.routineId,
       }
     }
+
+    // Find nearest window for debug
+    let nearestDist = Infinity
+    let nearestEntry = ''
+    for (const w of sorted) {
+      const distStart = Math.abs(adjustedTime - w.recordingStarted.getTime())
+      const distStop = Math.abs(adjustedTime - w.recordingStopped.getTime())
+      const dist = Math.min(distStart, distStop)
+      if (dist < nearestDist) { nearestDist = dist; nearestEntry = w.entryNumber }
+    }
+    logger.photos.info(`  ${fileName}: EXIF=${photo.captureTime.toISOString()} adjusted=${adjustedDate.toISOString()} → UNMATCHED (nearest: #${nearestEntry}, ${Math.round(nearestDist / 1000)}s away)`)
 
     return {
       filePath: photo.path,
@@ -268,8 +318,8 @@ export async function importPhotos(
     try {
       const thumbDir = path.join(routineDir, 'thumbnails')
       if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
-      const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.webp`)
-      await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbPath)
+      const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.jpg`)
+      await sharp(destFile).resize(200, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath)
       match.thumbnailPath = thumbPath
     } catch (err) {
       logger.photos.warn(`Thumbnail generation failed for ${destFile}:`, err)

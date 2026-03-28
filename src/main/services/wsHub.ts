@@ -177,7 +177,8 @@ function buildStateMessage(): WSStateMessage {
   const next = stateService.getNextRoutine()
   const obsState = obs.getState()
   const overlayState = overlay.getOverlayState()
-  const skippedCount = comp ? comp.routines.filter(r => r.status === 'skipped').length : 0
+  // Fix 8: Use cached counts instead of filtering all routines every broadcast
+  const skippedCount = stateService.getSkippedCount()
 
   return {
     type: 'state',
@@ -193,7 +194,7 @@ function buildStateMessage(): WSStateMessage {
       routineTitle: next.routineTitle,
     } : null,
     index: stateService.getCurrentRoutineIndex(),
-    total: comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0,
+    total: stateService.getActiveCount(),
     recording: { active: obsState.isRecording, elapsed: obsState.recordTimeSec },
     streaming: obsState.isStreaming,
     skippedCount,

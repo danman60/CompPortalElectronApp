@@ -451,4 +451,17 @@ function broadcastFullState(): void {
   wsHub.broadcastState()
 }
 
+export function broadcastRoutineUpdate(routineId: string): void {
+  const competition = state.getCompetition()
+  if (!competition) return
+  const routine = competition.routines.find(r => r.id === routineId)
+  if (!routine) return
+
+  syncOverlayFromCurrent()
+
+  sendToRenderer(IPC_CHANNELS.STATE_ROUTINE_UPDATE, { routineId, routine })
+
+  wsHub.broadcastState()
+}
+
 export { broadcastFullState }

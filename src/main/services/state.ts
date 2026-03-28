@@ -18,6 +18,10 @@ let currentCompetition: Competition | null = null
 let currentRoutineId: string | null = null
 let saveTimer: NodeJS.Timeout | null = null
 
+// Fix 8: Cached counts for WS broadcasts — updated incrementally
+let cachedSkippedCount = 0
+let cachedActiveCount = 0  // routines that are not skipped
+
 function getStatePath(): string {
   const settings = getSettings()
   const outputDir = settings.fileNaming.outputDirectory
@@ -80,6 +84,7 @@ export function loadState(): PersistedState | null {
       const data: PersistedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
       logger.app.info(`State loaded from ${statePath}`)
       currentCompetition = data.competition
+      recomputeCachedCounts()
 
       // Migrate from index-based to ID-based
       if (data.currentRoutineId) {
@@ -115,6 +120,30 @@ function getCurrentIndex(): number {
   return idx >= 0 ? idx : 0
 }
 
+// --- Cached count helpers ---
+
+function recomputeCachedCounts(): void {
+  if (!currentCompetition) {
+    cachedSkippedCount = 0
+    cachedActiveCount = 0
+    return
+  }
+  let skipped = 0
+  for (const r of currentCompetition.routines) {
+    if (r.status === 'skipped') skipped++
+  }
+  cachedSkippedCount = skipped
+  cachedActiveCount = currentCompetition.routines.length - skipped
+}
+
+export function getSkippedCount(): number {
+  return cachedSkippedCount
+}
+
+export function getActiveCount(): number {
+  return cachedActiveCount
+}
+
 // --- Public API ---
 
 export function setCompetition(comp: Competition): void {
@@ -124,9 +153,15 @@ export function setCompetition(comp: Competition): void {
   // Try to restore routine states from persisted state
   const existing = loadState()
   if (existing?.competition?.competitionId === comp.competitionId) {
+    // Fix 7: Build Map for O(1) lookup instead of O(n) .find() per routine
+    const persistedMap = new Map<string, Routine>()
+    for (const r of existing.competition.routines) {
+      persistedMap.set(r.id, r)
+    }
+
     let matchedCount = 0
     for (const routine of comp.routines) {
-      const persisted = existing.competition.routines.find((r) => r.id === routine.id)
+      const persisted = persistedMap.get(routine.id)
       if (persisted) {
         routine.status = persisted.status
         routine.recordingStartedAt = persisted.recordingStartedAt
@@ -163,6 +198,7 @@ export function setCompetition(comp: Competition): void {
     if (visible.length > 0) currentRoutineId = visible[0].id
   }
 
+  recomputeCachedCounts()
   saveState()
 }
 
@@ -255,6 +291,15 @@ export function updateRoutineStatus(
   routine.status = status
   if (extra) {
     Object.assign(routine, extra)
+  }
+
+  // Fix 8: Update cached counts incrementally
+  if (oldStatus === 'skipped' && status !== 'skipped') {
+    cachedSkippedCount--
+    cachedActiveCount++
+  } else if (oldStatus !== 'skipped' && status === 'skipped') {
+    cachedSkippedCount++
+    cachedActiveCount--
   }
 
   logger.app.info(`Routine ${routine.entryNumber} "${routine.routineTitle}": ${oldStatus} → ${status}`)

@@ -227,12 +227,17 @@ export const useStore = create<AppStore>((set, get) => ({
       if (r.status === 'uploaded' || r.status === 'confirmed') complete++
       if (r.photos && r.photos.length > 0) photos += r.photos.length
     }
-    set({
-      encodingCount: encoding,
-      uploadingCount: uploading,
-      completeCount: complete,
-      photosPendingCount: photos,
-    })
+    // Fix 5: Only set if values actually changed to avoid unnecessary renders
+    const s = get()
+    if (s.encodingCount !== encoding || s.uploadingCount !== uploading ||
+        s.completeCount !== complete || s.photosPendingCount !== photos) {
+      set({
+        encodingCount: encoding,
+        uploadingCount: uploading,
+        completeCount: complete,
+        photosPendingCount: photos,
+      })
+    }
   },
 }))
 
@@ -254,6 +259,18 @@ export function initIPCListeners(): () => void {
       nextRoutine: d.nextRoutine,
       currentIndex: d.currentIndex,
     })
+    store().recalcCounts()
+  })
+
+  // Delta routine update from main (single routine changed)
+  window.api.on(IPC_CHANNELS.STATE_ROUTINE_UPDATE, (data: unknown) => {
+    const d = data as { routineId: string; routine: Routine }
+    const comp = useStore.getState().competition
+    if (!comp) return
+    const routines = comp.routines.map(r =>
+      r.id === d.routineId ? d.routine : r,
+    )
+    useStore.setState({ competition: { ...comp, routines } })
     store().recalcCounts()
   })
 
@@ -321,6 +338,7 @@ export function initIPCListeners(): () => void {
   // Return cleanup function
   return () => {
     window.api.removeAllListeners(IPC_CHANNELS.STATE_UPDATE)
+    window.api.removeAllListeners(IPC_CHANNELS.STATE_ROUTINE_UPDATE)
     window.api.removeAllListeners(IPC_CHANNELS.OBS_STATE)
     window.api.removeAllListeners(IPC_CHANNELS.FFMPEG_PROGRESS)
     window.api.removeAllListeners(IPC_CHANNELS.UPLOAD_PROGRESS)

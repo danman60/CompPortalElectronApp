@@ -1,0 +1,18 @@
+{
+  "name": "com.compsync.streamdeck.sdplugin",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "bin": {
+    "com.compsync.streamdeck.sdplugin": "bin/plugin.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.20.0"
+  }
+}

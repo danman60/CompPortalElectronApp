@@ -9,7 +9,7 @@ import { logger } from '../logger'
 import { getResolvedConnection } from './schedule'
 import * as state from './state'
 import * as jobQueue from './jobQueue'
-import { broadcastFullState } from './recording'
+import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 
 interface UploadPayload {
   routineId: string
@@ -27,6 +27,9 @@ const API_TIMEOUT_MS = 30000
 let isUploading = false
 let isPaused = false
 let currentAbortController: AbortController | null = null
+
+// Fix 4: Track uploading routines for O(1) lookup in stopUploads
+const activeUploadRoutineIds = new Set<string>()
 
 function sendProgress(routineId: string, progress: UploadProgress): void {
   sendToRenderer(IPC_CHANNELS.UPLOAD_PROGRESS, { routineId, progress })
@@ -124,20 +127,18 @@ export function stopUploads(): void {
     logger.upload.info('Upload paused — current upload aborted')
   }
 
-  // Reset any routine stuck in 'uploading' back to 'encoded'
-  const comp = state.getCompetition()
-  if (comp) {
-    for (const routine of comp.routines) {
-      if (routine.status === 'uploading') {
-        state.updateRoutineStatus(routine.id, 'encoded')
-        sendProgress(routine.id, {
-          state: 'paused',
-          percent: 0,
-          filesCompleted: 0,
-          filesTotal: 0,
-        })
-      }
+  // Fix 4: Iterate only tracked uploading routines instead of scanning all 700
+  if (activeUploadRoutineIds.size > 0) {
+    for (const routineId of activeUploadRoutineIds) {
+      state.updateRoutineStatus(routineId, 'encoded')
+      sendProgress(routineId, {
+        state: 'paused',
+        percent: 0,
+        filesCompleted: 0,
+        filesTotal: 0,
+      })
     }
+    activeUploadRoutineIds.clear()
     broadcastFullState()
   }
 }
@@ -159,7 +160,8 @@ export function cancelRoutineUpload(routineId: string): void {
 
   // Reset routine status back to encoded
   state.updateRoutineStatus(routineId, 'encoded')
-  broadcastFullState()
+  activeUploadRoutineIds.delete(routineId)
+  broadcastRoutineUpdate(routineId)
   sendProgress(routineId, {
     state: 'paused',
     percent: 0,
@@ -185,7 +187,8 @@ async function processLoop(): Promise<void> {
     const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
     if (routine && routine.status !== 'uploading') {
       state.updateRoutineStatus(payload.routineId, 'uploading')
-      broadcastFullState()
+      activeUploadRoutineIds.add(payload.routineId)
+      broadcastRoutineUpdate(payload.routineId)
     }
 
     const allRoutineJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
@@ -264,7 +267,8 @@ async function processLoop(): Promise<void> {
           })
 
           state.updateRoutineStatus(payload.routineId, 'uploaded')
-          broadcastFullState()
+          activeUploadRoutineIds.delete(payload.routineId)
+          broadcastRoutineUpdate(payload.routineId)
           sendProgress(payload.routineId, {
             state: 'complete',
             percent: 100,
@@ -279,7 +283,8 @@ async function processLoop(): Promise<void> {
           state.updateRoutineStatus(payload.routineId, 'encoded', {
             error: `Files uploaded but completion call failed: ${errMsg}`,
           })
-          broadcastFullState()
+          activeUploadRoutineIds.delete(payload.routineId)
+          broadcastRoutineUpdate(payload.routineId)
           sendProgress(payload.routineId, {
             state: 'failed',
             percent: 100,
@@ -416,6 +421,11 @@ function uploadFileToSignedUrl(
       reject(err)
     })
 
+    // Cache job counts once before streaming — avoid O(n) scan per chunk
+    const cachedJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
+    const cachedCompleted = cachedJobs.filter(j => j.status === 'done').length
+    const cachedTotal = cachedJobs.length
+
     fileStream.on('data', (chunk) => {
       bytesUploaded += chunk.length
       const filePercent = Math.round((bytesUploaded / fileSize) * 100)
@@ -424,21 +434,16 @@ function uploadFileToSignedUrl(
       if (milestone > lastLoggedMilestone) {
         lastLoggedMilestone = milestone
         logger.upload.info(`Upload ${payload.objectName}: ${filePercent}%`)
+
+        const overallPercent = Math.round(((cachedCompleted + (filePercent / 100)) / cachedTotal) * 100)
+        sendProgress(payload.routineId, {
+          state: 'uploading',
+          percent: overallPercent,
+          currentFile: path.basename(payload.filePath),
+          filesCompleted: cachedCompleted,
+          filesTotal: cachedTotal,
+        })
       }
-
-      // Calculate overall progress: completed files + current file progress
-      const allRoutineJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
-      const completedCount = allRoutineJobs.filter(j => j.status === 'done').length
-      const totalCount = allRoutineJobs.length
-      const overallPercent = Math.round(((completedCount + (filePercent / 100)) / totalCount) * 100)
-
-      sendProgress(payload.routineId, {
-        state: 'uploading',
-        percent: overallPercent,
-        currentFile: path.basename(payload.filePath),
-        filesCompleted: completedCount,
-        filesTotal: totalCount,
-      })
     })
 
     fileStream.pipe(req)

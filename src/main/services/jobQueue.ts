@@ -11,6 +11,38 @@ let jobs: JobRecord[] = []
 let queueFilePath = ''
 let saveTimer: NodeJS.Timeout | null = null
 
+// Fix 6: Map index for O(1) routine lookup
+const routineIndex = new Map<string, JobRecord[]>()
+
+function rebuildRoutineIndex(): void {
+  routineIndex.clear()
+  for (const job of jobs) {
+    let arr = routineIndex.get(job.routineId)
+    if (!arr) {
+      arr = []
+      routineIndex.set(job.routineId, arr)
+    }
+    arr.push(job)
+  }
+}
+
+function indexAdd(job: JobRecord): void {
+  let arr = routineIndex.get(job.routineId)
+  if (!arr) {
+    arr = []
+    routineIndex.set(job.routineId, arr)
+  }
+  arr.push(job)
+}
+
+function indexRemove(job: JobRecord): void {
+  const arr = routineIndex.get(job.routineId)
+  if (!arr) return
+  const idx = arr.indexOf(job)
+  if (idx !== -1) arr.splice(idx, 1)
+  if (arr.length === 0) routineIndex.delete(job.routineId)
+}
+
 // --- Persistence ---
 
 function getQueuePath(): string {
@@ -48,6 +80,7 @@ function load(): void {
     logger.app.error('Job queue: failed to load from disk, starting fresh', err)
     jobs = []
   }
+  rebuildRoutineIndex()
 }
 
 /** Debounced save — 500ms. Use flushSync() for critical transitions. */
@@ -101,6 +134,7 @@ export function enqueue(
     updatedAt: now,
   }
   jobs.push(job)
+  indexAdd(job)
   logger.app.info(`Job queue: enqueued ${type} job ${job.id} for routine ${routineId}`)
   save()
   return job
@@ -172,7 +206,7 @@ export function getNext(type: JobType): JobRecord | null {
 }
 
 export function getByRoutine(routineId: string): JobRecord[] {
-  return jobs.filter(j => j.routineId === routineId)
+  return routineIndex.get(routineId) || []
 }
 
 /** Remove completed jobs older than the given age. */
@@ -185,6 +219,7 @@ export function pruneCompleted(olderThanMs: number): number {
   })
   const pruned = before - jobs.length
   if (pruned > 0) {
+    rebuildRoutineIndex()
     logger.app.info(`Job queue: pruned ${pruned} completed jobs`)
     save()
   }
@@ -201,6 +236,7 @@ export function remove(jobId: string): boolean {
     return false
   }
   jobs.splice(idx, 1)
+  indexRemove(job)
   logger.app.info(`Job queue: removed ${job.type} job ${jobId}`)
   save()
   return true

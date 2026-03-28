@@ -9,7 +9,7 @@ import { getSettings } from './settings'
 import * as state from './state'
 import * as uploadService from './upload'
 import * as jobQueue from './jobQueue'
-import { broadcastFullState } from './recording'
+import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
@@ -54,24 +54,51 @@ export function killOrphanedProcess(): void {
   } catch {}
 }
 
+/** Cache the resolved path so we only copy once per session. */
+let resolvedFFmpegPath: string | null = null
+
 function getFFmpegPath(): string {
+  if (resolvedFFmpegPath) return resolvedFFmpegPath
+
   const settings = getSettings()
   if (settings.ffmpeg.path && settings.ffmpeg.path !== '(bundled)') {
     if (fs.existsSync(settings.ffmpeg.path)) {
-      return settings.ffmpeg.path
+      resolvedFFmpegPath = settings.ffmpeg.path
+      return resolvedFFmpegPath
     }
     logger.ffmpeg.warn(`Custom ffmpeg path not found: ${settings.ffmpeg.path}, falling back to bundled`)
   }
 
   const resourcePath = path.join(process.resourcesPath || '.', 'ffmpeg.exe')
   if (fs.existsSync(resourcePath)) {
-    return resourcePath
+    // Copy to userData to avoid EBUSY lock on resources/ directory
+    const userDataCopy = path.join(app.getPath('userData'), 'ffmpeg.exe')
+    try {
+      // Only copy if missing or different size (indicates update)
+      const srcStat = fs.statSync(resourcePath)
+      let needsCopy = true
+      if (fs.existsSync(userDataCopy)) {
+        const dstStat = fs.statSync(userDataCopy)
+        if (dstStat.size === srcStat.size) needsCopy = false
+      }
+      if (needsCopy) {
+        fs.copyFileSync(resourcePath, userDataCopy)
+        logger.ffmpeg.info(`Copied ffmpeg to ${userDataCopy}`)
+      }
+      resolvedFFmpegPath = userDataCopy
+      return resolvedFFmpegPath
+    } catch (err) {
+      logger.ffmpeg.warn(`Failed to copy ffmpeg to userData, using resources path: ${err}`)
+      resolvedFFmpegPath = resourcePath
+      return resolvedFFmpegPath
+    }
   }
 
   try {
     const ffmpegStatic = require('ffmpeg-static') as string
     if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
-      return ffmpegStatic
+      resolvedFFmpegPath = ffmpegStatic
+      return resolvedFFmpegPath
     }
   } catch {}
 
@@ -79,26 +106,50 @@ function getFFmpegPath(): string {
   return 'ffmpeg'
 }
 
-/** Validate FFmpeg is available. Returns version string or null. */
-export function validateFFmpeg(): Promise<string | null> {
+/** Validate FFmpeg is available. Returns version string or null. Retries once on EBUSY. */
+export function validateFFmpeg(retries = 2): Promise<string | null> {
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath()
+    logger.ffmpeg.info(`Validating FFmpeg at: ${ffmpegPath} (retries=${retries})`)
     try {
       const proc = spawn(ffmpegPath, ['-version'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
       let output = ''
       proc.stdout?.on('data', (d: Buffer) => { output += d.toString() })
+      let stderr = ''
+      proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
       proc.on('close', (code) => {
         if (code === 0) {
           const versionLine = output.split('\n')[0] || 'unknown'
           resolve(versionLine.trim())
         } else {
+          logger.ffmpeg.warn(`FFmpeg validation exited with code ${code} (path: ${ffmpegPath})${stderr ? `, stderr: ${stderr.slice(0, 200)}` : ''}`)
+          if (retries > 0) {
+            logger.ffmpeg.warn(`Retrying FFmpeg validation in 3s (${retries} retries left)...`)
+            setTimeout(() => validateFFmpeg(retries - 1).then(resolve), 3000)
+          } else {
+            resolve(null)
+          }
+        }
+      })
+      proc.on('error', (err: NodeJS.ErrnoException) => {
+        logger.ffmpeg.warn(`FFmpeg validation spawn error: ${err.code || err.message} (path: ${ffmpegPath})`)
+        if ((err.code === 'EBUSY' || err.code === 'ENOENT') && retries > 0) {
+          logger.ffmpeg.warn(`Retrying FFmpeg validation in 3s (${retries} retries left)...`)
+          setTimeout(() => validateFFmpeg(retries - 1).then(resolve), 3000)
+        } else {
           resolve(null)
         }
       })
-      proc.on('error', () => resolve(null))
       setTimeout(() => { proc.kill(); resolve(null) }, 10000)
-    } catch {
-      resolve(null)
+    } catch (spawnErr) {
+      const msg = spawnErr instanceof Error ? spawnErr.message : String(spawnErr)
+      logger.ffmpeg.warn(`FFmpeg validation sync error: ${msg}`)
+      if (msg.includes('EBUSY') && retries > 0) {
+        logger.ffmpeg.warn(`Retrying FFmpeg validation in 3s (${retries} retries left)...`)
+        setTimeout(() => validateFFmpeg(retries - 1).then(resolve), 3000)
+      } else {
+        resolve(null)
+      }
     }
   })
 }
@@ -165,7 +216,7 @@ async function processNext(): Promise<void> {
 
     logger.ffmpeg.info(`Processing routine ${job.routineId}: ${job.inputPath}`)
     state.updateRoutineStatus(job.routineId, 'encoding')
-    broadcastFullState()
+    broadcastRoutineUpdate(job.routineId)
     sendProgress({
       routineId: job.routineId,
       state: 'encoding',
@@ -199,7 +250,7 @@ async function processNext(): Promise<void> {
 
       state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles })
       jobQueue.updateStatus(jobRecord.id, 'done')
-      broadcastFullState()
+      broadcastRoutineUpdate(job.routineId)
 
       // Auto-upload if enabled
       const settings = getSettings()
@@ -238,6 +289,14 @@ async function processNext(): Promise<void> {
   }
 
   isProcessing = false
+
+  // If there are still pending jobs (e.g. failed jobs waiting for backoff), schedule a retry
+  const pendingJobs = jobQueue.getPending('encode')
+  if (pendingJobs.length > 0) {
+    const nextBackoffMs = Math.min(5000 * Math.pow(2, (pendingJobs[0].attempts || 1) - 1), 60000)
+    logger.ffmpeg.info(`${pendingJobs.length} pending encode jobs, retrying in ${nextBackoffMs / 1000}s`)
+    setTimeout(() => processNext(), nextBackoffMs)
+  }
 }
 
 async function runFFmpeg(job: FFmpegJob): Promise<void> {
