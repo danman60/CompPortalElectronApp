@@ -6,6 +6,7 @@ import * as ffmpegService from './ffmpeg'
 import * as overlay from './overlay'
 import * as wsHub from './wsHub'
 import * as uploadService from './upload'
+import * as jobQueue from './jobQueue'
 import { getSettings } from './settings'
 import * as schedule from './schedule'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
@@ -203,6 +204,19 @@ export async function handleRecordingStopped(
   // Check if we need to archive existing files (re-recording)
   if (fs.existsSync(routineDir) && settings.behavior.confirmBeforeOverwrite) {
     await archiveExistingFiles(routineDir)
+
+    // Clear stale upload jobs and photo state from previous recording
+    const oldJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
+    for (const job of oldJobs) {
+      jobQueue.updateStatus(job.id, 'cancelled')
+    }
+    state.updateRoutineStatus(routine.id, routine.status, {
+      photos: undefined,
+      encodedFiles: undefined,
+      uploadProgress: undefined,
+      error: undefined,
+    })
+    logger.app.info(`Archived existing files to ${routineDir}/_archive — cleared ${oldJobs.length} old upload jobs`)
   }
 
   // Create routine directory
