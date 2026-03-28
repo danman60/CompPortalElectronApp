@@ -237,8 +237,8 @@ async function processLoop(): Promise<void> {
       jobQueue.updateStatus(job.id, 'done', { storagePath })
       logger.upload.info(`Uploaded: ${payload.objectName} for routine ${payload.routineId}`)
 
-      // Check if all uploads for this routine are done
-      const updatedJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
+      // Check if all uploads for this routine are done (exclude cancelled jobs from prior recordings)
+      const updatedJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload' && j.status !== 'cancelled')
       const allDone = updatedJobs.every(j => j.status === 'done')
 
       if (allDone) {
