@@ -59,9 +59,20 @@ function ActionBar(): React.ReactElement {
 
   async function handleImportPhotos(): Promise<void> {
     const folder = await window.api.photosBrowse()
-    if (folder) {
-      await window.api.photosImport(folder)
+    if (!folder) return
+    const result = await window.api.photosImport(folder) as { matched?: number; unmatched?: number; total?: number; clockOffsetMs?: number; error?: string } | undefined
+    if (!result) return
+    if (result.error) {
+      alert(`Photo import error: ${result.error}`)
+      return
     }
+    const total = (result.matched ?? 0) + (result.unmatched ?? 0)
+    if (total === 0) {
+      alert(`No JPEG photos found in the selected folder or its subfolders.`)
+      return
+    }
+    const offset = result.clockOffsetMs ? ` (clock offset: ${Math.round(result.clockOffsetMs / 1000)}s)` : ''
+    alert(`Photo import complete:\n\n${result.matched ?? 0} matched to routines\n${result.unmatched ?? 0} unmatched${offset}`)
   }
 
   const uploadDisabled = isUploading || uploadingCount > 0

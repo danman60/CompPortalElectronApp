@@ -4,6 +4,8 @@
   "Version": "1.0.0.0",
   "Author": "Stream Stage",
   "Description": "Control CompSync Media competition workflow from Stream Deck",
+  "Category": "CompSync Media",
+  "CategoryIcon": "imgs/plugin-icon",
   "Icon": "imgs/plugin-icon",
   "CodePath": "bin/plugin.js",
   "SDKVersion": 2,

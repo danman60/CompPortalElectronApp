@@ -55,6 +55,8 @@ const api = {
   uploadAll: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ALL),
   uploadRoutine: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ROUTINE, routineId),
+  uploadCancelRoutine: (routineId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_CANCEL_ROUTINE, routineId),
 
   // Photos
   photosBrowse: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_BROWSE),
@@ -73,6 +75,7 @@ const api = {
   overlayHideLT: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_HIDE_LT),
   overlayGetState: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_GET_STATE),
   overlayAutoFireToggle: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_AUTO_FIRE_TOGGLE),
+  overlayUpdateLayout: (layout: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_UPDATE_LAYOUT, layout),
 
   // Next Full
   recordingNextFull: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_NEXT_FULL),

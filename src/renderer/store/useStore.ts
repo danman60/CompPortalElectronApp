@@ -63,6 +63,9 @@ interface AppStore {
   }
   photoSorterOpen: boolean
 
+  // Visual Editor
+  showVisualEditor: boolean
+
   // Status counts
   encodingCount: number
   uploadingCount: number
@@ -97,6 +100,7 @@ interface AppStore {
   setPhotoSortResult: (result: ClipSortResult | null) => void
   setPhotoSortError: (error: string | null) => void
   resetPhotoSort: () => void
+  setShowVisualEditor: (show: boolean) => void
   recalcCounts: () => void
 }
 
@@ -135,6 +139,8 @@ export const useStore = create<AppStore>((set, get) => ({
     error: null,
   },
   photoSorterOpen: false,
+
+  showVisualEditor: false,
 
   jobQueue: [],
   jobQueuePanelOpen: false,
@@ -203,6 +209,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setPhotoSortResult: (result) => set((s) => ({ photoSort: { ...s.photoSort, result, status: 'review' as const } })),
   setPhotoSortError: (error) => set((s) => ({ photoSort: { ...s.photoSort, error, status: 'error' as const } })),
   resetPhotoSort: () => set({ photoSort: { status: 'idle', progress: null, result: null, error: null } }),
+  setShowVisualEditor: (showVisualEditor) => set({ showVisualEditor }),
 
   recalcCounts: () => {
     const comp = get().competition

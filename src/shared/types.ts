@@ -198,6 +198,8 @@ export interface AppSettings {
   ffmpeg: {
     path: string // "(bundled)" or custom path
     processingMode: 'copy' | 'smart' | '720p' | '1080p'
+    judgeResolution: 'same' | '720p' | '480p'
+    useHardwareEncoding: boolean // NVENC (NVIDIA GPU)
     cpuPriority: 'normal' | 'below-normal' | 'idle'
   }
   hotkeys: {
@@ -315,12 +317,14 @@ export const IPC_CHANNELS = {
   OVERLAY_HIDE_LT: 'overlay:hide-lt',
   OVERLAY_GET_STATE: 'overlay:get-state',
   OVERLAY_AUTO_FIRE_TOGGLE: 'overlay:auto-fire-toggle',
+  OVERLAY_UPDATE_LAYOUT: 'overlay:update-layout',
 
   // Recording
   RECORDING_NEXT_FULL: 'recording:next-full',
 
   // Upload
   UPLOAD_ALL: 'upload:all',
+  UPLOAD_CANCEL_ROUTINE: 'upload:cancel-routine',
 
   // System monitor
   SYSTEM_STATS: 'system:stats',
@@ -497,6 +501,31 @@ export interface WSIdentifyMessage {
 
 export type WSMessage = WSStateMessage | WSCommandMessage | WSIdentifyMessage
 
+// --- Visual Overlay Editor ---
+
+export interface ElementPosition {
+  x: number  // % from left
+  y: number  // % from top
+  width?: number
+  height?: number
+}
+
+export interface OverlayLayout {
+  counter: ElementPosition
+  clock: ElementPosition
+  logo: ElementPosition
+  lowerThird: ElementPosition
+}
+
+// Default positions matching the hardcoded overlay.ts values
+// Canvas is 1920x1080. counter/clock: right:40px = (1920-40)/1920 ≈ 97.9% left edge minus element width
+export const DEFAULT_LAYOUT: OverlayLayout = {
+  counter: { x: 85, y: 1.6, width: 13, height: 9 },
+  clock: { x: 85, y: 12, width: 13, height: 5 },
+  logo: { x: 2, y: 2.8, width: 10, height: 8 },
+  lowerThird: { x: 2, y: 82, width: 35, height: 14 },
+}
+
 // Default settings
 export const DEFAULT_SETTINGS: AppSettings = {
   obs: {
@@ -531,6 +560,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ffmpeg: {
     path: '(bundled)',
     processingMode: 'smart',
+    judgeResolution: 'same',
+    useHardwareEncoding: false,
     cpuPriority: 'below-normal',
   },
   hotkeys: {

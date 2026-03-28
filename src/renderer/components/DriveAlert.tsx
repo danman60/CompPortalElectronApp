@@ -63,12 +63,12 @@ export default function DriveAlert(): React.ReactElement | null {
     return () => { unsubDrive(); unsubProgress(); unsubResult() }
   }, [])
 
-  async function handleStartImport(): Promise<void> {
+  function handleStartImport(): void {
     if (!detected || !competition) return
     setProgress((prev) => ({ ...prev, stage: 'scanning', message: `Scanning ${detected.photoPath}...` }))
-    try {
-      const result = await window.api.photosImport(detected.photoPath)
-      // Check for safeHandle error
+
+    // Fire and forget — progress comes via IPC events, don't block the UI
+    window.api.photosImport(detected.photoPath).then((result) => {
       if (result && typeof result === 'object' && 'error' in result) {
         setProgress((prev) => ({
           ...prev,
@@ -78,18 +78,18 @@ export default function DriveAlert(): React.ReactElement | null {
         return
       }
 
-      // If auto-upload is on, trigger upload
+      // Don't auto-open sorter — results shown in the modal
+
       if (autoUpload) {
-        setProgress((prev) => ({ ...prev, stage: 'uploading', message: 'Auto-uploading photos...' }))
-        await window.api.uploadAll()
+        window.api.uploadAll()
       }
-    } catch (err) {
+    }).catch((err) => {
       setProgress((prev) => ({
         ...prev,
         stage: 'error',
         message: err instanceof Error ? err.message : String(err),
       }))
-    }
+    })
   }
 
   function handleDismiss(): void {
@@ -187,8 +187,10 @@ export default function DriveAlert(): React.ReactElement | null {
           {progress.stage === 'error' && (
             <button className="da-btn" onClick={handleStartImport}>Retry</button>
           )}
-          {!isWorking && progress.stage !== 'done' && (
-            <button className="da-btn dismiss" onClick={handleDismiss}>Dismiss</button>
+          {progress.stage !== 'done' && (
+            <button className="da-btn dismiss" onClick={handleDismiss}>
+              {isWorking ? 'Background' : 'Dismiss'}
+            </button>
           )}
         </div>
 

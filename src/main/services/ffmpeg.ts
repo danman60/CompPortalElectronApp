@@ -271,18 +271,43 @@ async function runFFmpeg(job: FFmpegJob): Promise<void> {
 }
 
 async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void> {
+  const settings = getSettings()
+  const useNvenc = settings.ffmpeg.useHardwareEncoding ?? false
+  const judgeRes = settings.ffmpeg.judgeResolution ?? 'same'
+  const encoder = useNvenc ? 'h264_nvenc' : 'libx264'
+  const encoderArgs = useNvenc
+    ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '23']
+    : ['-c:v', 'libx264', '-preset', 'fast', '-crf', '23']
+
   const tempVideo = path.join(job.outputDir, '_temp_video.mp4')
+  const tempJudgeVideo = judgeRes !== 'same'
+    ? path.join(job.outputDir, '_temp_judge_video.mp4')
+    : null
 
   try {
-    // Step 1: Encode video once (no audio)
-    logger.ffmpeg.info('Smart encode step 1: encoding video...')
+    // Step 1: Encode performance video (full resolution)
+    logger.ffmpeg.info(`Smart encode step 1: encoding video (${encoder})...`)
     await spawnFFmpegWithTimeout(ffmpegPath, [
       '-y', '-i', job.inputPath,
       '-map', '0:v:0',
       '-an',
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      ...encoderArgs,
       tempVideo,
     ])
+
+    // Step 1b: Encode judge video at lower resolution if configured
+    if (tempJudgeVideo) {
+      const scale = judgeRes === '480p' ? '854:480' : '1280:720'
+      logger.ffmpeg.info(`Smart encode step 1b: encoding judge video at ${judgeRes} (${encoder})...`)
+      await spawnFFmpegWithTimeout(ffmpegPath, [
+        '-y', '-i', job.inputPath,
+        '-map', '0:v:0',
+        '-an',
+        ...encoderArgs,
+        '-vf', `scale=${scale}:force_original_aspect_ratio=decrease,pad=${scale}:(ow-iw)/2:(oh-ih)/2`,
+        tempJudgeVideo,
+      ])
+    }
 
     // Step 2: Mux encoded video + each audio track
     logger.ffmpeg.info('Smart encode step 2: muxing audio tracks...')
@@ -295,18 +320,21 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
       perfOutput,
     ])
 
+    const judgeVideoSource = tempJudgeVideo || tempVideo
     for (let i = 1; i <= job.judgeCount; i++) {
       const judgeOutput = path.join(job.outputDir, judgeFileName(job.filePrefix, i))
       await spawnFFmpegWithTimeout(ffmpegPath, [
-        '-y', '-i', tempVideo, '-i', job.inputPath,
+        '-y', '-i', judgeVideoSource, '-i', job.inputPath,
         '-map', '0:v:0', '-map', `1:a:${i}`,
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
         judgeOutput,
       ])
     }
   } finally {
-    // Clean up temp video
     try { await fs.promises.unlink(tempVideo) } catch {}
+    if (tempJudgeVideo) {
+      try { await fs.promises.unlink(tempJudgeVideo) } catch {}
+    }
   }
 }
 

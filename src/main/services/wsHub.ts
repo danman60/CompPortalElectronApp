@@ -198,6 +198,7 @@ function buildStateMessage(): WSStateMessage {
     streaming: obsState.isStreaming,
     skippedCount,
     overlay: overlayState,
+    overlayLayout: overlay.getLayout(),
   }
 }
 

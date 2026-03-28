@@ -281,6 +281,11 @@ export function registerAllHandlers(): void {
     uploadService.stopUploads()
   })
 
+  safeHandle(IPC_CHANNELS.UPLOAD_CANCEL_ROUTINE, (routineId: unknown) => {
+    logIPC(IPC_CHANNELS.UPLOAD_CANCEL_ROUTINE, { routineId })
+    uploadService.cancelRoutineUpload(routineId as string)
+  })
+
   safeHandle(IPC_CHANNELS.UPLOAD_ALL, () => {
     logIPC(IPC_CHANNELS.UPLOAD_ALL)
     const comp = stateService.getCompetition()
@@ -367,6 +372,11 @@ export function registerAllHandlers(): void {
 
   safeHandle(IPC_CHANNELS.OVERLAY_GET_STATE, () => {
     return overlay.getOverlayState()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_UPDATE_LAYOUT, (layout: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_UPDATE_LAYOUT)
+    overlay.updateLayout(layout as import('../shared/types').OverlayLayout)
   })
 
   safeHandle(IPC_CHANNELS.OVERLAY_AUTO_FIRE_TOGGLE, () => {

@@ -73,6 +73,7 @@ export default function Settings(): React.ReactElement {
   const [obsInputs, setObsInputs] = useState<string[]>([])
   const [namingPreview, setNamingPreview] = useState('')
   const [diagCopied, setDiagCopied] = useState(false)
+  const [overlayCopied, setOverlayCopied] = useState(false)
 
   useEffect(() => {
     if (currentSettings) {
@@ -285,6 +286,35 @@ export default function Settings(): React.ReactElement {
               </select>
             </div>
             <div className="field">
+              <label>Judge Video Resolution</label>
+              <select
+                value={draft.ffmpeg.judgeResolution || 'same'}
+                onChange={(e) => update('ffmpeg', { judgeResolution: e.target.value as 'same' | '720p' | '480p' })}
+              >
+                <option value="same">Same as performance</option>
+                <option value="720p">720p (smaller files, faster upload)</option>
+                <option value="480p">480p (smallest — audio is what matters)</option>
+              </select>
+              <span className="hint">Lower resolution judge tracks upload faster. Audio quality is unchanged.</span>
+            </div>
+            <div className="field">
+              <label>Hardware Encoding (NVENC)</label>
+              <div className="toggle-row" style={{ padding: 0, border: 'none' }}>
+                <div>
+                  <div className="toggle-label">Use NVIDIA GPU for encoding</div>
+                  <div className="toggle-desc">Much faster encoding with minimal CPU load. Requires NVIDIA GPU.</div>
+                </div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={draft.ffmpeg.useHardwareEncoding ?? false}
+                    onChange={(e) => update('ffmpeg', { useHardwareEncoding: e.target.checked })}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+            </div>
+            <div className="field">
               <label>CPU Priority</label>
               <select
                 value={draft.ffmpeg.cpuPriority}
@@ -333,6 +363,35 @@ export default function Settings(): React.ReactElement {
                 <option value="flv">FLV</option>
               </select>
               <span className="hint">Applied to OBS on save (Simple output mode)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Overlay Browser Source */}
+        <div className="settings-section">
+          <div className="settings-section-title">Overlay</div>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>Browser Source URL</label>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value="http://localhost:9876/overlay"
+                  readOnly
+                  style={{ flex: 1, opacity: 0.85 }}
+                />
+                <button
+                  className="back-btn"
+                  onClick={() => {
+                    navigator.clipboard.writeText('http://localhost:9876/overlay')
+                    setOverlayCopied(true)
+                    setTimeout(() => setOverlayCopied(false), 2000)
+                  }}
+                >
+                  {overlayCopied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <span className="hint">Add this as a Browser Source in OBS (1920×1080). Controls lower third, counter, clock, and logo.</span>
             </div>
           </div>
         </div>

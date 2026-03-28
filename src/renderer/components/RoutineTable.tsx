@@ -109,7 +109,8 @@ function stageClass(state: StageState): string {
 }
 
 // Overall status text for the primary label
-function statusToLabel(status: RoutineStatus): { text: string; className: string } {
+function statusToLabel(routine: Routine): { text: string; className: string } {
+  const status = routine.status
   switch (status) {
     case 'pending':
       return { text: 'Waiting', className: 'waiting' }
@@ -127,8 +128,12 @@ function statusToLabel(status: RoutineStatus): { text: string; className: string
       return { text: 'Tracks ready', className: 'complete' }
     case 'uploading':
       return { text: 'Uploading', className: 'uploading' }
-    case 'uploaded':
-      return { text: 'Uploaded', className: 'complete' }
+    case 'uploaded': {
+      const hasPhotos = (routine.photos?.length ?? 0) > 0
+      const allPhotosUp = hasPhotos && routine.photos!.every(p => p.uploaded)
+      if (hasPhotos && allPhotosUp) return { text: 'All Media Uploaded', className: 'complete' }
+      return { text: 'Videos Uploaded', className: 'complete' }
+    }
     case 'confirmed':
       return { text: 'Confirmed', className: 'complete' }
     case 'failed':
@@ -324,7 +329,7 @@ export default function RoutineTable(): React.ReactElement {
             const isLive = routine.status === 'recording'
             const isNotRecorded = routine.status === 'pending' || routine.status === 'skipped'
             const isCurrent = currentRoutine?.id === routine.id
-            const statusInfo = statusToLabel(routine.status)
+            const statusInfo = statusToLabel(routine)
             const progress = getProgressPercent(routine)
             const barClass = getBarClass(routine.status)
             const pipeline = getPipeline(routine, judgeCount)
@@ -402,6 +407,32 @@ export default function RoutineTable(): React.ReactElement {
                 <td>
                   <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
                     <NoteEditor routine={routine} />
+                    {(routine.status === 'uploading' || (routine.status === 'encoded' && routine.error)) && (
+                      <button
+                        className="view-btn"
+                        style={{ color: 'var(--warning)', borderColor: 'var(--warning)' }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          window.api.uploadCancelRoutine(routine.id)
+                        }}
+                        title="Cancel upload for this routine"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    {routine.status === 'failed' && (
+                      <button
+                        className="view-btn"
+                        style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          window.api.uploadRoutine(routine.id)
+                        }}
+                        title="Retry upload"
+                      >
+                        Retry
+                      </button>
+                    )}
                     {!isNotRecorded && (
                       <button
                         className="view-btn"

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import { useStore } from '../store/useStore'
+import { VisualEditor } from './VisualEditor'
 
 interface OverlayToggles {
   counter: boolean
@@ -8,6 +10,8 @@ interface OverlayToggles {
 }
 
 export default function OverlayControls({ compact = false }: { compact?: boolean }): React.ReactElement {
+  const currentRoutine = useStore((s) => s.currentRoutine)
+  const [editorOpen, setEditorOpen] = useState(false)
   const [autoFire, setAutoFire] = useState(false)
   const [toggles, setToggles] = useState<OverlayToggles>({
     counter: true, clock: false, logo: true, lowerThird: false,
@@ -72,7 +76,9 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
             color: 'var(--text-primary)', fontSize: '10px', fontWeight: 500,
             transition: 'all 0.15s',
           }}
-          onClick={() => window.api.overlayFireLT()}
+          onClick={() => currentRoutine && window.api.overlayFireLT()}
+          disabled={!currentRoutine}
+          title={!currentRoutine ? 'Select a routine first' : 'Fire lower third'}
         >
           Fire LT
         </button>
@@ -119,7 +125,9 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
             border: '1px solid var(--border)', borderRadius: '4px',
             color: 'var(--text-primary)', fontSize: '9px', transition: 'all 0.15s',
           }}
-          onClick={() => window.api.overlayFireLT()}
+          onClick={() => currentRoutine && window.api.overlayFireLT()}
+          disabled={!currentRoutine}
+          title={!currentRoutine ? 'Select a routine first' : 'Fire lower third'}
         >
           Fire LT
         </button>
@@ -133,7 +141,20 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
         >
           Hide LT
         </button>
+        <button
+          style={{
+            padding: '4px 8px', background: 'var(--bg-secondary)',
+            border: '1px solid var(--accent)', borderRadius: '4px',
+            color: 'var(--accent)', fontSize: '9px', fontWeight: 500,
+            transition: 'all 0.15s',
+          }}
+          onClick={() => setEditorOpen(true)}
+          title="Open visual layout editor"
+        >
+          Edit Layout
+        </button>
       </div>
+      {editorOpen && <VisualEditor onClose={() => setEditorOpen(false)} />}
     </div>
   )
 }

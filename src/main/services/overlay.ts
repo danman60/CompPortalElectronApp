@@ -1,6 +1,6 @@
 import express from 'express'
 import http from 'http'
-import { OverlayState } from '../../shared/types'
+import { OverlayState, OverlayLayout, DEFAULT_LAYOUT } from '../../shared/types'
 import { getSettings } from './settings'
 import { logger } from '../logger'
 
@@ -28,6 +28,8 @@ let overlayState: OverlayState = {
     showCategory: true,
   },
 }
+
+let overlayLayout: OverlayLayout = { ...DEFAULT_LAYOUT }
 
 let onStateChange: (() => void) | null = null
 
@@ -114,6 +116,16 @@ export function setLogoUrl(url: string): void {
   overlayState.logo.url = url
 }
 
+export function updateLayout(layout: OverlayLayout): void {
+  overlayLayout = { ...layout }
+  logger.app.info('Overlay layout updated')
+  notifyChange()
+}
+
+export function getLayout(): OverlayLayout {
+  return overlayLayout
+}
+
 export function initDefaults(): void {
   const settings = getSettings()
   if (settings.overlay) {
@@ -189,7 +201,7 @@ function buildOverlayHTML(): string {
     font-family: -apple-system, 'Segoe UI', sans-serif;
   }
   .counter {
-    position: absolute; top: 30px; right: 40px;
+    position: absolute; left: ${overlayLayout.counter.x}%; top: ${overlayLayout.counter.y}%;
     opacity: 0; transform: translateY(-10px);
     transition: opacity 0.4s ease, transform 0.4s ease;
   }
@@ -213,13 +225,13 @@ function buildOverlayHTML(): string {
     100% { transform: scale(1); }
   }
   .logo {
-    position: absolute; top: 30px; left: 40px;
+    position: absolute; left: ${overlayLayout.logo.x}%; top: ${overlayLayout.logo.y}%;
     opacity: 0; transition: opacity 0.4s ease;
   }
   .logo.visible { opacity: 1; }
   .logo img { max-height: 60px; max-width: 200px; border-radius: 6px; }
   .clock {
-    position: absolute; top: 130px; right: 40px;
+    position: absolute; left: ${overlayLayout.clock.x}%; top: ${overlayLayout.clock.y}%;
     opacity: 0; transition: opacity 0.4s ease;
   }
   .clock.visible { opacity: 1; }
@@ -238,7 +250,7 @@ function buildOverlayHTML(): string {
     font-size: 11px; color: #9090b0; margin-top: 2px;
   }
   .lower-third {
-    position: absolute; bottom: 90px; left: 40px;
+    position: absolute; left: ${overlayLayout.lowerThird.x}%; top: ${overlayLayout.lowerThird.y}%;
     opacity: 0; transition: opacity 0.5s ease, transform 0.5s ease;
   }
   /* Animation variants */
@@ -320,6 +332,17 @@ function buildOverlayHTML(): string {
 
   function applyState(state) {
     const o = state.overlay;
+    if (state.overlayLayout) {
+      var L = state.overlayLayout;
+      var ce = document.getElementById('counter');
+      ce.style.left = L.counter.x + '%'; ce.style.top = L.counter.y + '%'; ce.style.right = 'auto';
+      var le = document.getElementById('logo');
+      le.style.left = L.logo.x + '%'; le.style.top = L.logo.y + '%';
+      var ke = document.getElementById('clock');
+      ke.style.left = L.clock.x + '%'; ke.style.top = L.clock.y + '%'; ke.style.right = 'auto';
+      var te = document.getElementById('lt');
+      te.style.left = L.lowerThird.x + '%'; te.style.top = L.lowerThird.y + '%'; te.style.bottom = 'auto';
+    }
     const counterEl = document.getElementById('counter');
     const counterNum = document.getElementById('counterNumber');
     const counterLabel = document.getElementById('counterLabel');

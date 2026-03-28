@@ -207,11 +207,17 @@ export function waitForRecordStop(timeoutMs = 15000): Promise<void> {
   })
 }
 
+const MAX_RECORD_SECONDS = 15 * 60 // 15 minutes
+
 function startRecordingTimer(): void {
   if (recordingTimer) clearInterval(recordingTimer)
   state.recordTimeSec = 0
   recordingTimer = setInterval(() => {
     state.recordTimeSec++
+    if (state.recordTimeSec >= MAX_RECORD_SECONDS && state.isRecording) {
+      logger.obs.warn(`Recording hit ${MAX_RECORD_SECONDS / 60}min hard limit — auto-stopping`)
+      stopRecord().catch((err) => logger.obs.error('Auto-stop failed:', err))
+    }
     broadcastState()
   }, 1000)
 }

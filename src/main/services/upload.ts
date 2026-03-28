@@ -9,6 +9,7 @@ import { logger } from '../logger'
 import { getResolvedConnection } from './schedule'
 import * as state from './state'
 import * as jobQueue from './jobQueue'
+import { broadcastFullState } from './recording'
 
 interface UploadPayload {
   routineId: string
@@ -122,6 +123,50 @@ export function stopUploads(): void {
     currentAbortController = null
     logger.upload.info('Upload paused — current upload aborted')
   }
+
+  // Reset any routine stuck in 'uploading' back to 'encoded'
+  const comp = state.getCompetition()
+  if (comp) {
+    for (const routine of comp.routines) {
+      if (routine.status === 'uploading') {
+        state.updateRoutineStatus(routine.id, 'encoded')
+        sendProgress(routine.id, {
+          state: 'paused',
+          percent: 0,
+          filesCompleted: 0,
+          filesTotal: 0,
+        })
+      }
+    }
+    broadcastFullState()
+  }
+}
+
+export function cancelRoutineUpload(routineId: string): void {
+  // Cancel all pending/running jobs for this routine
+  const jobs = jobQueue.getByRoutine(routineId).filter(j => j.type === 'upload')
+  for (const job of jobs) {
+    if (job.status === 'pending' || job.status === 'running') {
+      jobQueue.updateStatus(job.id, 'cancelled')
+    }
+  }
+
+  // If the current upload is for this routine, abort it
+  if (currentAbortController) {
+    currentAbortController.abort()
+    currentAbortController = null
+  }
+
+  // Reset routine status back to encoded
+  state.updateRoutineStatus(routineId, 'encoded')
+  broadcastFullState()
+  sendProgress(routineId, {
+    state: 'paused',
+    percent: 0,
+    filesCompleted: 0,
+    filesTotal: 0,
+  })
+  logger.upload.info(`Cancelled uploads for routine ${routineId}`)
 }
 
 /** Main upload processing loop — properly awaited, no recursion. */
@@ -140,6 +185,7 @@ async function processLoop(): Promise<void> {
     const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
     if (routine && routine.status !== 'uploading') {
       state.updateRoutineStatus(payload.routineId, 'uploading')
+      broadcastFullState()
     }
 
     const allRoutineJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
@@ -218,6 +264,7 @@ async function processLoop(): Promise<void> {
           })
 
           state.updateRoutineStatus(payload.routineId, 'uploaded')
+          broadcastFullState()
           sendProgress(payload.routineId, {
             state: 'complete',
             percent: 100,
@@ -232,6 +279,7 @@ async function processLoop(): Promise<void> {
           state.updateRoutineStatus(payload.routineId, 'encoded', {
             error: `Files uploaded but completion call failed: ${errMsg}`,
           })
+          broadcastFullState()
           sendProgress(payload.routineId, {
             state: 'failed',
             percent: 100,

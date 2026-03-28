@@ -10,6 +10,7 @@ function formatTime(seconds: number): string {
 
 export default function CurrentRoutine(): React.ReactElement {
   const current = useStore((s) => s.currentRoutine)
+  const competition = useStore((s) => s.competition)
   const next = useStore((s) => s.nextRoutine)
   const obsState = useStore((s) => s.obsState)
 
@@ -19,7 +20,9 @@ export default function CurrentRoutine(): React.ReactElement {
         <div className="section-title">Current Routine</div>
         <div className="routine-card">
           <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', padding: '20px' }}>
-            No competition loaded. Click "Load Competition" to begin.
+            {competition
+              ? 'Click a routine in the schedule to select it.'
+              : 'No competition loaded. Click "Load" to begin.'}
           </div>
         </div>
       </div>

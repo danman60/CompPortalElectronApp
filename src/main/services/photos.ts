@@ -6,6 +6,10 @@ import sharp from 'sharp'
 import { Routine, PhotoMatch, IPC_CHANNELS } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
+import * as state from './state'
+import { broadcastFullState } from './recording'
+import { getSettings } from './settings'
+import * as uploadService from './upload'
 
 interface RecordingWindow {
   routineId: string
@@ -169,35 +173,45 @@ export async function importPhotos(
 ): Promise<ImportResult> {
   logger.photos.info(`Importing photos from: ${folderPath}`)
 
-  // Scan for JPG files
-  const files = fs.readdirSync(folderPath).filter((f) => /\.(jpg|jpeg)$/i.test(f))
-  logger.photos.info(`Found ${files.length} JPEG files`)
+  // Scan for JPG files recursively (DCIM has subfolders like 100LUMIX/)
+  function scanDir(dir: string): string[] {
+    const results: string[] = []
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        results.push(...scanDir(path.join(dir, entry.name)))
+      } else if (/\.(jpg|jpeg)$/i.test(entry.name)) {
+        results.push(path.join(dir, entry.name))
+      }
+    }
+    return results
+  }
+  const filePaths = scanDir(folderPath)
+  logger.photos.info(`Found ${filePaths.length} JPEG files`)
 
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
     stage: 'scanning',
-    total: files.length,
+    total: filePaths.length,
     current: 0,
   })
 
   // Read EXIF timestamps
   const photos: { path: string; captureTime: Date }[] = []
-  for (let i = 0; i < files.length; i++) {
-    const filePath = path.join(folderPath, files[i])
-    const captureTime = await getPhotoCaptureTime(filePath)
+  for (let i = 0; i < filePaths.length; i++) {
+    const captureTime = await getPhotoCaptureTime(filePaths[i])
     if (captureTime) {
-      photos.push({ path: filePath, captureTime })
+      photos.push({ path: filePaths[i], captureTime })
     }
 
     if (i % 10 === 0) {
       sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
         stage: 'reading-exif',
-        total: files.length,
+        total: filePaths.length,
         current: i,
       })
     }
   }
 
-  logger.photos.info(`${photos.length}/${files.length} photos have EXIF timestamps`)
+  logger.photos.info(`${photos.length}/${filePaths.length} photos have EXIF timestamps`)
 
   // Build recording windows from routines
   const windows: RecordingWindow[] = routines
@@ -233,12 +247,14 @@ export async function importPhotos(
     const routine = routines.find((r) => r.id === matchedWindow.routineId)
     if (!routine) continue
 
-    // Build output folder name
-    const routineDir = path.join(
-      outputDir,
-      `${routine.entryNumber}_${routine.routineTitle.replace(/\s+/g, '_')}_${routine.studioCode}`,
-      'photos',
-    )
+    // Use existing routine output dir if available, otherwise construct from settings
+    const baseDir = routine.outputDir
+      ? routine.outputDir
+      : path.join(
+          outputDir,
+          `${routine.entryNumber}_${routine.routineTitle.replace(/\s+/g, '_')}_${routine.studioCode}`,
+        )
+    const routineDir = path.join(baseDir, 'photos')
 
     if (!fs.existsSync(routineDir)) {
       fs.mkdirSync(routineDir, { recursive: true })
@@ -268,6 +284,33 @@ export async function importPhotos(
     unmatched: matches.filter((m) => m.confidence === 'unmatched').length,
     clockOffsetMs,
     matches,
+  }
+
+  // Update routine state with matched photos
+  const photosByRoutine = new Map<string, PhotoMatch[]>()
+  for (const match of matches) {
+    if (match.confidence === 'unmatched' || !match.matchedRoutineId) continue
+    const list = photosByRoutine.get(match.matchedRoutineId) || []
+    list.push(match)
+    photosByRoutine.set(match.matchedRoutineId, list)
+  }
+  for (const [routineId, routinePhotos] of photosByRoutine) {
+    const routine = routines.find(r => r.id === routineId)
+    if (routine) {
+      state.updateRoutineStatus(routineId, routine.status, { photos: routinePhotos })
+    }
+  }
+  broadcastFullState()
+
+  // Auto-upload photos if enabled
+  const settings = getSettings()
+  if (settings.behavior.autoUploadAfterEncoding) {
+    for (const [routineId] of photosByRoutine) {
+      const updatedRoutine = state.getCompetition()?.routines.find(r => r.id === routineId)
+      if (updatedRoutine) {
+        uploadService.enqueueRoutine(updatedRoutine)
+      }
+    }
   }
 
   logger.photos.info(
