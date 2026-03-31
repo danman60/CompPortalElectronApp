@@ -16,7 +16,9 @@ import * as systemMonitor from './services/systemMonitor'
 import * as jobQueue from './services/jobQueue'
 import * as clipVerify from './services/clipVerify'
 import * as driveMonitor from './services/driveMonitor'
+import * as tether from './services/tether'
 import { checkAndRecover } from './services/crashRecovery'
+import * as recovery from './services/recovery'
 import { logger } from './logger'
 
 function logIPC(channel: string, args?: unknown): void {
@@ -371,7 +373,7 @@ export function registerAllHandlers(): void {
   })
 
   safeHandle(IPC_CHANNELS.OVERLAY_GET_STATE, () => {
-    return overlay.getOverlayState()
+    return { ...overlay.getOverlayState(), layout: overlay.getLayout(), autoFireEnabled: overlay.getAutoFirePersisted() }
   })
 
   safeHandle(IPC_CHANNELS.OVERLAY_UPDATE_LAYOUT, (layout: unknown) => {
@@ -383,6 +385,24 @@ export function registerAllHandlers(): void {
     const newState = !recording.getAutoFire()
     recording.setAutoFire(newState)
     return newState
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_SET_TICKER, (updates: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_SET_TICKER)
+    overlay.setTicker(updates as Partial<import('../shared/types').TickerState>)
+    return overlay.getOverlayState().ticker
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON, (updates: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON)
+    overlay.setStartingSoon(updates as Partial<import('../shared/types').StartingSoonState>)
+    return overlay.getOverlayState().startingSoon
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG, (updates: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG)
+    overlay.setAnimationConfig(updates as Partial<import('../shared/types').AnimationConfig>)
+    return overlay.getOverlayState().animConfig
   })
 
   // Legacy LT compat
@@ -622,6 +642,58 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.JOB_QUEUE_CANCEL, (jobId: unknown) => {
     logIPC(IPC_CHANNELS.JOB_QUEUE_CANCEL, { jobId })
     return jobQueue.remove(jobId as string)
+  })
+
+  // --- Recovery ---
+  safeHandle(IPC_CHANNELS.RECOVERY_BROWSE_MKV, async () => {
+    logIPC(IPC_CHANNELS.RECOVERY_BROWSE_MKV)
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select Full-Day Recording(s)',
+      filters: [
+        { name: 'Video Files', extensions: ['mkv', 'mp4', 'avi', 'mov', 'flv'] },
+      ],
+      properties: ['openFile', 'multiSelections'],
+    })
+    if (result.canceled) return null
+    return result.filePaths
+  })
+
+  safeHandle(IPC_CHANNELS.RECOVERY_START, async (config: unknown) => {
+    logIPC(IPC_CHANNELS.RECOVERY_START)
+    const comp = stateService.getCompetition()
+    if (!comp) return { error: 'No competition loaded' }
+    const c = config as { mkvPaths: string[]; photoFolderPath?: string; outputDir: string }
+    // Run async — don't await (long-running)
+    recovery.startRecovery(c, comp).catch((err) => {
+      logger.ipc.error('Recovery failed:', err)
+    })
+    return { started: true }
+  })
+
+  safeHandle(IPC_CHANNELS.RECOVERY_CANCEL, () => {
+    logIPC(IPC_CHANNELS.RECOVERY_CANCEL)
+    recovery.cancelRecovery()
+  })
+
+  safeHandle(IPC_CHANNELS.RECOVERY_GET_STATE, () => {
+    return recovery.getRecoveryState()
+  })
+
+  // --- Tether ---
+  safeHandle(IPC_CHANNELS.TETHER_START, async (dcimPath: unknown) => {
+    logIPC(IPC_CHANNELS.TETHER_START, { dcimPath })
+    await tether.startWatching(dcimPath as string)
+  })
+
+  safeHandle(IPC_CHANNELS.TETHER_STOP, async () => {
+    logIPC(IPC_CHANNELS.TETHER_STOP)
+    await tether.stopWatching()
+  })
+
+  safeHandle(IPC_CHANNELS.TETHER_GET_STATE, () => {
+    return tether.getTetherState()
   })
 
   // Start system monitor

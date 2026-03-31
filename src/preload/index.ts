@@ -76,6 +76,9 @@ const api = {
   overlayGetState: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_GET_STATE),
   overlayAutoFireToggle: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_AUTO_FIRE_TOGGLE),
   overlayUpdateLayout: (layout: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_UPDATE_LAYOUT, layout),
+  overlaySetTicker: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_TICKER, updates),
+  overlaySetStartingSoon: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON, updates),
+  overlaySetAnimationConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG, updates),
 
   // Next Full
   recordingNextFull: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_NEXT_FULL),
@@ -120,6 +123,19 @@ const api = {
   // Drive Monitor
   driveDismiss: (drivePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.DRIVE_DISMISS, drivePath),
+
+  // Tether
+  tetherStart: (dcimPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TETHER_START, dcimPath),
+  tetherStop: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_STOP),
+  tetherGetState: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_GET_STATE),
+
+  // Recovery
+  recoveryBrowseMkv: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_BROWSE_MKV),
+  recoveryStart: (config: { mkvPaths: string[]; photoFolderPath?: string; outputDir: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_START, config),
+  recoveryCancel: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_CANCEL),
+  recoveryGetState: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_GET_STATE),
 
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {

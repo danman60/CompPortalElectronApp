@@ -1,0 +1,442 @@
+/* ===== Overlay Controls — Broadcast Console ===== */
+
+/* --- Main Panel --- */
+.oc-panel {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* --- Action Bar (Fire / Hide) --- */
+.oc-action-bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.oc-fire-btn {
+  flex: 1;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.oc-fire-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.5);
+  transform: translateY(-1px);
+}
+
+.oc-fire-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(102, 126, 234, 0.3);
+}
+
+.oc-fire-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.oc-hide-btn {
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.oc-hide-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+/* --- Section --- */
+.oc-section {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.oc-section-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #e0e0f0;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(102, 126, 234, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* --- Toggle Row --- */
+.oc-toggle-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.oc-toggle {
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.oc-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.oc-toggle.active {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: var(--success);
+  color: var(--success);
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.15);
+}
+
+.oc-toggle.accent {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(102, 126, 234, 0.15);
+}
+
+/* --- Divider (vertical bar between toggle groups) --- */
+.oc-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* --- Edit Layout Button --- */
+.oc-edit-layout-btn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.oc-edit-layout-btn:hover {
+  background: rgba(102, 126, 234, 0.12);
+  box-shadow: 0 0 8px rgba(102, 126, 234, 0.2);
+}
+
+/* --- Animation Chips --- */
+.oc-anim-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.oc-anim-chip {
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: capitalize;
+}
+
+.oc-anim-chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.oc-anim-chip.selected {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 0 6px rgba(102, 126, 234, 0.2);
+}
+
+/* --- Anim Config Row --- */
+.oc-anim-config {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: flex-end;
+}
+
+.oc-anim-config-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.oc-anim-config-item.narrow {
+  flex: 0 0 54px;
+}
+
+.oc-config-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 3px;
+  white-space: nowrap;
+}
+
+/* --- Styled Slider --- */
+.oc-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+  outline: none;
+  cursor: pointer;
+  margin: 6px 0;
+}
+
+.oc-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    rgba(102, 126, 234, 0.4),
+    rgba(118, 75, 162, 0.4)
+  );
+}
+
+.oc-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+  cursor: pointer;
+  margin-top: -5px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.15s;
+}
+
+.oc-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 8px rgba(102, 126, 234, 0.5), 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* --- Styled Inputs --- */
+.oc-input {
+  padding: 4px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-family: inherit;
+  width: 100%;
+  transition: border-color 0.2s;
+}
+
+.oc-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(102, 126, 234, 0.2);
+}
+
+.oc-input.center {
+  text-align: center;
+}
+
+/* --- Styled Select --- */
+.oc-select {
+  padding: 4px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-family: inherit;
+  width: 100%;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.oc-select:focus {
+  border-color: var(--accent);
+}
+
+.oc-select option {
+  background: var(--bg-secondary);
+}
+
+/* --- Module Card (Ticker / Starting Soon) --- */
+.oc-module {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(30, 30, 46, 0.5);
+}
+
+.oc-module-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.oc-module-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: #e0e0f0;
+}
+
+/* --- Live Badge --- */
+.oc-live-badge {
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.oc-live-badge.on {
+  background: rgba(74, 222, 128, 0.15);
+  border-color: var(--success);
+  color: var(--success);
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.2);
+  animation: oc-pulse 2s ease-in-out infinite;
+}
+
+.oc-live-badge.off {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.oc-live-badge.accent-on {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 10px rgba(102, 126, 234, 0.2);
+  animation: oc-pulse-accent 2s ease-in-out infinite;
+}
+
+@keyframes oc-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(74, 222, 128, 0.15); }
+  50% { box-shadow: 0 0 14px rgba(74, 222, 128, 0.35); }
+}
+
+@keyframes oc-pulse-accent {
+  0%, 100% { box-shadow: 0 0 6px rgba(102, 126, 234, 0.15); }
+  50% { box-shadow: 0 0 14px rgba(102, 126, 234, 0.35); }
+}
+
+/* --- Module content rows --- */
+.oc-module-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  align-items: center;
+}
+
+.oc-module-row .oc-input {
+  flex: 1;
+}
+
+.oc-module-slider-wrap {
+  width: 70px;
+  flex-shrink: 0;
+}
+
+/* --- Preset Buttons --- */
+.oc-preset-btn {
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.oc-preset-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.oc-preset-btn.active {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- Compact mode --- */
+.oc-compact-bar {
+  display: flex;
+  gap: 4px;
+}
+
+.oc-compact-btn {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.oc-compact-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
+.oc-compact-btn.fire {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-color: transparent;
+  color: #fff;
+}

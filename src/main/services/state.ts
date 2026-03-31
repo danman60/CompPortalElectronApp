@@ -150,8 +150,16 @@ export function setCompetition(comp: Competition): void {
   currentCompetition = comp
   currentRoutineId = null
 
-  // Try to restore routine states from persisted state
-  const existing = loadState()
+  // Try to restore routine states from persisted state (read file directly, don't call loadState which has side effects)
+  let existing: PersistedState | null = null
+  const statePath = getStatePath()
+  try {
+    if (fs.existsSync(statePath)) {
+      existing = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
+    }
+  } catch (_err) {
+    // ignore — no persisted state to restore
+  }
   if (existing?.competition?.competitionId === comp.competitionId) {
     // Fix 7: Build Map for O(1) lookup instead of O(n) .find() per routine
     const persistedMap = new Map<string, Routine>()

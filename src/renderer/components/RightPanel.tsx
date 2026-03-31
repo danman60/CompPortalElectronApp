@@ -1,6 +1,7 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
 import RoutineTable from './RoutineTable'
+import TetherStatus from './TetherStatus'
 import type { JobRecord } from '../../shared/types'
 import '../styles/rightpanel.css'
 
@@ -131,6 +132,8 @@ export default function RightPanel(): React.ReactElement {
       <RoutineTable />
 
       <JobQueuePanel />
+
+      <TetherStatus />
 
       <div className="stats-bar">
         {outputDir ? (

@@ -1,6 +1,6 @@
 {
   "name": "compsync-media",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "CompSync Media — OBS recording control, audio splitting, photo import, and upload for dance competitions",
   "author": "CompSync <danieljohnabrahamson@gmail.com>",
   "main": "./out/main/index.js",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@img/sharp-win32-x64": "^0.34.5",
+    "chokidar": "^4.0.3",
     "electron-log": "^5.1.1",
     "electron-store": "^6.0.1",
     "electron-window-state": "^5.0.3",

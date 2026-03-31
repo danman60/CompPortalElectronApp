@@ -1,6 +1,6 @@
 .left-panel {
-  width: 380px;
-  min-width: 280px;
+  width: 320px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -8,6 +8,6 @@
 }
 
 .left-panel.compact {
-  width: 280px;
-  min-width: 220px;
+  width: 240px;
+  min-width: 200px;
 }

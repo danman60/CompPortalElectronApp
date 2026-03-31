@@ -59,6 +59,7 @@ function createWindow(): void {
     backgroundColor: '#1e1e2e',
     show: false,
     frame: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,

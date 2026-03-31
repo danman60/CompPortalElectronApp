@@ -4,7 +4,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--bg-primary);
+  background: #111118;
   z-index: 999;
   display: flex;
   flex-direction: column;
@@ -16,25 +16,89 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  min-height: 40px;
+  background: #1a1a24;
+  border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+  min-height: 44px;
 }
 
 .ve-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: #e0e0f0;
+  letter-spacing: 0.3px;
 }
 
 .ve-actions {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
-.ve-actions .active {
-  background: var(--accent);
+.ve-actions button {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  background: rgba(30, 30, 46, 0.8);
+  color: #c0c0e0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ve-actions button:hover {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: rgba(102, 126, 234, 0.5);
+  color: #e0e0f0;
+}
+
+.ve-actions button.active {
+  background: rgba(102, 126, 234, 0.25);
+  border-color: #667eea;
+  color: #a5b4fc;
+}
+
+/* ── Preview toggle group ── */
+.ve-toggle-group {
+  display: flex;
+  gap: 2px;
+  margin: 0 4px;
+  padding: 2px;
+  background: rgba(20, 20, 30, 0.6);
+  border-radius: 6px;
+  border: 1px solid rgba(102, 126, 234, 0.15);
+}
+
+.ve-preview-toggle {
+  padding: 4px 10px !important;
+  font-size: 11px !important;
+  border: none !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+  color: #707090 !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ve-preview-toggle:hover {
+  background: rgba(102, 126, 234, 0.1) !important;
+  color: #b0b0d0 !important;
+}
+
+.ve-preview-toggle.active {
+  background: rgba(102, 126, 234, 0.2) !important;
+  color: #a5b4fc !important;
+  border: none !important;
+}
+
+.ve-actions .ve-btn-done {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-color: transparent;
   color: #fff;
+  font-weight: 600;
+}
+
+.ve-actions .ve-btn-done:hover {
+  filter: brightness(1.1);
 }
 
 .ve-body {
@@ -57,10 +121,24 @@
   max-width: 960px;
   aspect-ratio: 16 / 9;
   background: #000;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
   overflow: hidden;
   cursor: default;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Live overlay iframe as canvas background */
+.ve-overlay-iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  border: none;
+  transform-origin: top left;
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* Safe zone guide (5% margin) */
@@ -70,7 +148,7 @@
   left: 5%;
   right: 5%;
   bottom: 5%;
-  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border: 1px dashed rgba(255, 255, 255, 0.06);
   pointer-events: none;
   z-index: 1;
 }
@@ -111,7 +189,7 @@
   width: 1px;
   top: 0;
   bottom: 0;
-  background: var(--accent);
+  background: #667eea;
   opacity: 0.6;
 }
 
@@ -119,7 +197,7 @@
   height: 1px;
   left: 0;
   right: 0;
-  background: var(--accent);
+  background: #667eea;
   opacity: 0.6;
 }
 
@@ -136,9 +214,26 @@
 }
 
 .ve-element.selected {
-  outline: 2px solid var(--accent);
+  outline: 2px solid #667eea;
   outline-offset: 3px;
   border-radius: 2px;
+}
+
+/* Transparent drag targets over the iframe */
+.ve-handle-target {
+  background: transparent;
+  border: 1px dashed transparent;
+  transition: border-color 0.15s;
+}
+
+.ve-handle-target:hover {
+  border-color: rgba(102, 126, 234, 0.4);
+  background: rgba(102, 126, 234, 0.05);
+}
+
+.ve-handle-target.selected {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.08);
 }
 
 .ve-element .ve-label {
@@ -147,7 +242,7 @@
   left: 0;
   font-size: 9px;
   font-weight: 600;
-  color: var(--accent);
+  color: #667eea;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   white-space: nowrap;
@@ -165,7 +260,7 @@
 .ve-resize-handle {
   position: absolute;
   z-index: 20;
-  background: var(--accent);
+  background: #667eea;
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 2px;
 }
@@ -197,106 +292,151 @@
   border-radius: 50%;
 }
 
-/* ── Counter element ── */
+/* ═══════════════════════════════════════════
+   OVERLAY ELEMENTS — match OBS overlay exactly
+   ═══════════════════════════════════════════ */
+
+/* ── Counter element (half of 1920 overlay: 48→24, 28→14, etc.) ── */
 .ve-counter-box {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 6px 12px;
-  background: rgba(0, 0, 0, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
+  background: rgba(30, 30, 46, 0.88);
+  border: 1px solid rgba(102, 126, 234, 0.5);
+  border-radius: 6px;
+  padding: 6px 10px;
+  backdrop-filter: blur(10px);
+  text-align: center;
+  min-width: 60px;
   white-space: nowrap;
 }
 
 .ve-counter-entry {
-  font-size: 18px;
-  font-weight: 700;
-  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  color: #e0e0f0;
+  line-height: 1;
+}
+
+.ve-counter-entry::before {
+  content: '#';
+  opacity: 0.4;
+  font-size: 14px;
 }
 
 .ve-counter-total {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  font-size: 7px;
+  color: #9090b0;
+  margin-top: 2px;
+  letter-spacing: 0.5px;
 }
 
-/* ── Clock element ── */
+/* ── Clock element (half scale) ── */
 .ve-clock-box {
-  padding: 4px 12px;
-  background: rgba(0, 0, 0, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.85);
-  white-space: nowrap;
+  background: rgba(30, 30, 46, 0.85);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 5px;
+  padding: 4px 8px;
+  backdrop-filter: blur(8px);
   text-align: center;
+  min-width: 60px;
+  white-space: nowrap;
+}
+
+.ve-clock-time {
+  font-size: 10px;
+  font-weight: 600;
+  color: #c0c0e0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ve-clock-date {
+  font-size: 6px;
+  color: #9090b0;
+  margin-top: 1px;
 }
 
 /* ── Logo element ── */
 .ve-logo-img {
   max-width: 100%;
-  max-height: 80px;
+  max-height: 60px;
   object-fit: contain;
   display: block;
+  border-radius: 6px;
 }
 
 .ve-placeholder {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.4);
+  background: rgba(30, 30, 46, 0.6);
+  border: 1px dashed rgba(102, 126, 234, 0.3);
+  border-radius: 6px;
+  color: #9090b0;
   font-size: 10px;
   white-space: nowrap;
 }
 
-/* ── Lower third ── */
-.ve-lower-third {
-  max-width: 50%;
-}
-
+/* ── Lower third (half scale of 1920 overlay) ── */
 .ve-lt-card {
-  padding: 8px 16px;
+  background: rgba(30, 30, 46, 0.92);
+  border: 1px solid rgba(102, 126, 234, 0.4);
+  border-radius: 6px;
+  padding: 10px 15px;
+  backdrop-filter: blur(10px);
+  min-width: 250px;
   width: fit-content;
   max-width: 100%;
-  background: rgba(0, 0, 0, 0.75);
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
 }
 
-.ve-lt-entry {
-  font-size: 10px;
+.ve-lt-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ve-lt-number {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
   font-weight: 700;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 2px;
+  font-size: 18px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.ve-lt-number::before {
+  content: '#';
+  opacity: 0.6;
+  font-size: 11px;
 }
 
 .ve-lt-title {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.3;
+  font-size: 16px;
+  font-weight: 700;
+  color: #e0e0f0;
   white-space: nowrap;
-  color: #fff;
+  line-height: 1.3;
 }
 
-.ve-lt-subtitle {
+.ve-lt-dancers {
   font-size: 11px;
-  font-weight: 400;
-  opacity: 0.85;
+  color: #a5b4fc;
   margin-top: 2px;
   white-space: nowrap;
-  color: rgba(255, 255, 255, 0.7);
+}
+
+.ve-lt-meta {
+  font-size: 9px;
+  color: #9090b0;
+  margin-top: 4px;
+  white-space: nowrap;
 }
 
 /* ── Properties panel ── */
 .ve-props {
   width: 200px;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
+  background: #1a1a24;
+  border-left: 1px solid rgba(102, 126, 234, 0.15);
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -308,7 +448,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--text-secondary);
+  color: #667eea;
 }
 
 .ve-props-field {
@@ -320,33 +460,33 @@
 .ve-props-field label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-dim);
+  color: #9090b0;
   min-width: 16px;
 }
 
 .ve-props-field input {
   width: 70px;
   padding: 4px 6px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-primary);
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #e0e0f0;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .ve-props-field input:focus {
-  border-color: var(--accent);
+  border-color: #667eea;
   outline: none;
 }
 
 .ve-props-field span {
   font-size: 11px;
-  color: var(--text-dim);
+  color: #9090b0;
 }
 
 .ve-props-hint {
   font-size: 10px;
-  color: var(--text-dim);
+  color: #9090b0;
   line-height: 1.4;
 }

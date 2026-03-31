@@ -59,17 +59,6 @@ export default function CurrentRoutine(): React.ReactElement {
         )}
       </div>
 
-      {next && (
-        <div className="next-up">
-          <div className="next-up-label">Up Next</div>
-          <div className="next-up-title">
-            #{next.entryNumber} — {next.routineTitle}
-          </div>
-          <div className="next-up-detail">
-            {next.dancers} &bull; {next.ageGroup} {next.category} {next.sizeCategory}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

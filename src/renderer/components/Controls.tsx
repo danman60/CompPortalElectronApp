@@ -58,7 +58,7 @@ export default function Controls(): React.ReactElement {
 
   return (
     <div className="section controls-section">
-      <button className="ctrl-btn next-full" onClick={handleNextFull} disabled={!isConnected}>
+      <button className="ctrl-btn next-full" onClick={handleNextFull}>
         NEXT
       </button>
       <div className="control-row">

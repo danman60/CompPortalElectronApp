@@ -92,6 +92,13 @@ export default function DriveAlert(): React.ReactElement | null {
     })
   }
 
+  function handleStartTether(): void {
+    if (!detected) return
+    window.api.tetherStart(detected.photoPath)
+    setDetected(null)
+    setShowResults(false)
+  }
+
   function handleDismiss(): void {
     if (detected) {
       window.api.driveDismiss(detected.drivePath)
@@ -179,6 +186,11 @@ export default function DriveAlert(): React.ReactElement | null {
           {progress.stage === 'idle' && hasCompetition && recordedCount > 0 && (
             <button className="da-btn primary" onClick={handleStartImport}>
               Match {detected.photoCount} Photos to {recordedCount} Routines
+            </button>
+          )}
+          {progress.stage === 'idle' && hasCompetition && (
+            <button className="da-btn" onClick={handleStartTether} title="Watch this drive for new photos in real-time">
+              Watch Live
             </button>
           )}
           {progress.stage === 'done' && (

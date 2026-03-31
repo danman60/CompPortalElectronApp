@@ -14,9 +14,10 @@
 
 .audio-meters .meter-bar {
   height: 6px;
-  background: var(--bg-tertiary);
+  background: rgba(45, 45, 66, 0.8);
   border-radius: 3px;
   overflow: hidden;
+  border: 1px solid rgba(58, 58, 82, 0.5);
 }
 
 .audio-meters .meter-fill {

@@ -1,0 +1,15 @@
+.middle-panel {
+  width: 280px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+  background: #1a1a2a;
+  border-left: 1px solid rgba(102, 126, 234, 0.12);
+  border-right: 1px solid rgba(102, 126, 234, 0.12);
+}
+
+.middle-panel.compact {
+  display: none;
+}

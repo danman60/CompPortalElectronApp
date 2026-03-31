@@ -13,6 +13,8 @@ import {
   type JobRecord,
   type StartupReport,
   type ClipSortResult,
+  type RecoveryState,
+  type TetherState,
 } from '../../shared/types'
 
 interface FFmpegProgressMap {
@@ -66,6 +68,13 @@ interface AppStore {
   // Visual Editor
   showVisualEditor: boolean
 
+  // Recovery
+  recoveryOpen: boolean
+  recoveryState: RecoveryState
+
+  // Tether
+  tetherState: TetherState
+
   // Status counts
   encodingCount: number
   uploadingCount: number
@@ -101,6 +110,9 @@ interface AppStore {
   setPhotoSortError: (error: string | null) => void
   resetPhotoSort: () => void
   setShowVisualEditor: (show: boolean) => void
+  setRecoveryOpen: (open: boolean) => void
+  setRecoveryState: (state: RecoveryState) => void
+  setTetherState: (state: TetherState) => void
   recalcCounts: () => void
 }
 
@@ -141,6 +153,23 @@ export const useStore = create<AppStore>((set, get) => ({
   photoSorterOpen: false,
 
   showVisualEditor: false,
+
+  recoveryOpen: false,
+  recoveryState: {
+    active: false,
+    phase: 'idle',
+    percent: 0,
+    detail: '',
+  },
+
+  tetherState: {
+    active: false,
+    watchPath: null,
+    photosReceived: 0,
+    lastPhotoTime: null,
+    cameraClockOffset: 0,
+    clockSyncStatus: 'unknown' as const,
+  },
 
   jobQueue: [],
   jobQueuePanelOpen: false,
@@ -210,6 +239,9 @@ export const useStore = create<AppStore>((set, get) => ({
   setPhotoSortError: (error) => set((s) => ({ photoSort: { ...s.photoSort, error, status: 'error' as const } })),
   resetPhotoSort: () => set({ photoSort: { status: 'idle', progress: null, result: null, error: null } }),
   setShowVisualEditor: (showVisualEditor) => set({ showVisualEditor }),
+  setRecoveryOpen: (recoveryOpen) => set({ recoveryOpen }),
+  setRecoveryState: (recoveryState) => set({ recoveryState }),
+  setTetherState: (tetherState) => set({ tetherState }),
 
   recalcCounts: () => {
     const comp = get().competition
@@ -335,6 +367,16 @@ export function initIPCListeners(): () => void {
     store().setStartupReport(data as StartupReport)
   })
 
+  // Recovery progress
+  window.api.on(IPC_CHANNELS.RECOVERY_PROGRESS, (data: unknown) => {
+    store().setRecoveryState(data as RecoveryState)
+  })
+
+  // Tether progress
+  window.api.on(IPC_CHANNELS.TETHER_PROGRESS, (data: unknown) => {
+    store().setTetherState(data as TetherState)
+  })
+
   // Return cleanup function
   return () => {
     window.api.removeAllListeners(IPC_CHANNELS.STATE_UPDATE)
@@ -347,5 +389,7 @@ export function initIPCListeners(): () => void {
     window.api.removeAllListeners(IPC_CHANNELS.OBS_AUDIO_LEVELS)
     window.api.removeAllListeners(IPC_CHANNELS.JOB_QUEUE_PROGRESS)
     window.api.removeAllListeners(IPC_CHANNELS.APP_STARTUP_REPORT)
+    window.api.removeAllListeners(IPC_CHANNELS.RECOVERY_PROGRESS)
+    window.api.removeAllListeners(IPC_CHANNELS.TETHER_PROGRESS)
   }
 }

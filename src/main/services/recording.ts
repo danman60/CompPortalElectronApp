@@ -4,6 +4,7 @@ import * as obs from './obs'
 import * as state from './state'
 import * as ffmpegService from './ffmpeg'
 import * as overlay from './overlay'
+// Auto-fire state is persisted via overlay config
 import * as wsHub from './wsHub'
 import * as uploadService from './upload'
 import * as jobQueue from './jobQueue'
@@ -19,12 +20,11 @@ let activeRecordingRoutineId: string | null = null
 // --- Navigation busy guard (prevents rapid double-advance) ---
 let navBusy = false
 
-// --- Auto-fire lower third ---
-let autoFireEnabled = false
+// --- Auto-fire lower third (persisted via overlay config) ---
 let autoFireTimer: NodeJS.Timeout | null = null
 
 export function setAutoFire(enabled: boolean): void {
-  autoFireEnabled = enabled
+  overlay.setAutoFirePersisted(enabled)
   if (!enabled && autoFireTimer) {
     clearTimeout(autoFireTimer)
     autoFireTimer = null
@@ -33,11 +33,11 @@ export function setAutoFire(enabled: boolean): void {
 }
 
 export function getAutoFire(): boolean {
-  return autoFireEnabled
+  return overlay.getAutoFirePersisted()
 }
 
 function scheduleAutoFire(): void {
-  if (!autoFireEnabled) return
+  if (!getAutoFire()) return
   if (autoFireTimer) clearTimeout(autoFireTimer)
   autoFireTimer = setTimeout(() => {
     overlay.fireLowerThird()
@@ -344,7 +344,7 @@ export async function next(): Promise<void> {
     }
 
     // Auto-fire: schedule 3s delay. Manual fire still works independently.
-    if (autoFireEnabled) {
+    if (getAutoFire()) {
       scheduleAutoFire()
     }
 
@@ -363,6 +363,10 @@ export async function next(): Promise<void> {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 export async function nextFull(): Promise<void> {
   if (navBusy) { logger.app.debug('nextFull() blocked — already in progress'); return }
   navBusy = true
@@ -371,17 +375,19 @@ export async function nextFull(): Promise<void> {
     const { getSettings } = require('./settings')
     const settings = getSettings()
 
+    // 1. Stop recording if active
     if (connected && obs.getState().isRecording) {
       try {
-        // Wait for OBS to confirm recording stopped (event-driven, 15s timeout fallback)
         const stopPromise = obs.waitForRecordStop()
         await obs.stopRecord()
         await stopPromise
       } catch (err) {
         logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
       }
+      await sleep(2000)
     }
 
+    // 2. Advance to next routine
     const nextRoutine = state.advanceToNext()
     if (!nextRoutine) {
       logger.app.info('nextFull: no more routines')
@@ -389,9 +395,11 @@ export async function nextFull(): Promise<void> {
     }
 
     broadcastFullState()
+    logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
 
-    // Auto-record if enabled (respects settings like next() does)
+    // 3. Start recording after 2s
     if (settings.behavior.autoRecordOnNext && connected) {
+      await sleep(2000)
       try {
         await obs.startRecord()
       } catch (err) {
@@ -399,11 +407,9 @@ export async function nextFull(): Promise<void> {
       }
     }
 
-    setTimeout(() => {
-      overlay.fireLowerThird()
-    }, 5000)
-
-    logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
+    // 4. Fire lower third after 2s
+    await sleep(2000)
+    overlay.fireLowerThird()
   } finally {
     navBusy = false
   }

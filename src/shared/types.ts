@@ -172,7 +172,31 @@ export interface SystemStats {
 
 // --- Overlay Animation ---
 
-export type OverlayAnimation = 'random' | 'slide' | 'zoom' | 'fade' | 'rise' | 'sparkle'
+export type OverlayAnimation = 'random' | 'slide' | 'zoom' | 'fade' | 'rise' | 'sparkle' | 'typewriter' | 'bounce' | 'split' | 'blur'
+
+export type AnimationEasing = 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'linear' | 'bounce' | 'elastic'
+
+export interface TickerState {
+  visible: boolean
+  text: string
+  speed: number // px/s, 20-200
+  backgroundColor: string
+  textColor: string
+}
+
+export interface StartingSoonState {
+  visible: boolean
+  title: string
+  subtitle: string
+  showCountdown: boolean
+  countdownTarget: string // ISO timestamp
+}
+
+export interface AnimationConfig {
+  animationDuration: number // 0.1-2.0
+  animationEasing: AnimationEasing
+  autoHideSeconds: number // 0-60, 0 = manual
+}
 
 // --- Settings ---
 
@@ -318,6 +342,9 @@ export const IPC_CHANNELS = {
   OVERLAY_GET_STATE: 'overlay:get-state',
   OVERLAY_AUTO_FIRE_TOGGLE: 'overlay:auto-fire-toggle',
   OVERLAY_UPDATE_LAYOUT: 'overlay:update-layout',
+  OVERLAY_SET_TICKER: 'overlay:set-ticker',
+  OVERLAY_SET_STARTING_SOON: 'overlay:set-starting-soon',
+  OVERLAY_SET_ANIMATION_CONFIG: 'overlay:set-animation-config',
 
   // Recording
   RECORDING_NEXT_FULL: 'recording:next-full',
@@ -357,6 +384,19 @@ export const IPC_CHANNELS = {
 
   // Startup
   APP_STARTUP_REPORT: 'app:startup-report',
+
+  // Recovery
+  RECOVERY_START: 'recovery:start',
+  RECOVERY_BROWSE_MKV: 'recovery:browse-mkv',
+  RECOVERY_PROGRESS: 'recovery:progress',
+  RECOVERY_CANCEL: 'recovery:cancel',
+  RECOVERY_GET_STATE: 'recovery:get-state',
+
+  // Tether (live camera watch)
+  TETHER_START: 'tether:start',
+  TETHER_STOP: 'tether:stop',
+  TETHER_GET_STATE: 'tether:get-state',
+  TETHER_PROGRESS: 'tether:progress',
 } as const
 
 // --- FFmpeg ---
@@ -427,6 +467,9 @@ export interface OverlayState {
   clock: OverlayElementState
   logo: OverlayLogoState
   lowerThird: OverlayLowerThirdState
+  ticker: TickerState
+  startingSoon: StartingSoonState
+  animConfig: AnimationConfig
 }
 
 // --- Job Queue ---
@@ -594,4 +637,51 @@ export const DEFAULT_SETTINGS: AppSettings = {
     zoomFactor: 1.25,
     compactMode: false,
   },
+}
+
+// --- Audio Transcription ---
+
+export interface TranscriptSegment {
+  start: number       // seconds from audio start
+  end: number
+  text: string
+  confidence?: number
+}
+
+export interface RoutineBoundary {
+  index: number
+  name: string
+  routineId?: string           // matched CompSync routine ID
+  timestampStart: string       // ISO
+  timestampEnd: string
+  videoOffsetStartSec: number
+  videoOffsetEndSec: number
+  description: string
+  confidence: number           // 0-1
+}
+
+// --- Post-Event Recovery ---
+
+// --- Tether (Live Camera Watch) ---
+
+export interface TetherState {
+  active: boolean
+  watchPath: string | null
+  photosReceived: number
+  lastPhotoTime: string | null
+  cameraClockOffset: number
+  clockSyncStatus: 'unknown' | 'ok' | 'warning' | 'error'
+}
+
+export interface RecoveryState {
+  active: boolean
+  phase: 'idle' | 'extracting-audio' | 'transcribing' | 'parsing' | 'splitting' | 'photos' | 'complete' | 'error'
+  percent: number
+  detail: string
+  boundaries?: RoutineBoundary[]
+  mkvPaths?: string[]
+  error?: string
+  currentRoutine?: string
+  routinesFound?: number
+  routinesTotal?: number
 }

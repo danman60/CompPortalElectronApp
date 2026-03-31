@@ -40,6 +40,14 @@ function ActionBar(): React.ReactElement {
     await window.api.ffmpegEncodeAll()
   }
 
+  async function toggleAutoEncode(e: React.MouseEvent): Promise<void> {
+    e.preventDefault()
+    if (!settings) return
+    const updated = { ...settings, behavior: { ...settings.behavior, autoEncodeRecordings: !autoEncode } }
+    await window.api.settingsSet(updated)
+    useStore.getState().setSettings(updated)
+  }
+
   async function handleUploadAll(): Promise<void> {
     if (isUploading || uploadingCount > 0) return
     setIsUploading(true)
@@ -48,6 +56,14 @@ function ActionBar(): React.ReactElement {
     } finally {
       setIsUploading(false)
     }
+  }
+
+  async function toggleAutoUpload(e: React.MouseEvent): Promise<void> {
+    e.preventDefault()
+    if (!settings) return
+    const updated = { ...settings, behavior: { ...settings.behavior, autoUploadAfterEncoding: !autoUpload } }
+    await window.api.settingsSet(updated)
+    useStore.getState().setSettings(updated)
   }
 
   async function handleImportVideo(): Promise<void> {
@@ -98,7 +114,8 @@ function ActionBar(): React.ReactElement {
       <button
         className="ab-btn encode"
         onClick={handleProcessVideo}
-        title={autoEncode ? 'Auto-encode is ON — recordings encode automatically' : 'Manually encode all recorded videos'}
+        onContextMenu={toggleAutoEncode}
+        title={autoEncode ? 'Auto-encode ON (right-click to toggle)' : 'Process all (right-click to toggle auto)'}
       >
         <span className="ab-icon">{'\u2699'}</span>
         <span className="ab-label">Process</span>
@@ -109,13 +126,14 @@ function ActionBar(): React.ReactElement {
       <button
         className={`ab-btn upload${uploadDisabled ? ' disabled' : ''}`}
         onClick={handleUploadAll}
+        onContextMenu={toggleAutoUpload}
         disabled={uploadDisabled}
         title={
           uploadingCount > 0
             ? `Uploading ${uploadingCount} files...`
             : autoUpload
-              ? 'Auto-upload is ON — files upload after encoding'
-              : 'Upload all encoded videos and photos'
+              ? 'Auto-upload ON (right-click to toggle)'
+              : 'Upload all (right-click to toggle auto)'
         }
       >
         <span className="ab-icon">{uploadingCount > 0 ? '\u21BB' : '\u2191'}</span>
@@ -143,6 +161,18 @@ function ActionBar(): React.ReactElement {
       >
         <span className="ab-icon">{'\u{1F4F7}'}</span>
         <span className="ab-label">Photos</span>
+      </button>
+
+      <div className="ab-divider" />
+
+      {/* Post-Event Recovery */}
+      <button
+        className="ab-btn recovery"
+        onClick={() => useStore.getState().setRecoveryOpen(true)}
+        title="Post-event recovery: split full-day MKV into per-routine clips"
+      >
+        <span className="ab-icon">{'\u{1F6E0}'}</span>
+        <span className="ab-label">Recovery</span>
       </button>
     </div>
   )

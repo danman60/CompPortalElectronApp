@@ -2,10 +2,12 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore, initIPCListeners } from './store/useStore'
 import Header from './components/Header'
 import LeftPanel from './components/LeftPanel'
+import MiddlePanel from './components/MiddlePanel'
 import RightPanel from './components/RightPanel'
 import DragHandle from './components/DragHandle'
 import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
+import RecoveryPanel from './components/RecoveryPanel'
 import DriveAlert from './components/DriveAlert'
 import './styles/app.css'
 
@@ -65,6 +67,7 @@ function StartupToast(): React.ReactElement | null {
 export default function App(): React.ReactElement {
   const settingsOpen = useStore((s) => s.settingsOpen)
   const photoSorterOpen = useStore((s) => s.photoSorterOpen)
+  const recoveryOpen = useStore((s) => s.recoveryOpen)
   const compactMode = useStore((s) => s.compactMode)
   const initialized = useRef(false)
 
@@ -113,11 +116,14 @@ export default function App(): React.ReactElement {
       <Header />
       <div className="main-split">
         <LeftPanel />
-        <DragHandle />
+        <DragHandle target=".left-panel" min={240} max={450} />
+        <MiddlePanel />
+        <DragHandle target=".middle-panel" min={200} max={400} />
         <RightPanel />
       </div>
       {settingsOpen && <Settings />}
       {photoSorterOpen && <PhotoSorter />}
+      {recoveryOpen && <RecoveryPanel />}
       <DriveAlert />
       <StartupToast />
     </div>

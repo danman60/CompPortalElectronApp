@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useStore } from '../store/useStore'
 import type { OverlayLayout, ElementPosition } from '../../shared/types'
 import { DEFAULT_LAYOUT } from '../../shared/types'
@@ -40,11 +40,32 @@ const ELEMENT_LABELS: Record<ElementKey, string> = {
 export function VisualEditor({ onClose }: { onClose: () => void }) {
   const settings = useStore((s) => s.settings)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const [iframeScale, setIframeScale] = useState(0.5)
   const [selected, setSelected] = useState<ElementKey | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [layout, setLayout] = useState<OverlayLayout>({ ...DEFAULT_LAYOUT })
   const [showGrid, setShowGrid] = useState(false)
   const [snapLines, setSnapLines] = useState<SnapLine[]>([])
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [previewToggles, setPreviewToggles] = useState<Record<ElementKey, boolean>>({
+    counter: true,
+    clock: true,
+    logo: true,
+    lowerThird: true,
+  })
+
+  // Scale iframe to fit canvas
+  useEffect(() => {
+    function updateIframeScale(): void {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      setIframeScale(canvas.clientWidth / 1920)
+    }
+    updateIframeScale()
+    const obs = new ResizeObserver(updateIframeScale)
+    if (canvasRef.current) obs.observe(canvasRef.current)
+    return () => obs.disconnect()
+  }, [])
 
   // Load saved layout from overlay state on mount
   useEffect(() => {
@@ -55,11 +76,29 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
     })
   }, [])
 
+  // Live-push layout to overlay on every change (debounced 50ms)
+  const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pushLayout = useMemo(() => (l: OverlayLayout) => {
+    if (pushTimer.current) clearTimeout(pushTimer.current)
+    pushTimer.current = setTimeout(() => {
+      window.api.overlayUpdateLayout(l)
+    }, 50)
+  }, [])
+
+  useEffect(() => {
+    pushLayout(layout)
+  }, [layout, pushLayout])
+
+  useEffect(() => {
+    return () => { if (pushTimer.current) clearTimeout(pushTimer.current) }
+  }, [])
+
   const toCanvasPercent = useCallback(
     (clientX: number, clientY: number): { px: number; py: number } => {
       const canvas = canvasRef.current
       if (!canvas) return { px: 0, py: 0 }
       const rect = canvas.getBoundingClientRect()
+      // rect already accounts for CSS transform scale
       return {
         px: ((clientX - rect.left) / rect.width) * 100,
         py: ((clientY - rect.top) / rect.height) * 100,
@@ -195,13 +234,38 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
     })
   }
 
+  // Store initial layout for cancel/restore
+  const initialLayout = useRef<OverlayLayout>(layout)
+  useEffect(() => {
+    window.api.overlayGetState().then((state: any) => {
+      if (state?.layout) {
+        initialLayout.current = { ...DEFAULT_LAYOUT, ...state.layout }
+      }
+    })
+  }, [])
+
   function handleSave() {
-    window.api.overlayUpdateLayout(layout)
+    // Layout already pushed live — just close
+    onClose()
+  }
+
+  function handleCancel() {
+    // Restore original layout
+    window.api.overlayUpdateLayout(initialLayout.current)
     onClose()
   }
 
   function handleReset() {
     setLayout({ ...DEFAULT_LAYOUT })
+  }
+
+  function handlePreviewToggle(element: ElementKey) {
+    const newVisible = !previewToggles[element]
+    setPreviewToggles((prev) => ({ ...prev, [element]: newVisible }))
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: 'preview-toggle', element, visible: newVisible },
+      '*',
+    )
   }
 
   const resizeHandles = (element: ElementKey) => {
@@ -237,21 +301,27 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
         <span className="ve-title">Visual Overlay Editor</span>
         <div className="ve-actions">
           <button
-            className={`btn btn-ghost btn-sm${showGrid ? ' active' : ''}`}
+            className={showGrid ? 'active' : undefined}
             onClick={() => setShowGrid((v) => !v)}
             title="Toggle grid (G)"
           >
             Grid
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleReset}>
-            Reset
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={handleSave}>
-            Save Layout
-          </button>
+          <span className="ve-toggle-group">
+            {(['counter', 'clock', 'logo', 'lowerThird'] as ElementKey[]).map((el) => (
+              <button
+                key={el}
+                className={`ve-preview-toggle ${previewToggles[el] ? 'active' : ''}`}
+                onClick={() => handlePreviewToggle(el)}
+                title={`Toggle ${ELEMENT_LABELS[el]} preview visibility`}
+              >
+                {el === 'lowerThird' ? 'LT' : ELEMENT_LABELS[el]}
+              </button>
+            ))}
+          </span>
+          <button onClick={handleReset}>Reset</button>
+          <button onClick={handleCancel}>Cancel</button>
+          <button className="ve-btn-done" onClick={handleSave}>Done</button>
         </div>
       </div>
 
@@ -262,6 +332,15 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
             ref={canvasRef}
             onClick={handleCanvasClick}
           >
+            {/* Live overlay iframe — pixel-perfect 1:1 preview */}
+            <iframe
+              ref={iframeRef}
+              className="ve-overlay-iframe"
+              src="http://localhost:9876/overlay?preview=1"
+              style={{ transform: `scale(${iframeScale})` }}
+              title="Overlay Preview"
+            />
+
             {/* Safe zone guide */}
             <div className="ve-safe-zone" />
 
@@ -286,79 +365,23 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
               ),
             )}
 
-            {/* Counter */}
-            <div
-              className={`ve-element ve-counter ${selected === 'counter' ? 'selected' : ''}`}
-              style={{
-                left: `${layout.counter.x}%`,
-                top: `${layout.counter.y}%`,
-                width: layout.counter.width ? `${layout.counter.width}%` : undefined,
-                height: layout.counter.height ? `${layout.counter.height}%` : undefined,
-              }}
-              onMouseDown={(e) => handleMouseDown(e, 'counter')}
-            >
-              <div className="ve-counter-box">
-                <span className="ve-counter-entry">#12</span>
-                <span className="ve-counter-total">/ 24</span>
+            {/* Draggable hit targets — transparent overlays on top of iframe */}
+            {(['counter', 'clock', 'logo', 'lowerThird'] as ElementKey[]).map((element) => (
+              <div
+                key={element}
+                className={`ve-element ve-handle-target ${selected === element ? 'selected' : ''}`}
+                style={{
+                  left: `${layout[element].x}%`,
+                  top: `${layout[element].y}%`,
+                  width: layout[element].width ? `${layout[element].width}%` : element === 'lowerThird' ? '30%' : '8%',
+                  height: layout[element].height ? `${layout[element].height}%` : element === 'lowerThird' ? '12%' : '8%',
+                }}
+                onMouseDown={(e) => handleMouseDown(e, element)}
+              >
+                <span className="ve-label">{ELEMENT_LABELS[element]}</span>
+                {resizeHandles(element)}
               </div>
-              <span className="ve-label">Counter</span>
-              {resizeHandles('counter')}
-            </div>
-
-            {/* Clock */}
-            <div
-              className={`ve-element ve-clock ${selected === 'clock' ? 'selected' : ''}`}
-              style={{
-                left: `${layout.clock.x}%`,
-                top: `${layout.clock.y}%`,
-                width: layout.clock.width ? `${layout.clock.width}%` : undefined,
-                height: layout.clock.height ? `${layout.clock.height}%` : undefined,
-              }}
-              onMouseDown={(e) => handleMouseDown(e, 'clock')}
-            >
-              <div className="ve-clock-box">2:45 PM</div>
-              <span className="ve-label">Clock</span>
-              {resizeHandles('clock')}
-            </div>
-
-            {/* Logo */}
-            <div
-              className={`ve-element ve-logo ${selected === 'logo' ? 'selected' : ''}`}
-              style={{
-                left: `${layout.logo.x}%`,
-                top: `${layout.logo.y}%`,
-                width: layout.logo.width ? `${layout.logo.width}%` : undefined,
-                height: layout.logo.height ? `${layout.logo.height}%` : undefined,
-              }}
-              onMouseDown={(e) => handleMouseDown(e, 'logo')}
-            >
-              {settings?.overlay.logoUrl ? (
-                <img src={settings.overlay.logoUrl} alt="" className="ve-logo-img" />
-              ) : (
-                <span className="ve-placeholder">Logo</span>
-              )}
-              <span className="ve-label">Logo</span>
-              {resizeHandles('logo')}
-            </div>
-
-            {/* Lower Third */}
-            <div
-              className={`ve-element ve-lower-third ${selected === 'lowerThird' ? 'selected' : ''}`}
-              style={{
-                left: `${layout.lowerThird.x}%`,
-                top: `${layout.lowerThird.y}%`,
-                width: layout.lowerThird.width ? `${layout.lowerThird.width}%` : undefined,
-              }}
-              onMouseDown={(e) => handleMouseDown(e, 'lowerThird')}
-            >
-              <div className="ve-lt-card">
-                <div className="ve-lt-entry">#12</div>
-                <div className="ve-lt-title">Jazz Solo — "City Lights"</div>
-                <div className="ve-lt-subtitle">Jane Smith — Rhythm Dance Academy</div>
-              </div>
-              <span className="ve-label">Lower Third</span>
-              {resizeHandles('lowerThird')}
-            </div>
+            ))}
           </div>
         </div>
 

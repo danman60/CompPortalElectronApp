@@ -7,7 +7,7 @@ export default function PreviewPanel(): React.ReactElement {
   const previewFrame = useStore((s) => s.previewFrame)
   const previewActive = useStore((s) => s.previewActive)
   const setPreviewActive = useStore((s) => s.setPreviewActive)
-  const [visible, setVisible] = useState(false)
+  const [visible, setVisible] = useState(true)
   const imgRef = useRef<HTMLImageElement>(null)
 
   const isConnected = obsState.connectionStatus === 'connected'
@@ -65,9 +65,6 @@ export default function PreviewPanel(): React.ReactElement {
             <div className="preview-placeholder">
               Waiting for frame...
             </div>
-          )}
-          {obsState.isRecording && (
-            <div className="preview-rec-badge">REC</div>
           )}
         </div>
       )}

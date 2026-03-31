@@ -1,16 +1,22 @@
 import React, { useCallback, useRef } from 'react'
 import '../styles/draghandle.css'
 
-export default function DragHandle(): React.ReactElement {
+interface DragHandleProps {
+  target: string
+  min: number
+  max: number
+}
+
+export default function DragHandle({ target, min, max }: DragHandleProps): React.ReactElement {
   const handleRef = useRef<HTMLDivElement>(null)
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    const leftPanel = document.querySelector('.left-panel') as HTMLElement
-    if (!leftPanel) return
+    const panel = document.querySelector(target) as HTMLElement
+    if (!panel) return
 
     const startX = e.clientX
-    const startWidth = leftPanel.offsetWidth
+    const startWidth = panel.offsetWidth
     const handle = handleRef.current
 
     handle?.classList.add('dragging')
@@ -19,8 +25,8 @@ export default function DragHandle(): React.ReactElement {
 
     function onMouseMove(e: MouseEvent): void {
       const newWidth = startWidth + (e.clientX - startX)
-      if (newWidth >= 280 && newWidth <= 600) {
-        leftPanel.style.width = newWidth + 'px'
+      if (newWidth >= min && newWidth <= max) {
+        panel.style.width = newWidth + 'px'
       }
     }
 
@@ -34,7 +40,7 @@ export default function DragHandle(): React.ReactElement {
 
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-  }, [])
+  }, [target, min, max])
 
   return <div className="drag-handle" ref={handleRef} onMouseDown={onMouseDown} />
 }
