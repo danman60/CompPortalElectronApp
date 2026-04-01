@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { app } from 'electron'
 import ExifReader from 'exifreader'
 import sharp from 'sharp'
 import { IPC_CHANNELS, Routine, PhotoMatch } from '../../shared/types'
@@ -9,6 +10,8 @@ import * as state from './state'
 import { broadcastFullState } from './recording'
 import { getSettings } from './settings'
 import * as uploadService from './upload'
+import * as wpdBridge from './wpdBridge'
+import type { WPDDevice, WPDDeviceEvent } from '../../shared/types'
 
 // Use dynamic import for chokidar (ESM)
 let chokidar: typeof import('chokidar') | null = null
@@ -16,6 +19,11 @@ let chokidar: typeof import('chokidar') | null = null
 export interface TetherState {
   active: boolean
   watchPath: string | null
+  source: 'folder-watch' | 'wpd-mtp'
+  sourceLabel?: string
+  deviceId?: string | null
+  deviceName?: string | null
+  stagingDir?: string | null
   photosReceived: number
   lastPhotoTime: string | null
   cameraClockOffset: number
@@ -29,6 +37,13 @@ interface RecordingWindow {
   recordingStopped: Date
 }
 
+interface StagedPhotoMetadata {
+  filename?: string
+  deviceName?: string
+  captureTime?: string
+  transferredAt?: string
+}
+
 const PHOTO_EXTENSIONS = /\.(jpg|jpeg|arw|cr3|nef|raf)$/i
 const BUFFER_MS = 30_000
 const CLOCK_OK_THRESHOLD = 5_000
@@ -37,6 +52,7 @@ const CLOCK_WARN_THRESHOLD = 30_000
 let tetherState: TetherState = {
   active: false,
   watchPath: null,
+  source: 'folder-watch',
   photosReceived: 0,
   lastPhotoTime: null,
   cameraClockOffset: 0,
@@ -74,6 +90,26 @@ async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
     logger.photos.warn(`Tether: Failed to read EXIF from ${path.basename(filePath)}:`, err)
     return null
   }
+}
+
+async function getStagedPhotoMetadata(filePath: string): Promise<StagedPhotoMetadata | null> {
+  const sidecarPath = `${filePath}.json`
+
+  try {
+    const raw = await fs.promises.readFile(sidecarPath, 'utf8')
+    return JSON.parse(raw) as StagedPhotoMetadata
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.photos.warn(`Tether: Failed to read metadata sidecar for ${path.basename(filePath)}:`, err)
+    }
+    return null
+  }
+}
+
+function parseCaptureTime(value?: string | null): Date | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
 // --- Recording window helpers ---
@@ -121,6 +157,10 @@ function matchSinglePhoto(
   return null
 }
 
+function getAdjustedCaptureTime(captureTime: Date): Date {
+  return new Date(captureTime.getTime() - tetherState.cameraClockOffset)
+}
+
 // --- Clock offset ---
 
 function updateClockOffset(exifTime: Date): void {
@@ -146,14 +186,21 @@ function updateClockOffset(exifTime: Date): void {
 
 // --- Photo processing ---
 
-async function processNewPhoto(filePath: string): Promise<void> {
+async function processNewPhoto(
+  filePath: string,
+  incomingMetadata: Partial<StagedPhotoMetadata> = {},
+): Promise<void> {
   const normalizedPath = path.normalize(filePath)
   if (importedFiles.has(normalizedPath)) return
   importedFiles.add(normalizedPath)
 
   logger.photos.info(`Tether: New photo detected: ${path.basename(filePath)}`)
 
-  const captureTime = await getPhotoCaptureTime(filePath)
+  const stagedMetadata = await getStagedPhotoMetadata(filePath)
+  const captureTime =
+    parseCaptureTime(incomingMetadata.captureTime) ||
+    parseCaptureTime(stagedMetadata?.captureTime) ||
+    (await getPhotoCaptureTime(filePath))
   if (!captureTime) {
     logger.photos.warn(`Tether: No EXIF timestamp for ${path.basename(filePath)} — skipping`)
     return
@@ -164,11 +211,12 @@ async function processNewPhoto(filePath: string): Promise<void> {
 
   // Match to routine
   const windows = getRecordingWindows()
-  const match = matchSinglePhoto(captureTime, windows)
+  const adjustedCaptureTime = getAdjustedCaptureTime(captureTime)
+  const match = matchSinglePhoto(adjustedCaptureTime, windows)
 
   if (!match) {
     logger.photos.info(
-      `Tether: Photo ${path.basename(filePath)} at ${captureTime.toISOString()} — no routine match`,
+      `Tether: Photo ${path.basename(filePath)} at ${captureTime.toISOString()} (adjusted ${adjustedCaptureTime.toISOString()}) — no routine match`,
     )
     tetherState.photosReceived++
     tetherState.lastPhotoTime = captureTime.toISOString()
@@ -243,7 +291,10 @@ async function processNewPhoto(filePath: string): Promise<void> {
   if (settings.behavior.autoUploadAfterEncoding) {
     const updatedRoutine = state.getCompetition()?.routines.find((r) => r.id === routine.id)
     if (updatedRoutine) {
-      uploadService.enqueueRoutine(updatedRoutine)
+      const result = uploadService.enqueueRoutine(updatedRoutine)
+      if (result.queuedJobs > 0) {
+        uploadService.startUploads()
+      }
     }
   }
 
@@ -255,6 +306,15 @@ async function processNewPhoto(filePath: string): Promise<void> {
   broadcastTetherState()
 }
 
+function getWPDStagingDir(deviceId: string): string {
+  const safeId = deviceId.replace(/[^a-zA-Z0-9_-]+/g, '_')
+  return path.join(appDataTetherDir(), 'wpd-staging', safeId)
+}
+
+function appDataTetherDir(): string {
+  return path.join(app.getPath('userData'), 'tether')
+}
+
 function broadcastTetherState(): void {
   sendToRenderer(IPC_CHANNELS.TETHER_PROGRESS, { ...tetherState })
 }
@@ -262,6 +322,7 @@ function broadcastTetherState(): void {
 // --- Public API ---
 
 export async function startWatching(dcimPath: string): Promise<void> {
+  await wpdBridge.stopWatching()
   if (watcher) {
     await stopWatching()
   }
@@ -279,6 +340,11 @@ export async function startWatching(dcimPath: string): Promise<void> {
   tetherState = {
     active: true,
     watchPath: dcimPath,
+    source: 'folder-watch',
+    sourceLabel: 'USB Drive',
+    deviceId: null,
+    deviceName: null,
+    stagingDir: null,
     photosReceived: 0,
     lastPhotoTime: null,
     cameraClockOffset: 0,
@@ -312,18 +378,78 @@ export async function startWatching(dcimPath: string): Promise<void> {
   logger.photos.info(`Tether: Watching ${dcimPath} for new photos`)
 }
 
+export async function startWatchingWPD(deviceId: string): Promise<void> {
+  await wpdBridge.stopWatching()
+  if (watcher) {
+    await stopWatching()
+  }
+
+  const devices = await wpdBridge.listDevices()
+  const device = devices.find((entry) => entry.id === deviceId)
+  if (!device) {
+    throw new Error('WPD device not found')
+  }
+
+  const stagingDir = getWPDStagingDir(deviceId)
+  await fs.promises.mkdir(stagingDir, { recursive: true })
+  importedFiles.clear()
+  clockOffsetSamples.length = 0
+
+  tetherState = {
+    active: true,
+    watchPath: stagingDir,
+    source: 'wpd-mtp',
+    sourceLabel: 'MTP/PTP',
+    deviceId,
+    deviceName: device.name,
+    stagingDir,
+    photosReceived: 0,
+    lastPhotoTime: null,
+    cameraClockOffset: 0,
+    clockSyncStatus: 'unknown',
+  }
+
+  await wpdBridge.watchDevice(deviceId, stagingDir)
+  broadcastTetherState()
+  logger.photos.info(`Tether: Watching WPD device ${device.name} (${deviceId}) via ${stagingDir}`)
+}
+
+export async function listWPDDevices(): Promise<WPDDevice[]> {
+  return await wpdBridge.listDevices()
+}
+
 export async function stopWatching(): Promise<void> {
   if (watcher) {
     await watcher.close()
     watcher = null
   }
 
+  await wpdBridge.stopWatching()
+
   tetherState.active = false
   tetherState.watchPath = null
+  tetherState.source = 'folder-watch'
+  tetherState.sourceLabel = undefined
+  tetherState.deviceId = null
+  tetherState.deviceName = null
+  tetherState.stagingDir = null
   broadcastTetherState()
   logger.photos.info('Tether: Stopped watching')
 }
 
 export function getTetherState(): TetherState {
   return { ...tetherState }
+}
+
+export function initWPDHandlers(): void {
+  wpdBridge.setHandlers({
+    onPhoto: ({ path: filePath, captureTime, deviceName }) => {
+      processNewPhoto(filePath, { captureTime, deviceName }).catch((err) => {
+        logger.photos.error(`Tether: WPD photo processing failed for ${path.basename(filePath)}:`, err)
+      })
+    },
+    onDeviceEvent: (event: WPDDeviceEvent) => {
+      sendToRenderer(IPC_CHANNELS.TETHER_WPD_DEVICE_EVENT, event)
+    },
+  })
 }

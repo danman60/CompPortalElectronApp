@@ -15,6 +15,7 @@ import * as state from './services/state'
 import * as systemMonitor from './services/systemMonitor'
 import * as driveMonitor from './services/driveMonitor'
 import * as schedule from './services/schedule'
+import * as wpdBridge from './services/wpdBridge'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -175,6 +176,10 @@ app.whenReady().then(async () => {
 
   // Start drive monitor for SD card auto-detect
   driveMonitor.startMonitoring()
+  tether.initWPDHandlers()
+  wpdBridge.startMonitor().catch((err) => {
+    logger.app.warn('WPD monitor start failed:', err)
+  })
 
   // Check for crash recovery
   checkAndRecover().catch((err) => {
@@ -226,6 +231,7 @@ app.on('before-quit', async (event) => {
   hotkeys.unregister()
   systemMonitor.stopMonitoring()
   driveMonitor.stopMonitoring()
+  await wpdBridge.stop()
   wsHub.stop()
   overlay.stopServer()
 

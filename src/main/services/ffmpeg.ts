@@ -258,8 +258,10 @@ async function processNext(): Promise<void> {
         const comp = state.getCompetition()
         const routine = comp?.routines.find((r) => r.id === job.routineId)
         if (routine) {
-          uploadService.enqueueRoutine(routine)
-          uploadService.startUploads()
+          const result = uploadService.enqueueRoutine(routine)
+          if (result.queuedJobs > 0) {
+            uploadService.startUploads()
+          }
         }
       }
 

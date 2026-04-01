@@ -22,6 +22,11 @@ interface UploadPayload {
   role?: string // 'performance' | 'judge1' etc for videos
 }
 
+export interface EnqueueRoutineResult {
+  queuedJobs: number
+  skippedReason?: 'no-connection' | 'no-files' | 'already-queued'
+}
+
 const API_TIMEOUT_MS = 30000
 
 let isUploading = false
@@ -41,15 +46,27 @@ function getConnection(): { apiBase: string; apiKey: string; competitionId: stri
   return { apiBase: conn.apiBase, apiKey: conn.apiKey, competitionId: conn.competitionId }
 }
 
-export function enqueueRoutine(routine: Routine, force = false): void {
-  const { competitionId } = getConnection()
+export function hasResolvedUploadConnection(): boolean {
+  return getResolvedConnection() !== null
+}
 
-  if (!routine.encodedFiles) return
+export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineResult {
+  const conn = getResolvedConnection()
+  if (!conn) {
+    logger.upload.warn(`Skipping upload queue for routine ${routine.entryNumber}: no resolved upload connection`)
+    return { queuedJobs: 0, skippedReason: 'no-connection' }
+  }
+
+  const hasVideos = (routine.encodedFiles?.length || 0) > 0
+  const hasPhotos = (routine.photos?.length || 0) > 0
+  if (!hasVideos && !hasPhotos) {
+    return { queuedJobs: 0, skippedReason: 'no-files' }
+  }
 
   // Check if already queued (any pending/running upload job for this routine)
   const existing = jobQueue.getByRoutine(routine.id)
   if (existing.some(j => j.type === 'upload' && (j.status === 'pending' || j.status === 'running'))) {
-    return
+    return { queuedJobs: 0, skippedReason: 'already-queued' }
   }
 
   let jobCount = 0
@@ -62,7 +79,7 @@ export function enqueueRoutine(routine: Routine, force = false): void {
   )
 
   // Queue video files
-  for (const file of routine.encodedFiles) {
+  for (const file of routine.encodedFiles || []) {
     if (!force && file.uploaded) continue
     const role = file.role
     const objectName = `${role}.mp4`
@@ -70,7 +87,7 @@ export function enqueueRoutine(routine: Routine, force = false): void {
     jobQueue.enqueue('upload', routine.id, {
       routineId: routine.id,
       entryId: routine.id,
-      competitionId,
+      competitionId: conn.competitionId,
       filePath: file.filePath,
       objectName,
       contentType: 'video/mp4',
@@ -89,7 +106,7 @@ export function enqueueRoutine(routine: Routine, force = false): void {
       jobQueue.enqueue('upload', routine.id, {
         routineId: routine.id,
         entryId: routine.id,
-        competitionId,
+        competitionId: conn.competitionId,
         filePath: photo.filePath,
         objectName: photoObjectName,
         contentType: 'image/jpeg',
@@ -99,7 +116,7 @@ export function enqueueRoutine(routine: Routine, force = false): void {
     }
   }
 
-  if (jobCount === 0) return
+  if (jobCount === 0) return { queuedJobs: 0, skippedReason: 'no-files' }
 
   logger.upload.info(`Queued ${jobCount} upload jobs for routine ${routine.entryNumber}`)
 
@@ -109,9 +126,15 @@ export function enqueueRoutine(routine: Routine, force = false): void {
     filesCompleted: 0,
     filesTotal: jobCount,
   })
+
+  return { queuedJobs: jobCount }
 }
 
 export function startUploads(): void {
+  if (!hasResolvedUploadConnection()) {
+    logger.upload.warn('Upload start requested without a resolved connection')
+    return
+  }
   if (isUploading && !isPaused) return
   isPaused = false
   const pendingCount = jobQueue.getPending('upload').length

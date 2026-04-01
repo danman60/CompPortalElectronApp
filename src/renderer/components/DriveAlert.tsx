@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
-import type { DriveDetectedEvent } from '../../shared/types'
+import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent } from '../../shared/types'
 import '../styles/drive-alert.css'
 
 interface ImportProgress {
@@ -16,6 +16,7 @@ interface ImportProgress {
 
 export default function DriveAlert(): React.ReactElement | null {
   const [detected, setDetected] = useState<DriveDetectedEvent | null>(null)
+  const [wpdDevice, setWpdDevice] = useState<WPDDevice | null>(null)
   const [progress, setProgress] = useState<ImportProgress>({
     stage: 'idle', message: '', current: 0, total: 0, matched: 0, unmatched: 0, copied: 0, uploadQueued: 0,
   })
@@ -25,10 +26,30 @@ export default function DriveAlert(): React.ReactElement | null {
   const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
 
   useEffect(() => {
+    window.api.tetherListWPDDevices().then((devices) => {
+      if (Array.isArray(devices) && devices.length > 0) {
+        setWpdDevice(devices[0] as WPDDevice)
+        setDetected(null)
+      }
+    }).catch(() => {})
+
     const unsubDrive = window.api.on('drive:detected', (data: unknown) => {
       setDetected(data as DriveDetectedEvent)
+      setWpdDevice(null)
       setProgress({ stage: 'idle', message: '', current: 0, total: 0, matched: 0, unmatched: 0, copied: 0, uploadQueued: 0 })
       setShowResults(false)
+    })
+
+    const unsubWPD = window.api.on('tether:wpd-device-event', (data: unknown) => {
+      const event = data as WPDDeviceEvent
+      if (event.event === 'device-connected') {
+        setWpdDevice(event.device)
+        setDetected(null)
+        setProgress({ stage: 'idle', message: '', current: 0, total: 0, matched: 0, unmatched: 0, copied: 0, uploadQueued: 0 })
+        setShowResults(false)
+      } else {
+        setWpdDevice((current) => current && current.id === event.device.id ? null : current)
+      }
     })
 
     const unsubProgress = window.api.on('photos:progress', (data: unknown) => {
@@ -60,7 +81,7 @@ export default function DriveAlert(): React.ReactElement | null {
       setShowResults(true)
     })
 
-    return () => { unsubDrive(); unsubProgress(); unsubResult() }
+    return () => { unsubDrive(); unsubWPD(); unsubProgress(); unsubResult() }
   }, [])
 
   function handleStartImport(): void {
@@ -96,6 +117,15 @@ export default function DriveAlert(): React.ReactElement | null {
     if (!detected) return
     window.api.tetherStart(detected.photoPath)
     setDetected(null)
+    setWpdDevice(null)
+    setShowResults(false)
+  }
+
+  function handleStartWPDTether(): void {
+    if (!wpdDevice) return
+    window.api.tetherStartWPD(wpdDevice.id)
+    setDetected(null)
+    setWpdDevice(null)
     setShowResults(false)
   }
 
@@ -104,10 +134,11 @@ export default function DriveAlert(): React.ReactElement | null {
       window.api.driveDismiss(detected.drivePath)
     }
     setDetected(null)
+    setWpdDevice(null)
     setShowResults(false)
   }
 
-  if (!detected) return null
+  if (!detected && !wpdDevice) return null
 
   const isWorking = ['scanning', 'reading-exif', 'matching', 'copying', 'uploading'].includes(progress.stage)
   const hasCompetition = !!competition
@@ -115,17 +146,19 @@ export default function DriveAlert(): React.ReactElement | null {
     (r) => r.recordingStartedAt && r.recordingStoppedAt,
   ).length ?? 0
 
+  const sourceLabel = wpdDevice ? 'MTP/PTP Camera Detected' : 'SD Card Detected'
+  const sourceSubtitle = wpdDevice
+    ? `${wpdDevice.name}${wpdDevice.manufacturer ? ` — ${wpdDevice.manufacturer}` : ''}`
+    : `${detected!.label} (${detected!.drivePath}) — ${detected!.photoCount} photos${detected!.isDcim ? ' in DCIM' : ''}`
+
   return (
     <div className="drive-alert-overlay">
       <div className="drive-alert">
         <div className="da-header">
           <span className="da-icon">{'\u{1F4F7}'}</span>
           <div>
-            <div className="da-title">SD Card Detected</div>
-            <div className="da-subtitle">
-              {detected.label} ({detected.drivePath}) — {detected.photoCount} photos
-              {detected.isDcim ? ' in DCIM' : ''}
-            </div>
+            <div className="da-title">{sourceLabel}</div>
+            <div className="da-subtitle">{sourceSubtitle}</div>
           </div>
           <button className="da-close" onClick={handleDismiss}>{'\u2715'}</button>
         </div>
@@ -183,14 +216,19 @@ export default function DriveAlert(): React.ReactElement | null {
 
         {/* Actions */}
         <div className="da-actions">
-          {progress.stage === 'idle' && hasCompetition && recordedCount > 0 && (
+          {detected && progress.stage === 'idle' && hasCompetition && recordedCount > 0 && (
             <button className="da-btn primary" onClick={handleStartImport}>
               Match {detected.photoCount} Photos to {recordedCount} Routines
             </button>
           )}
-          {progress.stage === 'idle' && hasCompetition && (
+          {detected && progress.stage === 'idle' && hasCompetition && (
             <button className="da-btn" onClick={handleStartTether} title="Watch this drive for new photos in real-time">
               Watch Live
+            </button>
+          )}
+          {wpdDevice && progress.stage === 'idle' && hasCompetition && (
+            <button className="da-btn primary" onClick={handleStartWPDTether} title="Watch this MTP/PTP camera live">
+              Watch Live (MTP)
             </button>
           )}
           {progress.stage === 'done' && (

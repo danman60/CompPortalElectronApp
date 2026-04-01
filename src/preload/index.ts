@@ -127,8 +127,11 @@ const api = {
   // Tether
   tetherStart: (dcimPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.TETHER_START, dcimPath),
+  tetherStartWPD: (deviceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TETHER_START_WPD, deviceId),
   tetherStop: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_STOP),
   tetherGetState: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_GET_STATE),
+  tetherListWPDDevices: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_LIST_WPD_DEVICES),
 
   // Recovery
   recoveryBrowseMkv: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_BROWSE_MKV),

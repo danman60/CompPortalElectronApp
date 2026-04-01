@@ -3,7 +3,6 @@ import path from 'path'
 import { app } from 'electron'
 import { Competition, Routine, RoutineStatus } from '../../shared/types'
 import { logger } from '../logger'
-import { getSettings } from './settings'
 
 const STATE_FILE = 'compsync-state.json'
 
@@ -23,12 +22,8 @@ let cachedSkippedCount = 0
 let cachedActiveCount = 0  // routines that are not skipped
 
 function getStatePath(): string {
-  const settings = getSettings()
-  const outputDir = settings.fileNaming.outputDirectory
-  if (outputDir) {
-    return path.join(outputDir, STATE_FILE)
-  }
-  // Default to userData (not CWD which may be read-only like C:\Program Files)
+  // Keep operator session state in app userData so changing media output directories
+  // does not silently switch the persisted competition/session file.
   return path.join(app.getPath('userData'), STATE_FILE)
 }
 

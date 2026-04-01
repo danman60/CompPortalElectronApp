@@ -26,6 +26,10 @@ interface ImportResult {
   matches: PhotoMatch[]
 }
 
+async function yieldToEventLoop(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
 export async function browseForFolder(): Promise<string | null> {
   const win = BrowserWindow.getAllWindows()[0]
   if (!win) return null
@@ -223,19 +227,33 @@ export async function importPhotos(
 ): Promise<ImportResult> {
   logger.photos.info(`Importing photos from: ${folderPath}`)
 
-  // Scan for JPG files recursively (DCIM has subfolders like 100LUMIX/)
-  function scanDir(dir: string): string[] {
+  // Scan recursively in batches so the main event loop stays responsive during large imports.
+  async function scanDir(rootDir: string): Promise<string[]> {
     const results: string[] = []
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        results.push(...scanDir(path.join(dir, entry.name)))
-      } else if (/\.(jpg|jpeg)$/i.test(entry.name)) {
-        results.push(path.join(dir, entry.name))
+    const pendingDirs: string[] = [rootDir]
+    let processedDirs = 0
+
+    while (pendingDirs.length > 0) {
+      const dir = pendingDirs.pop()!
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const entryPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          pendingDirs.push(entryPath)
+        } else if (/\.(jpg|jpeg)$/i.test(entry.name)) {
+          results.push(entryPath)
+        }
+      }
+
+      processedDirs++
+      if (processedDirs % 25 === 0) {
+        await yieldToEventLoop()
       }
     }
+
     return results
   }
-  const filePaths = scanDir(folderPath)
+  const filePaths = await scanDir(folderPath)
   logger.photos.info(`Found ${filePaths.length} JPEG files`)
 
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
@@ -258,6 +276,7 @@ export async function importPhotos(
         total: filePaths.length,
         current: i,
       })
+      await yieldToEventLoop()
     }
   }
 
@@ -307,11 +326,11 @@ export async function importPhotos(
     const routineDir = path.join(baseDir, 'photos')
 
     if (!fs.existsSync(routineDir)) {
-      fs.mkdirSync(routineDir, { recursive: true })
+      await fs.promises.mkdir(routineDir, { recursive: true })
     }
 
     const destFile = path.join(routineDir, `photo_${String(copiedCount + 1).padStart(3, '0')}.jpg`)
-    fs.copyFileSync(match.filePath, destFile)
+    await fs.promises.copyFile(match.filePath, destFile)
     match.filePath = destFile
 
     // Generate thumbnail
@@ -326,6 +345,9 @@ export async function importPhotos(
     }
 
     copiedCount++
+    if (copiedCount % 10 === 0) {
+      await yieldToEventLoop()
+    }
   }
 
   const result: ImportResult = {
@@ -358,7 +380,10 @@ export async function importPhotos(
     for (const [routineId] of photosByRoutine) {
       const updatedRoutine = state.getCompetition()?.routines.find(r => r.id === routineId)
       if (updatedRoutine) {
-        uploadService.enqueueRoutine(updatedRoutine)
+        const result = uploadService.enqueueRoutine(updatedRoutine)
+        if (result.queuedJobs > 0) {
+          uploadService.startUploads()
+        }
       }
     }
   }

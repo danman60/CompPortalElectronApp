@@ -16,6 +16,7 @@ import { logger } from '../logger'
 
 // --- Active recording tracking ---
 let activeRecordingRoutineId: string | null = null
+let pendingStopProcessing: { promise: Promise<void>; resolve: () => void } | null = null
 
 // --- Navigation busy guard (prevents rapid double-advance) ---
 let navBusy = false
@@ -44,6 +45,43 @@ function scheduleAutoFire(): void {
     autoFireTimer = null
     logger.app.info('Overlay lower third auto-fired (3s delay)')
   }, 3000)
+}
+
+function createStopProcessingBarrier(): Promise<void> {
+  let resolve!: () => void
+  const promise = new Promise<void>((res) => {
+    resolve = res
+  })
+  pendingStopProcessing = { promise, resolve }
+  return promise
+}
+
+async function stopRecordingAndWait(reason: string): Promise<boolean> {
+  const obsState = obs.getState()
+  if (!(obsState.isRecording && obsState.connectionStatus === 'connected')) {
+    return false
+  }
+
+  const stopEvent = obs.waitForRecordStop()
+  const stopProcessing = createStopProcessingBarrier()
+
+  try {
+    const outputPath = await obs.stopRecord()
+    await stopEvent
+
+    // Wait until handleRecordingStopped finishes organizing the file before advancing.
+    if (outputPath) {
+      await Promise.race([stopProcessing, sleep(30000)])
+    }
+    return true
+  } catch (err) {
+    logger.app.error(`${reason}: stop recording failed:`, err instanceof Error ? err.message : err)
+    if (pendingStopProcessing?.promise === stopProcessing) {
+      pendingStopProcessing.resolve()
+      pendingStopProcessing = null
+    }
+    return false
+  }
 }
 
 /** Calculate human-readable offset between scheduled time (HH:MM) and actual time */
@@ -147,92 +185,94 @@ export async function handleRecordingStopped(
   outputPath: string,
   timestamp: string,
 ): Promise<void> {
-  const routineId = activeRecordingRoutineId
-  activeRecordingRoutineId = null
-
-  if (!routineId) {
-    logger.app.error(`Recording stopped but no activeRecordingRoutineId — raw file preserved at: ${outputPath}`)
-    return
-  }
-
-  const comp = state.getCompetition()
-  const routine = comp?.routines.find((r) => r.id === routineId) ?? null
-
-  if (!routine) {
-    logger.app.warn(`Recording stopped for unknown routine ${routineId} — raw file preserved at: ${outputPath}`)
-    return
-  }
-
-  // Update routine state
-  state.updateRoutineStatus(routine.id, 'recorded', {
-    recordingStoppedAt: timestamp,
-    outputPath,
-  })
-
-  const stopTime = new Date(timestamp)
-  const stopStr = stopTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  const startTime = routine.recordingStartedAt ? new Date(routine.recordingStartedAt) : null
-  const durationSec = startTime ? Math.round((stopTime.getTime() - startTime.getTime()) / 1000) : 0
-  const durationStr = durationSec > 0 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : '?'
-
-  logger.app.info([
-    `──── RECORDING STOPPED ────`,
-    `  Entry #${routine.entryNumber} — "${routine.routineTitle}"`,
-    `  Studio: ${routine.studioName} (${routine.studioCode})`,
-    `  Category: ${routine.ageGroup} ${routine.category} ${routine.sizeCategory}`,
-    `  Scheduled: Day ${routine.scheduledDay || '?'}, Position ${routine.position}${routine.scheduledTime ? `, Time ${routine.scheduledTime}` : ''}`,
-    startTime ? `  Recording started: ${startTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '',
-    `  Recording stopped: ${stopStr} (${timestamp})`,
-    `  Actual duration: ${durationStr} (expected ${routine.durationMinutes} min)`,
-    routine.scheduledTime ? `  Offset from schedule: ${calcOffset(routine.scheduledTime, startTime || stopTime)}` : '',
-    `  Raw file: ${outputPath}`,
-    `────────────────────────────`,
-  ].filter(Boolean).join('\n'))
-
-  const settings = getSettings()
-
-  const routineDir = getRoutineOutputDir(routine, outputPath)
-  if (!routineDir) {
-    logger.app.warn('No output directory available — skipping file organization')
-    broadcastFullState()
-    return
-  }
-  const fileName = buildFileName(routine)
-
-  logger.app.info(`Routine dir: ${routineDir}`)
-
-  // Check if we need to archive existing files (re-recording)
-  if (fs.existsSync(routineDir) && settings.behavior.confirmBeforeOverwrite) {
-    await archiveExistingFiles(routineDir)
-
-    // Clear stale upload jobs and photo state from previous recording
-    const oldJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
-    for (const job of oldJobs) {
-      jobQueue.updateStatus(job.id, 'cancelled')
-    }
-    state.updateRoutineStatus(routine.id, routine.status, {
-      photos: undefined,
-      encodedFiles: undefined,
-      uploadProgress: undefined,
-      error: undefined,
-    })
-    logger.app.info(`Archived existing files to ${routineDir}/_archive — cleared ${oldJobs.length} old upload jobs`)
-  }
-
-  // Create routine directory
-  if (!fs.existsSync(routineDir)) {
-    await fs.promises.mkdir(routineDir, { recursive: true })
-    logger.app.info(`Created routine directory: ${routineDir}`)
-  }
-
-  // Rename the MKV file
-  const ext = path.extname(outputPath)
-  const newPath = path.join(routineDir, `${fileName}${ext}`)
-
-  // Wait for file lock release (OBS may still be writing) — retry loop instead of fixed 2s wait
-  await waitForFileLock(outputPath)
-
+  let stoppedRoutineId: string | null = null
   try {
+    const routineId = activeRecordingRoutineId
+    stoppedRoutineId = routineId
+    activeRecordingRoutineId = null
+
+    if (!routineId) {
+      logger.app.error(`Recording stopped but no activeRecordingRoutineId — raw file preserved at: ${outputPath}`)
+      return
+    }
+
+    const comp = state.getCompetition()
+    const routine = comp?.routines.find((r) => r.id === routineId) ?? null
+
+    if (!routine) {
+      logger.app.warn(`Recording stopped for unknown routine ${routineId} — raw file preserved at: ${outputPath}`)
+      return
+    }
+
+    // Update routine state
+    state.updateRoutineStatus(routine.id, 'recorded', {
+      recordingStoppedAt: timestamp,
+      outputPath,
+    })
+
+    const stopTime = new Date(timestamp)
+    const stopStr = stopTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const startTime = routine.recordingStartedAt ? new Date(routine.recordingStartedAt) : null
+    const durationSec = startTime ? Math.round((stopTime.getTime() - startTime.getTime()) / 1000) : 0
+    const durationStr = durationSec > 0 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : '?'
+
+    logger.app.info([
+      `──── RECORDING STOPPED ────`,
+      `  Entry #${routine.entryNumber} — "${routine.routineTitle}"`,
+      `  Studio: ${routine.studioName} (${routine.studioCode})`,
+      `  Category: ${routine.ageGroup} ${routine.category} ${routine.sizeCategory}`,
+      `  Scheduled: Day ${routine.scheduledDay || '?'}, Position ${routine.position}${routine.scheduledTime ? `, Time ${routine.scheduledTime}` : ''}`,
+      startTime ? `  Recording started: ${startTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '',
+      `  Recording stopped: ${stopStr} (${timestamp})`,
+      `  Actual duration: ${durationStr} (expected ${routine.durationMinutes} min)`,
+      routine.scheduledTime ? `  Offset from schedule: ${calcOffset(routine.scheduledTime, startTime || stopTime)}` : '',
+      `  Raw file: ${outputPath}`,
+      `────────────────────────────`,
+    ].filter(Boolean).join('\n'))
+
+    const settings = getSettings()
+
+    const routineDir = getRoutineOutputDir(routine, outputPath)
+    if (!routineDir) {
+      logger.app.warn('No output directory available — skipping file organization')
+      broadcastFullState()
+      return
+    }
+    const fileName = buildFileName(routine)
+
+    logger.app.info(`Routine dir: ${routineDir}`)
+
+    // Check if we need to archive existing files (re-recording)
+    if (fs.existsSync(routineDir) && settings.behavior.confirmBeforeOverwrite) {
+      await archiveExistingFiles(routineDir)
+
+      // Clear stale upload jobs and photo state from previous recording
+      const oldJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
+      for (const job of oldJobs) {
+        jobQueue.updateStatus(job.id, 'cancelled')
+      }
+      state.updateRoutineStatus(routine.id, routine.status, {
+        photos: undefined,
+        encodedFiles: undefined,
+        uploadProgress: undefined,
+        error: undefined,
+      })
+      logger.app.info(`Archived existing files to ${routineDir}/_archive — cleared ${oldJobs.length} old upload jobs`)
+    }
+
+    // Create routine directory
+    if (!fs.existsSync(routineDir)) {
+      await fs.promises.mkdir(routineDir, { recursive: true })
+      logger.app.info(`Created routine directory: ${routineDir}`)
+    }
+
+    // Rename the MKV file
+    const ext = path.extname(outputPath)
+    const newPath = path.join(routineDir, `${fileName}${ext}`)
+
+    // Wait for file lock release (OBS may still be writing) — retry loop instead of fixed 2s wait
+    await waitForFileLock(outputPath)
+
     // Try rename first (fast, same-drive). Fall back to copy+delete for cross-drive (EXDEV).
     try {
       await fs.promises.rename(outputPath, newPath)
@@ -270,10 +310,14 @@ export async function handleRecordingStopped(
     }
   } catch (err) {
     logger.app.error('File move failed:', err)
-    state.updateRoutineStatus(routine.id, 'recorded', { outputPath, error: String(err) })
+    if (stoppedRoutineId) {
+      state.updateRoutineStatus(stoppedRoutineId, 'recorded', { outputPath, error: String(err) })
+    }
+  } finally {
+    pendingStopProcessing?.resolve()
+    pendingStopProcessing = null
+    broadcastFullState()
   }
-
-  broadcastFullState()
 }
 
 export async function handleRecordingStarted(timestamp: string): Promise<void> {
@@ -313,12 +357,7 @@ export async function next(): Promise<void> {
 
     // If recording, stop first
     if (obsState.isRecording && obsState.connectionStatus === 'connected') {
-      try {
-        await obs.stopRecord()
-      } catch (err) {
-        logger.app.error('Failed to stop recording on Next:', err instanceof Error ? err.message : err)
-      }
-      // RecordStateChanged event will handle file rename and encoding
+      await stopRecordingAndWait('next')
     }
 
     // Advance to next routine
@@ -377,13 +416,7 @@ export async function nextFull(): Promise<void> {
 
     // 1. Stop recording if active
     if (connected && obs.getState().isRecording) {
-      try {
-        const stopPromise = obs.waitForRecordStop()
-        await obs.stopRecord()
-        await stopPromise
-      } catch (err) {
-        logger.app.error('nextFull: stop recording failed:', err instanceof Error ? err.message : err)
-      }
+      await stopRecordingAndWait('nextFull')
       await sleep(2000)
     }
 

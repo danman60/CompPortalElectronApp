@@ -7,11 +7,13 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:wpd-helper": "dotnet publish tools/wpd-helper/wpd-helper.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o tools/wpd-helper/bin",
+    "build:wpd-helper:self-contained": "dotnet publish tools/wpd-helper/wpd-helper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o tools/wpd-helper/bin",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
-    "predist": "bash scripts/fetch-ffmpeg-win.sh",
+    "predist": "bash scripts/fetch-ffmpeg-win.sh && npm run build:wpd-helper",
     "dist": "electron-vite build && electron-builder --win --dir",
-    "predist:installer": "bash scripts/fetch-ffmpeg-win.sh",
+    "predist:installer": "bash scripts/fetch-ffmpeg-win.sh && npm run build:wpd-helper",
     "dist:installer": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
@@ -67,6 +69,10 @@
       {
         "from": "resources/ffmpeg/ffmpeg.exe",
         "to": "ffmpeg.exe"
+      },
+      {
+        "from": "tools/wpd-helper/bin/wpd-helper.exe",
+        "to": "wpd-helper.exe"
       }
     ],
     "win": {

@@ -37,7 +37,14 @@ export default function TetherStatus(): React.ReactElement | null {
   return (
     <div className="tether-status">
       <span className="tether-icon">{'\u{1F4F7}'}</span>
-      <span className="tether-label">TETHERED</span>
+      <span className="tether-label">
+        TETHERED {tetherState.source === 'wpd-mtp' ? 'MTP' : 'USB'}
+      </span>
+      {tetherState.deviceName && (
+        <span className="tether-last" title={tetherState.deviceName}>
+          {tetherState.deviceName}
+        </span>
+      )}
       <span className="tether-count">{tetherState.photosReceived} photos</span>
       <span className={`tether-sync ${syncClass}`}>{syncLabel}</span>
       {tetherState.lastPhotoTime && (

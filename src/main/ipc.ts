@@ -292,11 +292,14 @@ export function registerAllHandlers(): void {
     logIPC(IPC_CHANNELS.UPLOAD_ALL)
     const comp = stateService.getCompetition()
     if (!comp) return { error: 'No competition loaded' }
+    if (!uploadService.hasResolvedUploadConnection()) {
+      return { error: 'No upload connection. Resolve a share code first.' }
+    }
     let queued = 0
     for (const routine of comp.routines) {
       if (routine.encodedFiles && routine.status !== 'uploaded' && routine.status !== 'confirmed' && routine.status !== 'uploading') {
-        uploadService.enqueueRoutine(routine)
-        queued++
+        const result = uploadService.enqueueRoutine(routine)
+        if (result.queuedJobs > 0) queued++
       }
     }
     if (queued > 0) uploadService.startUploads()
@@ -308,9 +311,16 @@ export function registerAllHandlers(): void {
     logIPC(IPC_CHANNELS.UPLOAD_ROUTINE, { routineId, force })
     const comp = stateService.getCompetition()
     if (!comp) return { error: 'No competition loaded' }
+    if (!uploadService.hasResolvedUploadConnection()) {
+      return { error: 'No upload connection. Resolve a share code first.' }
+    }
     const routine = comp.routines.find((r) => r.id === routineId)
     if (routine) {
-      uploadService.enqueueRoutine(routine, !!force)
+      const result = uploadService.enqueueRoutine(routine, !!force)
+      if (result.queuedJobs > 0) {
+        uploadService.startUploads()
+      }
+      return result
     }
   })
 
@@ -687,6 +697,11 @@ export function registerAllHandlers(): void {
     await tether.startWatching(dcimPath as string)
   })
 
+  safeHandle(IPC_CHANNELS.TETHER_START_WPD, async (deviceId: unknown) => {
+    logIPC(IPC_CHANNELS.TETHER_START_WPD, { deviceId })
+    await tether.startWatchingWPD(deviceId as string)
+  })
+
   safeHandle(IPC_CHANNELS.TETHER_STOP, async () => {
     logIPC(IPC_CHANNELS.TETHER_STOP)
     await tether.stopWatching()
@@ -694,6 +709,10 @@ export function registerAllHandlers(): void {
 
   safeHandle(IPC_CHANNELS.TETHER_GET_STATE, () => {
     return tether.getTetherState()
+  })
+
+  safeHandle(IPC_CHANNELS.TETHER_LIST_WPD_DEVICES, async () => {
+    return await tether.listWPDDevices()
   })
 
   // Start system monitor

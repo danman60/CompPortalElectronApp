@@ -165,6 +165,11 @@ export const useStore = create<AppStore>((set, get) => ({
   tetherState: {
     active: false,
     watchPath: null,
+    source: 'folder-watch',
+    sourceLabel: undefined,
+    deviceId: null,
+    deviceName: null,
+    stagingDir: null,
     photosReceived: 0,
     lastPhotoTime: null,
     cameraClockOffset: 0,

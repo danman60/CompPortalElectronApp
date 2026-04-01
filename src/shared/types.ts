@@ -394,9 +394,12 @@ export const IPC_CHANNELS = {
 
   // Tether (live camera watch)
   TETHER_START: 'tether:start',
+  TETHER_START_WPD: 'tether:start-wpd',
   TETHER_STOP: 'tether:stop',
   TETHER_GET_STATE: 'tether:get-state',
+  TETHER_LIST_WPD_DEVICES: 'tether:list-wpd-devices',
   TETHER_PROGRESS: 'tether:progress',
+  TETHER_WPD_DEVICE_EVENT: 'tether:wpd-device-event',
 } as const
 
 // --- FFmpeg ---
@@ -664,9 +667,25 @@ export interface RoutineBoundary {
 
 // --- Tether (Live Camera Watch) ---
 
+export interface WPDDevice {
+  id: string
+  name: string
+  manufacturer?: string
+}
+
+export interface WPDDeviceEvent {
+  event: 'device-connected' | 'device-disconnected'
+  device: WPDDevice
+}
+
 export interface TetherState {
   active: boolean
   watchPath: string | null
+  source: 'folder-watch' | 'wpd-mtp'
+  sourceLabel?: string
+  deviceId?: string | null
+  deviceName?: string | null
+  stagingDir?: string | null
   photosReceived: number
   lastPhotoTime: string | null
   cameraClockOffset: number
