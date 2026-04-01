@@ -73,6 +73,29 @@
   50% { opacity: 0.85; }
 }
 
+/* Disk warning glow — applied to .meter-bar when disk is low */
+.meter-bar.disk-warning .meter-fill {
+  animation: diskWarnPulse 1.5s ease-in-out infinite;
+}
+.meter-bar.disk-critical .meter-fill {
+  animation: diskCriticalPulse 0.8s ease-in-out infinite;
+}
+.meter-bar.disk-warning .meter-track {
+  box-shadow: 0 0 4px var(--warning);
+}
+.meter-bar.disk-critical .meter-track {
+  box-shadow: 0 0 8px var(--danger), 0 0 16px var(--danger);
+}
+
+@keyframes diskWarnPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+@keyframes diskCriticalPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--danger); }
+  50% { opacity: 0.7; box-shadow: 0 0 12px var(--danger); }
+}
+
 .meter-value {
   color: var(--text-secondary);
   min-width: 28px;

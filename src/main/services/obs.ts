@@ -2,6 +2,7 @@ import OBSWebSocketDefault, { EventSubscription } from 'obs-websocket-js'
 import { OBSState, AudioLevel, IPC_CHANNELS } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
+import { getSettings } from './settings'
 
 // Handle CJS←ESM interop: externalized ESM package wraps default export
 const OBSWebSocket = (OBSWebSocketDefault as any).default || OBSWebSocketDefault
@@ -207,15 +208,14 @@ export function waitForRecordStop(timeoutMs = 15000): Promise<void> {
   })
 }
 
-const MAX_RECORD_SECONDS = 15 * 60 // 15 minutes
-
 function startRecordingTimer(): void {
   if (recordingTimer) clearInterval(recordingTimer)
   state.recordTimeSec = 0
   recordingTimer = setInterval(() => {
     state.recordTimeSec++
-    if (state.recordTimeSec >= MAX_RECORD_SECONDS && state.isRecording) {
-      logger.obs.warn(`Recording hit ${MAX_RECORD_SECONDS / 60}min hard limit — auto-stopping`)
+    const maxMinutes = getSettings().obs.maxRecordMinutes || 0
+    if (maxMinutes > 0 && state.recordTimeSec >= maxMinutes * 60 && state.isRecording) {
+      logger.obs.warn(`Recording hit ${maxMinutes}min limit — auto-stopping`)
       stopRecord().catch((err) => logger.obs.error('Auto-stop failed:', err))
     }
     broadcastState()

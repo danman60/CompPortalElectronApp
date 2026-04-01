@@ -630,6 +630,10 @@ export async function processFullDayRecording(
       allSegments.push(...offsetSegments)
 
       const boundaries = parseAnnouncements(segments, triggerNames, videoStartTime)
+      // Tag each boundary with its source file index for multi-file recovery
+      for (const b of boundaries) {
+        b.sourceFileIndex = v
+      }
       allBoundaries.push(...boundaries)
 
       if (segments.length > 0) {

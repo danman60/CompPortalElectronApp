@@ -136,7 +136,7 @@ export function enqueue(
   jobs.push(job)
   indexAdd(job)
   logger.app.info(`Job queue: enqueued ${type} job ${job.id} for routine ${routineId}`)
-  save()
+  flushSync()  // Critical: enqueued jobs must survive crash
   return job
 }
 

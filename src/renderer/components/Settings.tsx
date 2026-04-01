@@ -364,6 +364,17 @@ export default function Settings(): React.ReactElement {
               </select>
               <span className="hint">Applied to OBS on save (Simple output mode)</span>
             </div>
+            <div className="field">
+              <label>Max Recording Minutes</label>
+              <input
+                type="number"
+                min={0}
+                max={180}
+                value={draft.obs.maxRecordMinutes}
+                onChange={(e) => update('obs', { maxRecordMinutes: parseInt(e.target.value) || 0 })}
+              />
+              <span className="hint">Auto-stop after N minutes (0 = no limit). Increase for awards/long sets.</span>
+            </div>
           </div>
         </div>
 

@@ -205,6 +205,7 @@ export interface AppSettings {
     url: string
     password: string
     recordingFormat: 'mkv' | 'mp4' | 'flv'
+    maxRecordMinutes: number    // 0 = no limit
   }
   compsync: {
     shareCode: string // replaces tenant/apiKey/competition/uploadEndpoint
@@ -578,6 +579,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     url: 'ws://localhost:4455',
     password: '',
     recordingFormat: 'mkv',
+    maxRecordMinutes: 15,
   },
   compsync: {
     shareCode: '',
@@ -655,6 +657,7 @@ export interface RoutineBoundary {
   index: number
   name: string
   routineId?: string           // matched CompSync routine ID
+  sourceFileIndex?: number     // index into mkvPaths[] for multi-file recovery
   timestampStart: string       // ISO
   timestampEnd: string
   videoOffsetStartSec: number

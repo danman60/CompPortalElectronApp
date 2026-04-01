@@ -162,6 +162,26 @@ function getSpawnOptions(): SpawnOptions {
   return opts
 }
 
+/** Probe input file for audio track count using ffprobe/ffmpeg. */
+function probeAudioTrackCount(ffmpegPath: string, inputPath: string): Promise<number> {
+  return new Promise((resolve) => {
+    // Use ffmpeg -i to get stream info (works without ffprobe binary)
+    const proc = spawn(ffmpegPath, ['-i', inputPath, '-hide_banner'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    let stderr = ''
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    proc.on('close', () => {
+      // Count "Stream #0:N: Audio" lines
+      const audioStreams = stderr.match(/Stream #\d+:\d+.*Audio/g)
+      resolve(audioStreams ? audioStreams.length : 0)
+    })
+    proc.on('error', () => resolve(0))
+    setTimeout(() => { proc.kill(); resolve(0) }, 10000)
+  })
+}
+
 function setPriority(pid: number): void {
   const settings = getSettings()
   if (process.platform !== 'win32' || settings.ffmpeg.cpuPriority === 'normal') return
@@ -308,6 +328,34 @@ async function runFFmpeg(job: FFmpegJob): Promise<void> {
     await fs.promises.mkdir(job.outputDir, { recursive: true })
   }
 
+  // Pre-flight: ensure enough disk space (need ~2x input file for encoding headroom)
+  try {
+    const inputStat = fs.statSync(job.inputPath)
+    const requiredBytes = inputStat.size * 2
+    const driveRoot = job.outputDir.match(/^[a-zA-Z]:\\/) ? job.outputDir.slice(0, 3) : job.outputDir
+    const diskStats = fs.statfsSync(driveRoot)
+    const freeBytes = diskStats.bavail * diskStats.bsize
+    if (freeBytes < requiredBytes) {
+      const freeGB = (freeBytes / (1024 * 1024 * 1024)).toFixed(1)
+      const needGB = (requiredBytes / (1024 * 1024 * 1024)).toFixed(1)
+      throw new Error(`Insufficient disk space: ${freeGB}GB free, need ~${needGB}GB for encoding`)
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Insufficient disk space')) throw err
+    // statfsSync may fail on network drives — log and continue
+    logger.ffmpeg.warn(`Disk space pre-check failed (non-fatal): ${err instanceof Error ? err.message : err}`)
+  }
+
+  // Validate audio track count matches expected judge count
+  const audioTrackCount = await probeAudioTrackCount(ffmpegPath, job.inputPath)
+  if (audioTrackCount > 0 && audioTrackCount <= job.judgeCount) {
+    logger.ffmpeg.warn(
+      `Input has ${audioTrackCount} audio tracks but ${job.judgeCount + 1} expected (1 performance + ${job.judgeCount} judges). ` +
+      `Judge tracks ${audioTrackCount}..${job.judgeCount} will fail. Clamping judgeCount to ${audioTrackCount - 1}.`
+    )
+    job.judgeCount = Math.max(0, audioTrackCount - 1)
+  }
+
   if (job.processingMode === 'smart') {
     await runSmartEncode(job, ffmpegPath)
     return
@@ -347,24 +395,44 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
 
   try {
     // Step 1: Encode performance video (full resolution)
-    logger.ffmpeg.info(`Smart encode step 1: encoding video (${encoder})...`)
-    await spawnFFmpegWithTimeout(ffmpegPath, [
-      '-y', '-i', job.inputPath,
-      '-map', '0:v:0',
-      '-an',
-      ...encoderArgs,
-      tempVideo,
-    ])
-
-    // Step 1b: Encode judge video at lower resolution if configured
-    if (tempJudgeVideo) {
-      const scale = judgeRes === '480p' ? '854:480' : '1280:720'
-      logger.ffmpeg.info(`Smart encode step 1b: encoding judge video at ${judgeRes} (${encoder})...`)
+    // Try NVENC first, fall back to CPU if GPU unavailable
+    let actualEncoder = encoder
+    let actualEncoderArgs = encoderArgs
+    try {
+      logger.ffmpeg.info(`Smart encode step 1: encoding video (${encoder})...`)
       await spawnFFmpegWithTimeout(ffmpegPath, [
         '-y', '-i', job.inputPath,
         '-map', '0:v:0',
         '-an',
         ...encoderArgs,
+        tempVideo,
+      ])
+    } catch (err) {
+      if (useNvenc) {
+        logger.ffmpeg.warn(`NVENC failed (${err instanceof Error ? err.message : err}), falling back to CPU (libx264)`)
+        actualEncoder = 'libx264'
+        actualEncoderArgs = ['-c:v', 'libx264', '-preset', 'fast', '-crf', '23']
+        await spawnFFmpegWithTimeout(ffmpegPath, [
+          '-y', '-i', job.inputPath,
+          '-map', '0:v:0',
+          '-an',
+          ...actualEncoderArgs,
+          tempVideo,
+        ])
+      } else {
+        throw err
+      }
+    }
+
+    // Step 1b: Encode judge video at lower resolution if configured
+    if (tempJudgeVideo) {
+      const scale = judgeRes === '480p' ? '854:480' : '1280:720'
+      logger.ffmpeg.info(`Smart encode step 1b: encoding judge video at ${judgeRes} (${actualEncoder})...`)
+      await spawnFFmpegWithTimeout(ffmpegPath, [
+        '-y', '-i', job.inputPath,
+        '-map', '0:v:0',
+        '-an',
+        ...actualEncoderArgs,
         '-vf', `scale=${scale}:force_original_aspect_ratio=decrease,pad=${scale}:(ow-iw)/2:(oh-ih)/2`,
         tempJudgeVideo,
       ])
@@ -484,13 +552,16 @@ function buildReencodeArgs(job: FFmpegJob, scale: string): string[] {
 
 /** Clean up temp files from failed smart encode */
 function cleanupTempFiles(outputDir: string): void {
-  try {
-    const tempPath = path.join(outputDir, '_temp_video.mp4')
-    if (fs.existsSync(tempPath)) {
-      fs.unlinkSync(tempPath)
-      logger.ffmpeg.info(`Cleaned up temp file: ${tempPath}`)
-    }
-  } catch {}
+  const tempFiles = ['_temp_video.mp4', '_temp_judge_video.mp4']
+  for (const tempName of tempFiles) {
+    try {
+      const tempPath = path.join(outputDir, tempName)
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath)
+        logger.ffmpeg.info(`Cleaned up temp file: ${tempPath}`)
+      }
+    } catch {}
+  }
 }
 
 export function getQueueLength(): number {

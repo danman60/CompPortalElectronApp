@@ -270,8 +270,8 @@ export async function startRecovery(
       if (!routine) continue
 
       // Determine which MKV file this boundary belongs to
-      // For now, use first MKV (single file is the common recovery case)
-      const mkvPath = config.mkvPaths[0]
+      const fileIdx = boundary.sourceFileIndex ?? 0
+      const mkvPath = config.mkvPaths[fileIdx] || config.mkvPaths[0]
 
       try {
         const outputPath = await splitVideoByBoundary(

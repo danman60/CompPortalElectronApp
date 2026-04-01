@@ -32,6 +32,7 @@ const API_TIMEOUT_MS = 30000
 let isUploading = false
 let isPaused = false
 let currentAbortController: AbortController | null = null
+let currentAbortRoutineId: string | null = null
 
 // Fix 4: Track uploading routines for O(1) lookup in stopUploads
 const activeUploadRoutineIds = new Set<string>()
@@ -147,6 +148,7 @@ export function stopUploads(): void {
   if (currentAbortController) {
     currentAbortController.abort()
     currentAbortController = null
+    currentAbortRoutineId = null
     logger.upload.info('Upload paused — current upload aborted')
   }
 
@@ -175,10 +177,11 @@ export function cancelRoutineUpload(routineId: string): void {
     }
   }
 
-  // If the current upload is for this routine, abort it
-  if (currentAbortController) {
+  // Only abort if the current in-flight upload belongs to THIS routine
+  if (currentAbortController && currentAbortRoutineId === routineId) {
     currentAbortController.abort()
     currentAbortController = null
+    currentAbortRoutineId = null
   }
 
   // Reset routine status back to encoded
@@ -332,6 +335,7 @@ async function processLoop(): Promise<void> {
     } finally {
       // ALWAYS clean up abort controller
       currentAbortController = null
+      currentAbortRoutineId = null
     }
   }
 
@@ -429,8 +433,9 @@ function uploadFileToSignedUrl(
       reject(new Error(`Upload timed out after ${timeoutMs / 1000}s`))
     }, timeoutMs)
 
-    // Abort controller for pause/cancel
+    // Abort controller for pause/cancel — tag with routine so cancel targets correctly
     currentAbortController = new AbortController()
+    currentAbortRoutineId = payload.routineId
     currentAbortController.signal.addEventListener('abort', () => {
       clearTimeout(timer)
       req.destroy()
@@ -518,6 +523,67 @@ async function callPluginComplete(info: {
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Retry plugin/complete for routines where all uploads succeeded but completion wasn't called (crash recovery). */
+export async function retryOrphanedCompletions(): Promise<number> {
+  const allJobs = jobQueue.getAll().filter(j => j.type === 'upload')
+
+  // Group by routine
+  const byRoutine = new Map<string, typeof allJobs>()
+  for (const job of allJobs) {
+    let arr = byRoutine.get(job.routineId)
+    if (!arr) { arr = []; byRoutine.set(job.routineId, arr) }
+    arr.push(job)
+  }
+
+  let retried = 0
+  for (const [routineId, routineJobs] of byRoutine) {
+    const activeJobs = routineJobs.filter(j => j.status !== 'cancelled')
+    if (activeJobs.length === 0) continue
+    const allDone = activeJobs.every(j => j.status === 'done')
+    if (!allDone) continue
+
+    // Check if routine is still in 'uploading' state (completion never fired)
+    const routine = state.getCompetition()?.routines.find(r => r.id === routineId)
+    if (!routine || routine.status === 'uploaded') continue
+
+    logger.upload.info(`Retrying orphaned completion for routine ${routineId}`)
+    try {
+      const storagePaths: Record<string, string> = {}
+      const photoStoragePaths: string[] = []
+      for (const job of activeJobs) {
+        const jp = job.payload as unknown as UploadPayload
+        const sp = (job.payload as Record<string, unknown>).storagePath as string | undefined
+        if (!sp) continue
+        if (jp.type === 'photos') {
+          photoStoragePaths.push(sp)
+        } else if (jp.role) {
+          storagePaths[jp.role] = sp
+        }
+      }
+
+      if (!hasResolvedUploadConnection()) continue
+
+      const conn = getConnection()
+      await callPluginComplete({
+        routineId,
+        entryId: routineId,
+        competitionId: conn.competitionId,
+        storagePaths,
+        photoStoragePaths,
+      })
+
+      state.updateRoutineStatus(routineId, 'uploaded')
+      broadcastRoutineUpdate(routineId)
+      retried++
+      logger.upload.info(`Orphaned completion succeeded for routine ${routineId}`)
+    } catch (err) {
+      logger.upload.error(`Orphaned completion retry failed for ${routineId}:`, err instanceof Error ? err.message : err)
+    }
+  }
+
+  return retried
 }
 
 export function getQueueLength(): number {

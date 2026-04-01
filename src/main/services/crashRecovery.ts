@@ -5,6 +5,7 @@ import { logger } from '../logger'
 import { getSettings } from './settings'
 import * as ffmpegService from './ffmpeg'
 import * as jobQueue from './jobQueue'
+import * as stateService from './state'
 
 interface OrphanedFile {
   filePath: string
@@ -84,6 +85,17 @@ export async function cleanupTempFiles(): Promise<number> {
       } catch {
         // No temp file — fine
       }
+
+      // Also clean judge video temp
+      const tempJudgePath = path.join(routineDir, '_temp_judge_video.mp4')
+      try {
+        await fs.promises.access(tempJudgePath)
+        await fs.promises.unlink(tempJudgePath)
+        cleaned++
+        logger.app.info(`Cleaned temp file: ${tempJudgePath}`)
+      } catch {
+        // No temp judge file — fine
+      }
     }
   } catch {}
 
@@ -109,12 +121,24 @@ export async function recoverOrphans(orphans: OrphanedFile[]): Promise<void> {
 
   const settings = getSettings()
 
+  const competition = stateService.getCompetition()
+  const routines = competition?.routines ?? []
+
   for (const orphan of orphans) {
     const dir = path.dirname(orphan.filePath)
-    logger.app.info(`Recovering orphan: ${orphan.fileName}`)
+    const folderName = path.basename(dir)
+
+    // Look up actual routine by entry number (folder name) instead of using folder name as ID
+    const routine = routines.find((r) => r.entryNumber === folderName)
+    const routineId = routine?.id ?? folderName // fallback to folder name only if no schedule loaded
+    if (!routine) {
+      logger.app.warn(`Crash recovery: no routine found for folder "${folderName}", using folder name as ID`)
+    }
+
+    logger.app.info(`Recovering orphan: ${orphan.fileName} → routine ${routineId}`)
 
     ffmpegService.enqueueJob({
-      routineId: path.basename(dir),
+      routineId,
       inputPath: orphan.filePath,
       outputDir: dir,
       judgeCount: settings.competition.judgeCount,

@@ -212,7 +212,7 @@ function SystemMonitor(): React.ReactElement | null {
         <span className="meter-value">{cpuPercent.toFixed(0)}%</span>
       </div>
       {stats.diskFreeGB >= 0 && (
-        <div className="meter-bar" title={`Disk: ${stats.diskFreeGB.toFixed(1)}GB free`}>
+        <div className={`meter-bar ${stats.diskFreeGB < 2 ? 'disk-critical' : stats.diskFreeGB < 10 ? 'disk-warning' : ''}`} title={`Disk: ${stats.diskFreeGB.toFixed(1)}GB free`}>
           <span className="meter-label">Disk</span>
           <div className="meter-track">
             <div

@@ -11,6 +11,7 @@ import * as wsHub from './services/wsHub'
 import * as hotkeys from './services/hotkeys'
 import * as jobQueue from './services/jobQueue'
 import * as ffmpegService from './services/ffmpeg'
+import * as uploadService from './services/upload'
 import * as state from './services/state'
 import * as systemMonitor from './services/systemMonitor'
 import * as driveMonitor from './services/driveMonitor'
@@ -200,6 +201,10 @@ app.whenReady().then(async () => {
         } else {
           logger.app.info(`Share code resolved — upload credentials ready`)
         }
+        // Retry orphaned completions (routines where uploads finished but completion call was lost)
+        uploadService.retryOrphanedCompletions().then(count => {
+          if (count > 0) logger.app.info(`Recovered ${count} orphaned upload completions`)
+        }).catch(() => {})
       })
       .catch((err) => {
         logger.app.warn(`Share code resolve failed: ${err instanceof Error ? err.message : err}`)
