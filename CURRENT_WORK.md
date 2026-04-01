@@ -1,22 +1,28 @@
 # Current Work - CompSync Electron App
 
 ## Last Session Summary
-Major feature session spanning Mar 30 - Apr 1. Built post-event recovery mode, 3-pane layout, full overlay system (9 animations, ticker, starting soon), tethered photo capture (USB mass storage + MTP/PTP via WPD helper), and applied 5 critical safety fixes to the recording/upload/state pipeline.
+Fixed 4 bugs from code audit + 7 production safety fixes. Full audit completed. Deployed to DART.
 
 ## What Changed
-- `c3cc4b1` feat: v2.6.0 — overlay system, 3-pane layout, tethered photos, recovery mode (34 files, +3701)
-- `0ce5053` fix: WPD helper compile errors (COM activation, dynamic dispatch, type inference)
-- `cdb3388` fix: 5 critical safety fixes — recording race, upload safety, state decoupling, tether offset, async photos (16 files, +700/-393)
+- `1f69ae6` fix: 11 production safety fixes — upload targeting, recovery multi-file, encoding guards, disk monitoring
+- `a560798` chore: update CURRENT_WORK.md — session wrap-up
+- `cdb3388` fix: 5 critical safety fixes — recording race, upload safety, state decoupling, tether offset, async photos
 
 ## Build Status
-PASSING — last build deployed to DART at 2026-03-31, app running v2.6.0
+PASSING — deployed to DART at 2026-04-01, app running v2.6.0
 
-## Safety Fixes Applied
-1. `next()` recording stop barrier — prevents routine mis-attribution
-2. Upload `enqueueRoutine()` returns structured result — safe without share code
-3. State file always in `app.getPath('userData')` — output dir change can't lose progress
-4. Tether clock offset applied before matching — prevents silent mis-sorts
-5. Photo import async with event loop yields — won't block operator UI
+## Fixes Applied This Session
+1. Upload cancel targets correct routine (was killing wrong upload)
+2. Recovery splits from correct MKV via sourceFileIndex (was hardcoded [0])
+3. Crash recovery looks up routine by entry number (was using folder name as ID)
+4. OBS max record time configurable (was hardcoded 15min)
+5. Pre-encode disk space check (~2x input file)
+6. Audio track validation + auto-clamp judgeCount
+7. NVENC auto-fallback to libx264
+8. Job queue flushSync on enqueue (crash-safe)
+9. retryOrphanedCompletions() on startup
+10. Temp judge video cleanup in crash recovery
+11. Disk meter glow indicator (yellow <10GB, red <2GB)
 
 ## Known Issues
 - Visual editor drag targets are half-scale approximations of 1920px overlay elements
@@ -24,7 +30,7 @@ PASSING — last build deployed to DART at 2026-03-31, app running v2.6.0
 - No UI banner for "uploads disabled — no share code"
 
 ## Next Steps (priority order)
-1. Hardware test on DART with OBS — full recording + encoding + upload flow
+1. Hardware smoke test on DART with OBS — full recording + encoding + upload flow
 2. Test overlay in OBS browser source
 3. Test camera tethering with real camera
 4. Add upload-disabled UI banner
