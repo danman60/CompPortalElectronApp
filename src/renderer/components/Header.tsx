@@ -23,10 +23,17 @@ function ActionBar(): React.ReactElement {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadsPaused, setUploadsPaused] = useState(false)
   const [encodingPaused, setEncodingPaused] = useState(false)
+  const [wifiDisplayRunning, setWifiDisplayRunning] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
 
   const autoEncode = settings?.behavior?.autoEncodeRecordings ?? false
   const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
+
+  useEffect(() => {
+    window.api?.wifiDisplayStatus().then((s: { running?: boolean }) => {
+      if (s) setWifiDisplayRunning(!!s.running)
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent): void {
@@ -95,6 +102,25 @@ function ActionBar(): React.ReactElement {
     alert(`Photo import complete:\n\n${result.matched ?? 0} matched to routines\n${result.unmatched ?? 0} unmatched${offset}`)
   }
 
+  async function handleTabletToggle(): Promise<void> {
+    const wd = settings?.wifiDisplay
+    if (!wd?.binaryPath || wd.monitorIndex === null || wd.monitorIndex === undefined) {
+      useStore.getState().setSettingsOpen(true)
+      return
+    }
+    try {
+      if (wifiDisplayRunning) {
+        const result = await window.api.wifiDisplayStop() as { running?: boolean }
+        setWifiDisplayRunning(!!result?.running)
+      } else {
+        const result = await window.api.wifiDisplayStart() as { running?: boolean }
+        setWifiDisplayRunning(!!result?.running)
+      }
+    } catch {
+      // ignore errors
+    }
+  }
+
   const autoWatchActive = tetherState?.active && tetherState?.source === 'folder-watch'
   const autoWatchFolder = settings?.tether?.autoWatchFolder || ''
 
@@ -143,7 +169,6 @@ function ActionBar(): React.ReactElement {
   }
 
   const uploadDisabled = isUploading || uploadingCount > 0
-  const showPauseBar = encodingCount > 0 || uploadingCount > 0 || encodingPaused || uploadsPaused
 
   return (
     <div className="action-bar">
@@ -232,29 +257,48 @@ function ActionBar(): React.ReactElement {
         <span className="ab-icon">{'\u{1F6E0}'}</span>
         <span className="ab-label">Recovery</span>
       </button>
-      {showPauseBar && (
-        <div className="ab-pause-bar">
-          <button
-            className={`ab-pause-btn${encodingPaused ? ' paused' : ''}`}
-            onClick={toggleEncodePause}
-            title={encodingPaused ? 'Resume encoding' : 'Pause encoding (finishes current)'}
-          >
-            {encodingPaused ? '\u25B6 Encode' : '\u23F8 Encode'}
-            {encodingCount > 0 && !encodingPaused && <span className="ab-count">{encodingCount}</span>}
-          </button>
-          <button
-            className={`ab-pause-btn${uploadsPaused ? ' paused' : ''}`}
-            onClick={toggleUploadPause}
-            title={uploadsPaused ? 'Resume uploads' : 'Pause uploads (aborts current)'}
-          >
-            {uploadsPaused ? '\u25B6 Upload' : '\u23F8 Upload'}
-            {uploadingCount > 0 && !uploadsPaused && <span className="ab-count">{uploadingCount}</span>}
-          </button>
-        </div>
-      )}
-      <div className="ab-helper-text">
-        Click = one-time action &middot; Right-click = toggle auto mode
+
+      {/* Tablet Display */}
+      <button
+        className={`ab-btn tablet${wifiDisplayRunning ? ' streaming' : ''}`}
+        onClick={handleTabletToggle}
+        title={wifiDisplayRunning ? 'Stop tablet display streaming' : 'Start tablet display streaming'}
+      >
+        <span
+          className="ab-status-dot"
+          style={{
+            display: 'inline-block',
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            background: wifiDisplayRunning ? 'var(--success)' : 'var(--text-muted)',
+            marginRight: '4px',
+          }}
+        />
+        <span className="ab-label">Tablet</span>
+      </button>
+
+      <div className="ab-pause-bar">
+        <button
+          className={`ab-pause-btn${encodingPaused ? ' paused' : ''}`}
+          onClick={toggleEncodePause}
+          disabled={encodingCount === 0 && !encodingPaused}
+          title={encodingPaused ? 'Resume encoding' : 'Pause encoding (finishes current)'}
+        >
+          {encodingPaused ? '\u25B6' : '\u23F8'} Encode
+          {encodingCount > 0 && <span className="ab-count">{encodingCount}</span>}
+        </button>
+        <button
+          className={`ab-pause-btn${uploadsPaused ? ' paused' : ''}`}
+          onClick={toggleUploadPause}
+          disabled={uploadingCount === 0 && !uploadsPaused}
+          title={uploadsPaused ? 'Resume uploads' : 'Pause uploads (aborts current)'}
+        >
+          {uploadsPaused ? '\u25B6' : '\u23F8'} Upload
+          {uploadingCount > 0 && <span className="ab-count">{uploadingCount}</span>}
+        </button>
       </div>
+      {/* Helper text moved to button titles — right-click = toggle auto */}
     </div>
   )
 }
