@@ -267,6 +267,17 @@ export interface AppSettings {
   }
   tether: {
     autoWatchFolder: string
+    matchBufferMs: number
+  }
+  wifiDisplay: {
+    binaryPath: string | null
+    monitorIndex: number | null
+    bitrate: number
+    fps: number
+    clientIp: string | null
+    videoPort: number
+    touchPort: number
+    autoStart: boolean
   }
 }
 
@@ -414,6 +425,13 @@ export const IPC_CHANNELS = {
   TETHER_LIST_WPD_DEVICES: 'tether:list-wpd-devices',
   TETHER_PROGRESS: 'tether:progress',
   TETHER_WPD_DEVICE_EVENT: 'tether:wpd-device-event',
+
+  // Wifi Display
+  WIFI_DISPLAY_GET_MONITORS: 'wifi-display:get-monitors',
+  WIFI_DISPLAY_START: 'wifi-display:start',
+  WIFI_DISPLAY_STOP: 'wifi-display:stop',
+  WIFI_DISPLAY_STATUS: 'wifi-display:status',
+  WIFI_DISPLAY_SET_MONITOR: 'wifi-display:set-monitor',
 } as const
 
 // --- FFmpeg ---
@@ -556,7 +574,7 @@ export interface WSCommandMessage {
 
 export interface WSIdentifyMessage {
   type: 'identify'
-  client: 'overlay' | 'streamdeck'
+  client: 'overlay' | 'streamdeck' | 'tablet'
 }
 
 export type WSMessage = WSStateMessage | WSCommandMessage | WSIdentifyMessage
@@ -665,6 +683,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   tether: {
     autoWatchFolder: '',
+    matchBufferMs: 1000,
+  },
+  wifiDisplay: {
+    binaryPath: null,
+    monitorIndex: null,
+    bitrate: 3000,
+    fps: 30,
+    clientIp: null,
+    videoPort: 5000,
+    touchPort: 5001,
+    autoStart: false,
   },
 }
 
@@ -730,4 +759,20 @@ export interface RecoveryState {
   currentRoutine?: string
   routinesFound?: number
   routinesTotal?: number
+}
+
+// --- Wifi Display ---
+
+export interface WifiDisplayState {
+  running: boolean
+  monitorIndex: number | null
+}
+
+export interface MonitorInfo {
+  id: number
+  label: string
+  width: number
+  height: number
+  x: number
+  y: number
 }

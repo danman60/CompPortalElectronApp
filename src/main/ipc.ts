@@ -17,6 +17,7 @@ import * as jobQueue from './services/jobQueue'
 import * as clipVerify from './services/clipVerify'
 import * as driveMonitor from './services/driveMonitor'
 import * as tether from './services/tether'
+import * as wifiDisplay from './services/wifiDisplay'
 import { checkAndRecover } from './services/crashRecovery'
 import * as recovery from './services/recovery'
 import { logger } from './logger'
@@ -725,6 +726,31 @@ export function registerAllHandlers(): void {
 
   safeHandle(IPC_CHANNELS.TETHER_LIST_WPD_DEVICES, async () => {
     return await tether.listWPDDevices()
+  })
+
+  // --- Wifi Display ---
+  safeHandle(IPC_CHANNELS.WIFI_DISPLAY_GET_MONITORS, () => {
+    return wifiDisplay.getMonitors()
+  })
+
+  safeHandle(IPC_CHANNELS.WIFI_DISPLAY_START, async () => {
+    await wifiDisplay.start()
+    return wifiDisplay.getStatus()
+  })
+
+  safeHandle(IPC_CHANNELS.WIFI_DISPLAY_STOP, async () => {
+    await wifiDisplay.stop()
+    return wifiDisplay.getStatus()
+  })
+
+  safeHandle(IPC_CHANNELS.WIFI_DISPLAY_STATUS, () => {
+    return wifiDisplay.getStatus()
+  })
+
+  safeHandle(IPC_CHANNELS.WIFI_DISPLAY_SET_MONITOR, (monitorIndex: unknown) => {
+    const s = settings.getSettings()
+    settings.setSettings({ wifiDisplay: { ...s.wifiDisplay, monitorIndex: monitorIndex as number } })
+    return { ok: true }
   })
 
   // Start system monitor

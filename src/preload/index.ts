@@ -135,6 +135,14 @@ const api = {
   tetherGetState: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_GET_STATE),
   tetherListWPDDevices: () => ipcRenderer.invoke(IPC_CHANNELS.TETHER_LIST_WPD_DEVICES),
 
+  // Wifi Display
+  wifiDisplayGetMonitors: () => ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_GET_MONITORS),
+  wifiDisplayStart: () => ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_START),
+  wifiDisplayStop: () => ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_STOP),
+  wifiDisplayStatus: () => ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_STATUS),
+  wifiDisplaySetMonitor: (monitorIndex: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_SET_MONITOR, monitorIndex),
+
   // Recovery
   recoveryBrowseMkv: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_BROWSE_MKV),
   recoveryStart: (config: { mkvPaths: string[]; photoFolderPath?: string; outputDir: string }) =>

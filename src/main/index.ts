@@ -18,6 +18,7 @@ import * as driveMonitor from './services/driveMonitor'
 import * as schedule from './services/schedule'
 import * as wpdBridge from './services/wpdBridge'
 import * as tether from './services/tether'
+import * as wifiDisplay from './services/wifiDisplay'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -149,6 +150,7 @@ app.whenReady().then(async () => {
 
   // Kill orphaned FFmpeg from previous crash
   ffmpegService.killOrphanedProcess()
+  wifiDisplay.killOrphanedProcess()
 
   // Register IPC handlers before creating window
   registerAllHandlers()
@@ -176,8 +178,8 @@ app.whenReady().then(async () => {
   // Register global hotkeys
   hotkeys.register()
 
-  // Start drive monitor for SD card auto-detect
-  driveMonitor.startMonitoring()
+  // Drive monitor disabled — using folder-watch mode for photos
+  // driveMonitor.startMonitoring()
   // WPD/MTP disabled — using folder-watch mode instead
   // tether.initWPDHandlers()
   // wpdBridge.startMonitor().catch((err) => {
@@ -199,6 +201,16 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Auto-start wifi display if configured
+  const wdSettings = getSettings().wifiDisplay
+  if (wdSettings?.autoStart && wdSettings.binaryPath && wdSettings.monitorIndex !== null) {
+    wifiDisplay.start().then(() => {
+      logger.app.info('Auto-started wifi display streaming')
+    }).catch((err: Error) => {
+      logger.app.warn(`Auto-start wifi display failed: ${err.message}`)
+    })
+  }
+
   // Check for crash recovery
   checkAndRecover().catch((err) => {
     logger.app.warn('Crash recovery check failed:', err)
@@ -218,6 +230,21 @@ app.whenReady().then(async () => {
         } else {
           logger.app.info(`Share code resolved — upload credentials ready`)
         }
+        // Fix orphaned 'uploading' routines (job queue is in-memory, lost on restart)
+        const comp = state.getCompetition()
+        if (comp) {
+          let resetCount = 0
+          for (const r of comp.routines) {
+            if (r.status === 'uploading') {
+              state.updateRoutineStatus(r.id, 'encoded')
+              resetCount++
+            }
+          }
+          if (resetCount > 0) {
+            logger.app.info(`Reset ${resetCount} orphaned 'uploading' routines to 'encoded'`)
+            recording.broadcastFullState()
+          }
+        }
         // Retry orphaned completions (routines where uploads finished but completion call was lost)
         uploadService.retryOrphanedCompletions().then(count => {
           if (count > 0) logger.app.info(`Recovered ${count} orphaned upload completions`)
@@ -225,6 +252,9 @@ app.whenReady().then(async () => {
         // Retry encoded routines that were skipped due to missing connection at encode time
         const skippedRetried = uploadService.retrySkippedEncoded()
         if (skippedRetried > 0) logger.app.info(`Retried ${skippedRetried} encoded routines that were skipped earlier`)
+        // Retry incomplete photo uploads for routines already marked 'uploaded'
+        const photoRetried = uploadService.retryIncompletePhotoUploads()
+        if (photoRetried > 0) logger.app.info(`Retrying incomplete photo uploads for ${photoRetried} routines`)
       })
       .catch((err) => {
         logger.app.warn(`Share code resolve failed: ${err instanceof Error ? err.message : err}`)
@@ -251,6 +281,9 @@ app.on('before-quit', async (event) => {
   // Flush persistent state
   state.saveStateImmediate()
   jobQueue.cleanup()
+
+  // Stop wifi display
+  wifiDisplay.cleanup()
 
   // Stop servers + hotkeys + monitors
   hotkeys.unregister()
