@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
-import type { AppSettings } from '../../shared/types'
+import type { AppSettings, MonitorInfo } from '../../shared/types'
 import '../styles/settings.css'
 
 // --- Hotkey Capture Component ---
@@ -74,6 +74,7 @@ export default function Settings(): React.ReactElement {
   const [namingPreview, setNamingPreview] = useState('')
   const [diagCopied, setDiagCopied] = useState(false)
   const [overlayCopied, setOverlayCopied] = useState(false)
+  const [monitors, setMonitors] = useState<MonitorInfo[]>([])
 
   useEffect(() => {
     if (currentSettings) {
@@ -81,6 +82,7 @@ export default function Settings(): React.ReactElement {
       updatePreview(currentSettings.fileNaming.pattern)
     }
     window.api?.obsGetInputList().then(setObsInputs).catch(() => {})
+    window.api?.wifiDisplayGetMonitors().then((m: MonitorInfo[]) => setMonitors(m || [])).catch(() => {})
   }, [currentSettings])
 
   function updatePreview(pattern: string): void {
@@ -543,6 +545,145 @@ export default function Settings(): React.ReactElement {
                 Set this to your tethering software's output folder. The app will automatically watch for new photos on startup.
                 Leave empty to disable auto-watch.
               </span>
+            </div>
+            <div className="field">
+              <label>Match Buffer (ms)</label>
+              <input
+                type="number"
+                value={draft.tether?.matchBufferMs ?? 1000}
+                onChange={(e) => update('tether', { matchBufferMs: parseInt(e.target.value) || 1000 })}
+                min={0}
+                max={10000}
+                step={100}
+                style={{ width: '100px' }}
+              />
+              <span className="hint">
+                How far outside a recording window (ms) a photo can still match. Lower = more precise, higher = more forgiving of clock drift.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tablet Display */}
+        <div className="settings-section">
+          <div className="settings-section-title">Tablet Display</div>
+          <p className="section-desc">
+            Stream a monitor to a wireless tablet using wifi-display-server. Touch input from the tablet controls the PC.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>Binary Path</label>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value={draft.wifiDisplay?.binaryPath || ''}
+                  onChange={(e) => update('wifiDisplay', { binaryPath: e.target.value || null })}
+                  placeholder="Path to wifi-display-server.exe"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="back-btn"
+                  onClick={async () => {
+                    const file = await window.api.settingsBrowseFile([{ name: 'Executables', extensions: ['exe'] }])
+                    if (file) update('wifiDisplay', { binaryPath: file })
+                  }}
+                >
+                  Browse...
+                </button>
+              </div>
+            </div>
+            <div className="field">
+              <label>Monitor</label>
+              <select
+                value={draft.wifiDisplay?.monitorIndex ?? ''}
+                onChange={(e) => update('wifiDisplay', { monitorIndex: e.target.value === '' ? null : parseInt(e.target.value) })}
+              >
+                <option value="">Select monitor...</option>
+                {monitors.map((m, i) => (
+                  <option key={m.id} value={i}>
+                    {m.label || `Display ${i + 1}`} ({m.width}x{m.height})
+                  </option>
+                ))}
+              </select>
+              <span className="hint">The monitor/display to stream to the tablet.</span>
+            </div>
+          </div>
+          <div className="settings-grid">
+            <div className="field">
+              <label>Bitrate (kbps)</label>
+              <input
+                type="number"
+                min={1000}
+                max={10000}
+                step={500}
+                value={draft.wifiDisplay?.bitrate ?? 3000}
+                onChange={(e) => update('wifiDisplay', { bitrate: parseInt(e.target.value) || 3000 })}
+              />
+              <span className="hint">Video bitrate. Higher = better quality, more bandwidth.</span>
+            </div>
+            <div className="field">
+              <label>FPS</label>
+              <select
+                value={draft.wifiDisplay?.fps ?? 30}
+                onChange={(e) => update('wifiDisplay', { fps: parseInt(e.target.value) })}
+              >
+                <option value="15">15</option>
+                <option value="24">24</option>
+                <option value="30">30</option>
+                <option value="60">60</option>
+              </select>
+            </div>
+            <div className="field">
+              <label>Client IP</label>
+              <input
+                type="text"
+                value={draft.wifiDisplay?.clientIp || ''}
+                onChange={(e) => update('wifiDisplay', { clientIp: e.target.value || null })}
+                placeholder="broadcast (leave empty)"
+              />
+              <span className="hint">Leave empty to broadcast. Set to tablet IP for unicast.</span>
+            </div>
+            <div className="field">
+              <label>Video Port</label>
+              <input
+                type="number"
+                min={1024}
+                max={65535}
+                value={draft.wifiDisplay?.videoPort ?? 5000}
+                onChange={(e) => update('wifiDisplay', { videoPort: parseInt(e.target.value) || 5000 })}
+              />
+            </div>
+            <div className="field">
+              <label>Touch Port</label>
+              <input
+                type="number"
+                min={1024}
+                max={65535}
+                value={draft.wifiDisplay?.touchPort ?? 5001}
+                onChange={(e) => update('wifiDisplay', { touchPort: parseInt(e.target.value) || 5001 })}
+              />
+            </div>
+          </div>
+          <div className="toggle-row">
+            <div>
+              <div className="toggle-label">Auto-start on launch</div>
+              <div className="toggle-desc">Automatically start streaming when CompSync opens</div>
+            </div>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={draft.wifiDisplay?.autoStart ?? false}
+                onChange={(e) => update('wifiDisplay', { autoStart: e.target.checked })}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>Connection Info</label>
+              <div className="naming-preview">
+                Connect tablet to port {draft.wifiDisplay?.videoPort ?? 5000} (video) / {draft.wifiDisplay?.touchPort ?? 5001} (touch)
+              </div>
             </div>
           </div>
         </div>
