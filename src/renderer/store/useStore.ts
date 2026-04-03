@@ -15,6 +15,7 @@ import {
   type ClipSortResult,
   type RecoveryState,
   type TetherState,
+  type WifiDisplayState,
 } from '../../shared/types'
 
 interface FFmpegProgressMap {
@@ -75,6 +76,9 @@ interface AppStore {
   // Tether
   tetherState: TetherState
 
+  // Wifi Display
+  wifiDisplayState: WifiDisplayState
+
   // Status counts
   encodingCount: number
   uploadingCount: number
@@ -113,6 +117,7 @@ interface AppStore {
   setRecoveryOpen: (open: boolean) => void
   setRecoveryState: (state: RecoveryState) => void
   setTetherState: (state: TetherState) => void
+  setWifiDisplayState: (state: WifiDisplayState) => void
   recalcCounts: () => void
 }
 
@@ -175,6 +180,8 @@ export const useStore = create<AppStore>((set, get) => ({
     cameraClockOffset: 0,
     clockSyncStatus: 'unknown' as const,
   },
+
+  wifiDisplayState: { running: false, monitorIndex: null },
 
   jobQueue: [],
   jobQueuePanelOpen: false,
@@ -247,6 +254,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setRecoveryOpen: (recoveryOpen) => set({ recoveryOpen }),
   setRecoveryState: (recoveryState) => set({ recoveryState }),
   setTetherState: (tetherState) => set({ tetherState }),
+  setWifiDisplayState: (wifiDisplayState) => set({ wifiDisplayState }),
 
   recalcCounts: () => {
     const comp = get().competition
@@ -381,6 +389,11 @@ export function initIPCListeners(): () => void {
   window.api.on(IPC_CHANNELS.TETHER_PROGRESS, (data: unknown) => {
     store().setTetherState(data as TetherState)
   })
+
+  // Fetch initial tether state (watcher may have auto-started before renderer loaded)
+  window.api.tetherGetState().then((data: unknown) => {
+    if (data) store().setTetherState(data as TetherState)
+  }).catch(() => {})
 
   // Return cleanup function
   return () => {
