@@ -257,6 +257,17 @@ export interface AppSettings {
     zoomFactor: number
     compactMode: boolean
   }
+  nextSequence: {
+    stopRecording: boolean
+    startRecording: boolean
+    fireLowerThird: boolean
+    pauseAfterStopMs: number
+    pauseBeforeRecordMs: number
+    pauseBeforeLowerThirdMs: number
+  }
+  tether: {
+    autoWatchFolder: string
+  }
 }
 
 // --- IPC Channels ---
@@ -284,6 +295,8 @@ export const IPC_CHANNELS = {
   FFMPEG_ENCODE: 'ffmpeg:encode',
   FFMPEG_ENCODE_ALL: 'ffmpeg:encode-all',
   FFMPEG_PROGRESS: 'ffmpeg:progress',
+  FFMPEG_PAUSE: 'ffmpeg:pause',
+  FFMPEG_RESUME: 'ffmpeg:resume',
 
   // Schedule
   SCHEDULE_LOAD_CSV: 'schedule:load-csv',
@@ -641,6 +654,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     alwaysOnTop: false,
     zoomFactor: 1.25,
     compactMode: false,
+  },
+  nextSequence: {
+    stopRecording: true,
+    startRecording: true,
+    fireLowerThird: true,
+    pauseAfterStopMs: 2000,
+    pauseBeforeRecordMs: 2000,
+    pauseBeforeLowerThirdMs: 2000,
+  },
+  tether: {
+    autoWatchFolder: '',
   },
 }
 

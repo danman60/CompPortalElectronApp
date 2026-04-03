@@ -7,9 +7,11 @@ import * as overlay from './overlay'
 // Auto-fire state is persisted via overlay config
 import * as wsHub from './wsHub'
 import * as uploadService from './upload'
+import * as tether from './tether'
 import * as jobQueue from './jobQueue'
 import { getSettings } from './settings'
 import * as schedule from './schedule'
+import { dialog, BrowserWindow } from 'electron'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
@@ -45,6 +47,28 @@ function scheduleAutoFire(): void {
     autoFireTimer = null
     logger.app.info('Overlay lower third auto-fired (3s delay)')
   }, 3000)
+}
+
+/** Check if starting a recording would overwrite an existing one, and ask for confirmation. */
+export async function confirmReRecordIfNeeded(): Promise<boolean> {
+  const routine = state.getCurrentRoutine()
+  if (!routine) return true
+  // Only prompt if routine has already been recorded/encoded/uploaded
+  if (routine.status === 'pending' || routine.status === 'skipped') return true
+
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win) return true
+
+  const result = await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: 'Re-record Routine?',
+    message: `Routine #${routine.entryNumber} "${routine.routineTitle}" already has a recording (status: ${routine.status}).`,
+    detail: 'Starting a new recording will archive the existing files. Continue?',
+    buttons: ['Cancel', 'Re-record'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+  return result.response === 1
 }
 
 function createStopProcessingBarrier(): Promise<void> {
@@ -308,6 +332,11 @@ export async function handleRecordingStopped(
         filePrefix: schedule.buildFilePrefix(routine.entryNumber),
       })
     }
+
+    // Rescan watch folder — retry unmatched photos + pick up new files
+    tether.rescanPhotos().catch((err) => {
+      logger.app.warn(`Photo rescan after recording stop failed: ${err.message}`)
+    })
   } catch (err) {
     logger.app.error('File move failed:', err)
     if (stoppedRoutineId) {
@@ -316,7 +345,7 @@ export async function handleRecordingStopped(
   } finally {
     pendingStopProcessing?.resolve()
     pendingStopProcessing = null
-    broadcastFullState()
+    broadcastFullStateImmediate()
   }
 }
 
@@ -345,7 +374,7 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
     `───────────────────────────`,
   ].filter(Boolean).join('\n'))
 
-  broadcastFullState()
+  broadcastFullStateImmediate()
 }
 
 export async function next(): Promise<void> {
@@ -396,7 +425,7 @@ export async function next(): Promise<void> {
       }
     }
 
-    broadcastFullState()
+    broadcastFullStateImmediate()
   } finally {
     navBusy = false
   }
@@ -407,17 +436,22 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function nextFull(): Promise<void> {
-  if (navBusy) { logger.app.debug('nextFull() blocked — already in progress'); return }
+  if (navBusy) { logger.app.info('nextFull() blocked — already in progress'); return }
   navBusy = true
+  logger.app.info('nextFull: starting sequence')
   try {
-    const connected = obs.getState().connectionStatus === 'connected'
-    const { getSettings } = require('./settings')
+    const obsState = obs.getState()
+    const connected = obsState.connectionStatus === 'connected'
     const settings = getSettings()
+    const seq = settings.nextSequence
+    logger.app.info(`nextFull: OBS connected=${connected}, isRecording=${obsState.isRecording}, seq=${JSON.stringify(seq)}`)
 
     // 1. Stop recording if active
-    if (connected && obs.getState().isRecording) {
+    if (seq.stopRecording && connected && obsState.isRecording) {
+      logger.app.info('nextFull: stopping current recording...')
       await stopRecordingAndWait('nextFull')
-      await sleep(2000)
+      logger.app.info(`nextFull: recording stopped, waiting ${seq.pauseAfterStopMs}ms`)
+      if (seq.pauseAfterStopMs > 0) await sleep(seq.pauseAfterStopMs)
     }
 
     // 2. Advance to next routine
@@ -427,22 +461,31 @@ export async function nextFull(): Promise<void> {
       return
     }
 
-    broadcastFullState()
+    broadcastFullStateImmediate()
     logger.app.info(`nextFull: advanced to #${nextRoutine.entryNumber} "${nextRoutine.routineTitle}"`)
 
-    // 3. Start recording after 2s
-    if (settings.behavior.autoRecordOnNext && connected) {
-      await sleep(2000)
+    // 3. Start recording
+    if (seq.startRecording && connected) {
+      if (seq.pauseBeforeRecordMs > 0) await sleep(seq.pauseBeforeRecordMs)
+      logger.app.info('nextFull: starting recording...')
       try {
         await obs.startRecord()
+        logger.app.info('nextFull: recording started')
       } catch (err) {
         logger.app.error('nextFull: auto-record failed:', err instanceof Error ? err.message : err)
       }
+    } else {
+      logger.app.info(`nextFull: skipping auto-record (seq.startRecording=${seq.startRecording}, connected=${connected})`)
     }
 
-    // 4. Fire lower third after 2s
-    await sleep(2000)
-    overlay.fireLowerThird()
+    // 4. Fire lower third
+    if (seq.fireLowerThird) {
+      if (seq.pauseBeforeLowerThirdMs > 0) await sleep(seq.pauseBeforeLowerThirdMs)
+      overlay.fireLowerThird()
+      logger.app.info('nextFull: lower third fired — sequence complete')
+    } else {
+      logger.app.info('nextFull: lower third skipped — sequence complete')
+    }
   } finally {
     navBusy = false
   }
@@ -454,7 +497,7 @@ export async function prev(): Promise<void> {
     logger.app.info('Already at first routine')
     return
   }
-  broadcastFullState()
+  broadcastFullStateImmediate()
 }
 
 function syncOverlayFromCurrent(): void {
@@ -473,7 +516,36 @@ function syncOverlayFromCurrent(): void {
   })
 }
 
+let broadcastTimer: ReturnType<typeof setTimeout> | null = null
+const BROADCAST_DEBOUNCE_MS = 150
+
 function broadcastFullState(): void {
+  if (broadcastTimer) return // already scheduled
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = null
+    const competition = state.getCompetition()
+    const current = state.getCurrentRoutine()
+    const nextR = state.getNextRoutine()
+
+    syncOverlayFromCurrent()
+
+    sendToRenderer(IPC_CHANNELS.STATE_UPDATE, {
+      competition,
+      currentRoutine: current,
+      nextRoutine: nextR,
+      currentIndex: state.getCurrentRoutineIndex(),
+    })
+
+    wsHub.broadcastState()
+  }, BROADCAST_DEBOUNCE_MS)
+}
+
+/** Bypass debounce for critical moments (recording start/stop, navigation) */
+function broadcastFullStateImmediate(): void {
+  if (broadcastTimer) {
+    clearTimeout(broadcastTimer)
+    broadcastTimer = null
+  }
   const competition = state.getCompetition()
   const current = state.getCurrentRoutine()
   const nextR = state.getNextRoutine()
@@ -503,4 +575,4 @@ export function broadcastRoutineUpdate(routineId: string): void {
   wsHub.broadcastState()
 }
 
-export { broadcastFullState }
+export { broadcastFullState, broadcastFullStateImmediate }

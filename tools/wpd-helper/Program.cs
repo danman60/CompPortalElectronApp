@@ -1,6 +1,5 @@
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
+using MediaDevices;
 
 namespace CompSync.WpdHelper;
 
@@ -27,544 +26,324 @@ internal sealed class PhotoSidecar
     public required string TransferredAt { get; set; }
 }
 
-[ComImport]
-[Guid("A1567595-4C2F-4574-A6FA-ECEF917B9A40")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IPortableDeviceManager
-{
-    void GetDevices([MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr)] [Out] string[]? pPnPDeviceIDs, ref uint pcPnPDeviceIDs);
-    void RefreshDeviceList();
-    void GetDeviceFriendlyName([MarshalAs(UnmanagedType.LPWStr)] string pszPnPDeviceID, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder? pDeviceFriendlyName, ref uint pcchDeviceFriendlyName);
-    void GetDeviceDescription([MarshalAs(UnmanagedType.LPWStr)] string pszPnPDeviceID, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder? pDeviceDescription, ref uint pcchDeviceDescription);
-    void GetDeviceManufacturer([MarshalAs(UnmanagedType.LPWStr)] string pszPnPDeviceID, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder? pDeviceManufacturer, ref uint pcchDeviceManufacturer);
-    void GetDeviceProperty([MarshalAs(UnmanagedType.LPWStr)] string pszPnPDeviceID, [MarshalAs(UnmanagedType.LPWStr)] string pszDevicePropertyName, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder? pData, ref uint pcbData, ref uint pdwType);
-    void GetPrivateDevices([MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr)] [Out] string[]? pPnPDeviceIDs, ref uint pcPnPDeviceIDs);
-}
-
-[ComImport]
-[Guid("0AF10CEC-2ECD-4B92-9581-34F6AE0637F3")]
-internal sealed class PortableDeviceManagerClass
-{
-}
-
 internal static class Program
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly object MonitorLock = new();
+    private static readonly JsonSerializerOptions JOpt = new(JsonSerializerDefaults.Web);
+    private static readonly HashSet<string> PhotoExts = new(StringComparer.OrdinalIgnoreCase)
+        { ".jpg", ".jpeg", ".arw", ".cr3", ".nef", ".raf", ".rw2" };
+    private static readonly object MonLock = new();
 
-    private static CancellationTokenSource? _monitorCts;
-    private static Task? _monitorTask;
-    private static string? _watchedDeviceId;
-    private static string? _watchedDeviceName;
-    private static string? _stagingDir;
-    private static readonly HashSet<string> SeenPhotoKeys = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly string[] PhotoExtensions = [".jpg", ".jpeg", ".arw", ".cr3", ".nef", ".raf"];
+    private static CancellationTokenSource? _monCts;
+    private static Task? _monTask;
+    private static string? _devId, _devName, _staging;
+    private static MediaDevice? _device;
+    private static HashSet<string> _knownFiles = new(StringComparer.OrdinalIgnoreCase);
 
     private static async Task<int> Main()
     {
-        await WriteLog("info", "wpd-helper started");
+        await Log("info", "wpd-helper started (v4 — MediaDevices)");
 
         string? line;
         while ((line = await Console.In.ReadLineAsync()) is not null)
         {
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            CommandEnvelope? command;
-            try
-            {
-                command = JsonSerializer.Deserialize<CommandEnvelope>(line, JsonOptions);
-            }
-            catch (Exception ex)
-            {
-                await WriteLog("error", $"invalid command json: {ex.Message}");
-                continue;
-            }
-
-            if (command?.Command is null)
-            {
-                await WriteResponse(command?.Id, false, error: "Missing command");
-                continue;
-            }
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            CommandEnvelope? cmd;
+            try { cmd = JsonSerializer.Deserialize<CommandEnvelope>(line, JOpt); }
+            catch (Exception ex) { await Log("error", $"bad json: {ex.Message}"); continue; }
+            if (cmd?.Command is null) { await Resp(cmd?.Id, false, error: "missing command"); continue; }
 
             try
             {
-                switch (command.Command)
+                switch (cmd.Command)
                 {
                     case "MONITOR_START":
                         StartMonitor();
-                        await WriteResponse(command.Id, true, new { monitoring = true });
+                        await Resp(cmd.Id, true, new { monitoring = true });
                         break;
-
                     case "LIST_DEVICES":
-                        await WriteResponse(command.Id, true, EnumerateDevices());
+                        await Resp(cmd.Id, true, GetDevices());
                         break;
-
                     case "WATCH":
-                        if (string.IsNullOrWhiteSpace(command.DeviceId) || string.IsNullOrWhiteSpace(command.StagingDir))
-                        {
-                            await WriteResponse(command.Id, false, error: "WATCH requires deviceId and stagingDir");
-                            break;
-                        }
-
-                        Directory.CreateDirectory(command.StagingDir);
-                        _watchedDeviceId = command.DeviceId;
-                        _stagingDir = command.StagingDir;
-                        _watchedDeviceName = EnumerateDevices().FirstOrDefault(device => string.Equals(device.Id, command.DeviceId, StringComparison.OrdinalIgnoreCase))?.Name;
-                        SeenPhotoKeys.Clear();
-                        foreach (var key in SnapshotWatchedPhotoKeys())
-                        {
-                            SeenPhotoKeys.Add(key);
-                        }
-                        await WriteLog("info", $"watch requested for {command.DeviceId} -> {command.StagingDir}");
-                        await WriteResponse(command.Id, true, new
-                        {
-                            watching = true,
-                            deviceId = _watchedDeviceId,
-                            stagingDir = _stagingDir,
-                            mode = "shell-poll-transfer",
-                        });
+                        if (string.IsNullOrWhiteSpace(cmd.DeviceId) || string.IsNullOrWhiteSpace(cmd.StagingDir))
+                        { await Resp(cmd.Id, false, error: "WATCH needs deviceId + stagingDir"); break; }
+                        Directory.CreateDirectory(cmd.StagingDir);
+                        Disconnect();
+                        _devId = cmd.DeviceId;
+                        _staging = cmd.StagingDir;
+                        var mode = await StartWatch(cmd.DeviceId, cmd.StagingDir);
+                        await Resp(cmd.Id, true, new { watching = true, deviceId = _devId, stagingDir = _staging, mode });
                         break;
-
                     case "STOP":
-                        _watchedDeviceId = null;
-                        _watchedDeviceName = null;
-                        _stagingDir = null;
-                        SeenPhotoKeys.Clear();
-                        await WriteResponse(command.Id, true, new { watching = false });
+                        Disconnect();
+                        _devId = null; _devName = null; _staging = null;
+                        await Resp(cmd.Id, true, new { watching = false });
                         break;
-
                     case "QUIT":
+                        Disconnect();
                         await StopMonitor();
-                        await WriteResponse(command.Id, true, new { quitting = true });
+                        await Resp(cmd.Id, true, new { quitting = true });
                         return 0;
-
                     default:
-                        await WriteResponse(command.Id, false, error: $"Unsupported command: {command.Command}");
+                        await Resp(cmd.Id, false, error: $"unknown: {cmd.Command}");
                         break;
                 }
             }
-            catch (Exception ex)
-            {
-                await WriteResponse(command.Id, false, error: ex.Message);
-            }
+            catch (Exception ex) { await Resp(cmd.Id, false, error: ex.Message); }
         }
-
+        Disconnect();
         await StopMonitor();
         return 0;
     }
 
+    // --- Watch via MediaDevices ---
+
+    private static async Task<string> StartWatch(string deviceId, string stagingDir)
+    {
+        try
+        {
+            var devices = MediaDevice.GetDevices().ToList();
+            await Log("info", $"Found {devices.Count} device(s): {string.Join(", ", devices.Select(d => d.FriendlyName))}");
+
+            var device = devices.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+            if (device is null)
+                device = devices.FirstOrDefault(d =>
+                    deviceId.IndexOf(d.FriendlyName ?? "", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (device is null && devices.Count > 0)
+                device = devices[0];
+            if (device is null)
+                throw new Exception("No WPD devices found");
+
+            _devName = device.FriendlyName;
+            await Log("info", $"Connecting to {device.FriendlyName} ({device.Manufacturer ?? "unknown"})");
+
+            device.Connect();
+            _device = device;
+
+            // Snapshot existing files on device
+            _knownFiles = SnapshotDevicePhotos(device);
+            await Log("info", $"Connected. Snapshot: {_knownFiles.Count} existing photo(s)");
+
+            // Subscribe to ObjectAdded — fires when camera captures a photo
+            device.ObjectAdded += (sender, e) =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Log("info", "WPD ObjectAdded event fired — scanning for new photos");
+                        await ScanForNewPhotos();
+                    }
+                    catch (Exception ex)
+                    {
+                        await Log("error", $"ObjectAdded scan failed: {ex.Message}");
+                    }
+                });
+            };
+
+            await Log("info", $"WPD event watch active for {device.FriendlyName}");
+            return "wpd-event-driven";
+        }
+        catch (Exception ex)
+        {
+            await Log("error", $"MediaDevices connect failed: {ex.Message}");
+            _device = null;
+            throw;
+        }
+    }
+
+    private static HashSet<string> SnapshotDevicePhotos(MediaDevice device)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            // Enumerate all files on device
+            var root = device.GetRootDirectory();
+            ScanDirectory(root, result);
+        }
+        catch (Exception ex)
+        {
+            _ = Log("warn", $"Snapshot scan failed: {ex.Message}");
+        }
+        return result;
+    }
+
+    private static void ScanDirectory(MediaDirectoryInfo dir, HashSet<string> files)
+    {
+        try
+        {
+            foreach (var file in dir.EnumerateFiles())
+            {
+                var ext = Path.GetExtension(file.Name);
+                if (PhotoExts.Contains(ext))
+                    files.Add(file.FullName);
+            }
+            foreach (var sub in dir.EnumerateDirectories())
+            {
+                ScanDirectory(sub, files);
+            }
+        }
+        catch { }
+    }
+
+    private static async Task ScanForNewPhotos()
+    {
+        if (_device is null || _staging is null) return;
+
+        var currentFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var root = _device.GetRootDirectory();
+            ScanDirectory(root, currentFiles);
+        }
+        catch (Exception ex)
+        {
+            await Log("error", $"Device scan failed: {ex.Message}");
+            return;
+        }
+
+        // Find new files
+        var newFiles = currentFiles.Where(f => !_knownFiles.Contains(f)).ToList();
+        if (newFiles.Count == 0)
+        {
+            await Log("debug", "ObjectAdded but no new photo files found");
+            return;
+        }
+
+        await Log("info", $"Found {newFiles.Count} new photo(s)");
+
+        foreach (var devicePath in newFiles)
+        {
+            _knownFiles.Add(devicePath);
+            var fileName = Path.GetFileName(devicePath);
+            await Log("info", $"Transferring: {fileName}");
+
+            try
+            {
+                var transferDir = Path.Combine(_staging,
+                    $"{DateTime.UtcNow:yyyyMMdd_HHmmssfff}_{fileName.GetHashCode():X8}");
+                Directory.CreateDirectory(transferDir);
+                var destPath = Path.Combine(transferDir, fileName);
+
+                using (var fs = File.Create(destPath))
+                {
+                    _device.DownloadFile(devicePath, fs);
+                }
+
+                var size = new FileInfo(destPath).Length;
+                await Log("info", $"Transferred: {fileName} -> {destPath} ({size / 1024}KB)");
+
+                await WriteSidecar(destPath, _devName, null);
+                await PhotoEvent(destPath, _devName, null, $"{destPath}.json");
+            }
+            catch (Exception ex)
+            {
+                await Log("error", $"Transfer failed for {fileName}: {ex.Message}");
+            }
+        }
+    }
+
+    private static void Disconnect()
+    {
+        if (_device is not null)
+        {
+            try { _device.Disconnect(); } catch { }
+            _device = null;
+            _knownFiles.Clear();
+            _ = Log("info", "Device disconnected");
+        }
+    }
+
+    // --- Device monitoring ---
+
     private static void StartMonitor()
     {
-        lock (MonitorLock)
+        lock (MonLock)
         {
-            if (_monitorTask is not null)
-            {
-                return;
-            }
-
-            _monitorCts = new CancellationTokenSource();
-            _monitorTask = Task.Run(() => MonitorLoop(_monitorCts.Token));
+            if (_monTask is not null) return;
+            _monCts = new CancellationTokenSource();
+            _monTask = Task.Run(() => MonLoop(_monCts.Token));
         }
     }
 
     private static async Task StopMonitor()
     {
-        CancellationTokenSource? cts;
-        Task? task;
-
-        lock (MonitorLock)
-        {
-            cts = _monitorCts;
-            task = _monitorTask;
-            _monitorCts = null;
-            _monitorTask = null;
-        }
-
-        if (cts is null || task is null)
-        {
-            return;
-        }
-
+        CancellationTokenSource? cts; Task? task;
+        lock (MonLock) { cts = _monCts; task = _monTask; _monCts = null; _monTask = null; }
+        if (cts is null || task is null) return;
         cts.Cancel();
-        try
-        {
-            await task;
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            cts.Dispose();
-        }
+        try { await task; } catch (OperationCanceledException) { } finally { cts.Dispose(); }
     }
 
-    private static async Task MonitorLoop(CancellationToken cancellationToken)
+    private static async Task MonLoop(CancellationToken ct)
     {
         var known = new Dictionary<string, DeviceInfo>(StringComparer.OrdinalIgnoreCase);
-
-        while (!cancellationToken.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
-            IReadOnlyList<DeviceInfo> currentDevices;
-            try
-            {
-                currentDevices = EnumerateDevices();
-            }
-            catch (Exception ex)
-            {
-                await WriteLog("warn", $"monitor enumerate failed: {ex.Message}");
-                currentDevices = Array.Empty<DeviceInfo>();
-            }
+            List<DeviceInfo> devs;
+            try { devs = GetDevices(); } catch { devs = []; }
+            var map = devs.ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
+            foreach (var d in map.Values)
+                if (!known.ContainsKey(d.Id)) await DevEvent("device-connected", d);
+            foreach (var d in known.Values)
+                if (!map.ContainsKey(d.Id)) await DevEvent("device-disconnected", d);
+            known = map;
 
-            var currentMap = currentDevices.ToDictionary(device => device.Id, StringComparer.OrdinalIgnoreCase);
-
-            foreach (var current in currentMap.Values)
-            {
-                if (!known.ContainsKey(current.Id))
-                {
-                    await WriteDeviceEvent("device-connected", current);
-                }
-            }
-
-            foreach (var previous in known.Values)
-            {
-                if (!currentMap.ContainsKey(previous.Id))
-                {
-                    await WriteDeviceEvent("device-disconnected", previous);
-                }
-            }
-
-            known = currentMap;
-
-            if (!string.IsNullOrWhiteSpace(_watchedDeviceId) &&
-                !string.IsNullOrWhiteSpace(_watchedDeviceName) &&
-                !string.IsNullOrWhiteSpace(_stagingDir))
-            {
-                try
-                {
-                    await ScanWatchedDeviceForPhotos(_watchedDeviceName!, _stagingDir!);
-                }
-                catch (Exception ex)
-                {
-                    await WriteLog("warn", $"photo scan failed: {ex.Message}");
-                }
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
         }
     }
 
-    private static IEnumerable<string> SnapshotWatchedPhotoKeys()
+    private static List<DeviceInfo> GetDevices()
     {
-        if (string.IsNullOrWhiteSpace(_watchedDeviceName))
-        {
-            return Array.Empty<string>();
-        }
-
-        return EnumerateShellPhotos(_watchedDeviceName!)
-            .Select(item => item.Key)
-            .ToArray();
-    }
-
-    private static async Task ScanWatchedDeviceForPhotos(string deviceName, string stagingDir)
-    {
-        foreach (var item in EnumerateShellPhotos(deviceName))
-        {
-            if (!SeenPhotoKeys.Add(item.Key))
-            {
-                continue;
-            }
-
-            var stagedPath = await CopyItemToStaging(item.Item, item.FileName, stagingDir);
-            var captureTime = TryGetShellCaptureTime(item.Item);
-            await WritePhotoSidecar(stagedPath, deviceName, captureTime);
-            await WritePhotoEvent(stagedPath, deviceName, captureTime, $"{stagedPath}.json");
-        }
-    }
-
-    private static IEnumerable<(string Key, string FileName, dynamic Item)> EnumerateShellPhotos(string deviceName)
-    {
-        var shellType = Type.GetTypeFromProgID("Shell.Application") ?? throw new InvalidOperationException("Shell.Application COM object is not available");
-        dynamic shell = Activator.CreateInstance(shellType) ?? throw new InvalidOperationException("Failed to create Shell.Application");
-        dynamic myComputer = shell.NameSpace("shell:MyComputerFolder") ?? throw new InvalidOperationException("My Computer shell folder is not available");
-        dynamic? deviceFolder = null;
-
-        foreach (var item in myComputer.Items())
-        {
-            var name = Convert.ToString(item.Name) ?? string.Empty;
-            if (string.Equals(name, deviceName, StringComparison.OrdinalIgnoreCase))
-            {
-                deviceFolder = item.GetFolder;
-                break;
-            }
-        }
-
-        if (deviceFolder is null)
-        {
-          yield break;
-        }
-
-        foreach (var result in EnumerateShellFolder(deviceFolder))
-        {
-            yield return result;
-        }
-    }
-
-    private static IEnumerable<(string Key, string FileName, dynamic Item)> EnumerateShellFolder(dynamic folder)
-    {
-        foreach (var item in folder.Items())
-        {
-            var isFolder = false;
-            try
-            {
-                isFolder = item.IsFolder;
-            }
-            catch
-            {
-                isFolder = false;
-            }
-
-            if (isFolder)
-            {
-                dynamic? childFolder = null;
-                try
-                {
-                    childFolder = item.GetFolder;
-                }
-                catch
-                {
-                    childFolder = null;
-                }
-
-                if (childFolder is not null)
-                {
-                    foreach (var child in EnumerateShellFolder(childFolder))
-                    {
-                        yield return child;
-                    }
-                }
-
-                continue;
-            }
-
-            string name = Convert.ToString(item.Name) ?? string.Empty;
-            string extension = Path.GetExtension(name);
-            if (!PhotoExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var pathValue = string.Empty;
-            try
-            {
-                pathValue = Convert.ToString(item.Path) ?? string.Empty;
-            }
-            catch
-            {
-                pathValue = string.Empty;
-            }
-
-            var key = string.IsNullOrWhiteSpace(pathValue) ? name : pathValue;
-            yield return (key, name, item);
-        }
-    }
-
-    private static async Task<string> CopyItemToStaging(dynamic item, string fileName, string stagingDir)
-    {
-        Directory.CreateDirectory(stagingDir);
-        var transferDir = Path.Combine(
-            stagingDir,
-            $"{DateTime.UtcNow:yyyyMMdd_HHmmssfff}_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(transferDir);
-        var finalPath = Path.Combine(transferDir, fileName);
-
-        var shellType = Type.GetTypeFromProgID("Shell.Application") ?? throw new InvalidOperationException("Shell.Application COM object is not available");
-        dynamic shell = Activator.CreateInstance(shellType) ?? throw new InvalidOperationException("Failed to create Shell.Application");
-        dynamic destinationFolder = shell.NameSpace(transferDir) ?? throw new InvalidOperationException("Staging shell folder is not available");
-        destinationFolder.CopyHere(item, 16);
-
-        var timeoutAt = DateTime.UtcNow.AddSeconds(30);
-        while (DateTime.UtcNow < timeoutAt)
-        {
-            if (File.Exists(finalPath))
-            {
-                return finalPath;
-            }
-
-            var stagedFiles = Directory.GetFiles(transferDir);
-            if (stagedFiles.Length > 0)
-            {
-                return stagedFiles[0];
-            }
-
-            await Task.Delay(250);
-        }
-
-        throw new IOException($"Timed out waiting for file copy to complete: {finalPath}");
-    }
-
-    private static IReadOnlyList<DeviceInfo> EnumerateDevices()
-    {
-        var managerType = Type.GetTypeFromCLSID(new Guid("0AF10CEC-2ECD-4B92-9581-34F6AE0637F3"))!;
-        var manager = (IPortableDeviceManager)Activator.CreateInstance(managerType)!;
-        manager.RefreshDeviceList();
-
-        uint count = 0;
-        manager.GetDevices(null, ref count);
-        if (count == 0)
-        {
-            return Array.Empty<DeviceInfo>();
-        }
-
-        var ids = new string[count];
-        manager.GetDevices(ids, ref count);
-
-        var devices = new List<DeviceInfo>((int)count);
-        for (var i = 0; i < count; i++)
-        {
-            var id = ids[i];
-            if (string.IsNullOrWhiteSpace(id))
-            {
-                continue;
-            }
-
-            devices.Add(new DeviceInfo
-            {
-                Id = id,
-                Name = GetStringProperty(manager, id, GetFriendlyName)
-                    ?? GetStringProperty(manager, id, GetDescription)
-                    ?? id,
-                Manufacturer = GetStringProperty(manager, id, GetManufacturer),
-            });
-        }
-
-        return devices;
-    }
-
-    private delegate void WpdStringMethod(IPortableDeviceManager manager, string deviceId, StringBuilder? buffer, ref uint size);
-
-    private static void GetFriendlyName(IPortableDeviceManager manager, string deviceId, StringBuilder? buffer, ref uint size)
-    {
-        manager.GetDeviceFriendlyName(deviceId, buffer, ref size);
-    }
-
-    private static void GetDescription(IPortableDeviceManager manager, string deviceId, StringBuilder? buffer, ref uint size)
-    {
-        manager.GetDeviceDescription(deviceId, buffer, ref size);
-    }
-
-    private static void GetManufacturer(IPortableDeviceManager manager, string deviceId, StringBuilder? buffer, ref uint size)
-    {
-        manager.GetDeviceManufacturer(deviceId, buffer, ref size);
-    }
-
-    private static string? GetStringProperty(IPortableDeviceManager manager, string deviceId, WpdStringMethod method)
-    {
-        uint size = 0;
-        method(manager, deviceId, null, ref size);
-        if (size == 0)
-        {
-            return null;
-        }
-
-        var buffer = new StringBuilder((int)size);
-        method(manager, deviceId, buffer, ref size);
-        return buffer.ToString();
-    }
-
-    private static string? TryGetShellCaptureTime(dynamic item)
-    {
+        var result = new List<DeviceInfo>();
         try
         {
-            var raw = item.ExtendedProperty("System.Photo.DateTaken");
-            if (raw is DateTime dateTime)
+            foreach (var device in MediaDevice.GetDevices())
             {
-                return dateTime.ToUniversalTime().ToString("O");
-            }
-
-            var asString = Convert.ToString(raw);
-            if (DateTime.TryParse(asString, out DateTime parsed))
-            {
-                return parsed.ToUniversalTime().ToString("O");
+                result.Add(new DeviceInfo
+                {
+                    Id = device.DeviceId ?? "",
+                    Name = device.FriendlyName ?? device.Description ?? "Unknown",
+                    Manufacturer = device.Manufacturer,
+                });
             }
         }
-        catch
+        catch (Exception ex)
         {
+            _ = Log("warn", $"Device enumeration failed: {ex.Message}");
         }
-
-        return null;
+        return result;
     }
 
-    private static async Task WritePhotoSidecar(string path, string? deviceName, string? captureTime)
+    // --- JSON output ---
+
+    private static async Task Log(string level, string msg)
     {
-        var sidecar = new PhotoSidecar
-        {
-            Filename = Path.GetFileName(path),
-            DeviceName = deviceName,
-            CaptureTime = captureTime,
-            TransferredAt = DateTime.UtcNow.ToString("O"),
-        };
-
-        await File.WriteAllTextAsync(
-            $"{path}.json",
-            JsonSerializer.Serialize(sidecar, JsonOptions));
-    }
-
-    private static async Task WriteResponse(string? id, bool ok, object? result = null, string? error = null)
-    {
-        var payload = new
-        {
-            type = "response",
-            id,
-            ok,
-            result,
-            error,
-        };
-
-        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new { type = "log", level, message = msg }, JOpt));
         await Console.Out.FlushAsync();
     }
 
-    private static async Task WriteLog(string level, string message)
+    private static async Task Resp(string? id, bool ok, object? result = null, string? error = null)
     {
-        var payload = new
-        {
-            type = "log",
-            level,
-            message,
-        };
-
-        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new { type = "response", id, ok, result, error }, JOpt));
         await Console.Out.FlushAsync();
     }
 
-    private static async Task WriteDeviceEvent(string eventType, DeviceInfo device)
+    private static async Task DevEvent(string eventType, DeviceInfo device)
     {
-        var payload = new
-        {
-            type = eventType,
-            device,
-        };
-
-        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new { type = eventType, device }, JOpt));
         await Console.Out.FlushAsync();
     }
 
-    private static async Task WritePhotoEvent(string path, string? deviceName, string? captureTime, string metadataPath)
+    private static async Task PhotoEvent(string path, string? deviceName, string? captureTime, string metadataPath)
     {
-        var payload = new
-        {
-            type = "photo",
-            path,
-            deviceName,
-            captureTime,
-            metadataPath,
-        };
-
-        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new { type = "photo", path, deviceName, captureTime, metadataPath }, JOpt));
         await Console.Out.FlushAsync();
+    }
+
+    private static async Task WriteSidecar(string path, string? deviceName, string? captureTime)
+    {
+        var sc = new PhotoSidecar { Filename = Path.GetFileName(path), DeviceName = deviceName, CaptureTime = captureTime, TransferredAt = DateTime.UtcNow.ToString("O") };
+        await File.WriteAllTextAsync($"{path}.json", JsonSerializer.Serialize(sc, JOpt));
     }
 }

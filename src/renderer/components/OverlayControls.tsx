@@ -207,9 +207,9 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
         </div>
       </div>
 
-      {/* === Animation === */}
+      {/* === Animation Style === */}
       <div className="oc-section">
-        <div className="oc-section-header">Animation</div>
+        <div className="oc-section-header">Animation Style</div>
         <div className="oc-anim-chips">
           {ALL_ANIMATIONS.map((anim) => (
             <button
@@ -221,6 +221,11 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
             </button>
           ))}
         </div>
+      </div>
+
+      {/* === Animation Timing === */}
+      <div className="oc-section">
+        <div className="oc-section-header">Animation Timing</div>
         <div className="oc-anim-config">
           <div className="oc-anim-config-item">
             <div className="oc-config-label">Duration ({animDuration}s)</div>

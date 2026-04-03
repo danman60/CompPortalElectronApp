@@ -26,12 +26,13 @@ export default function DriveAlert(): React.ReactElement | null {
   const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
 
   useEffect(() => {
-    window.api.tetherListWPDDevices().then((devices) => {
-      if (Array.isArray(devices) && devices.length > 0) {
-        setWpdDevice(devices[0] as WPDDevice)
-        setDetected(null)
-      }
-    }).catch(() => {})
+    // WPD/MTP disabled — using folder-watch mode instead
+    // window.api.tetherListWPDDevices().then((devices) => {
+    //   if (Array.isArray(devices) && devices.length > 0) {
+    //     setWpdDevice(devices[0] as WPDDevice)
+    //     setDetected(null)
+    //   }
+    // }).catch(() => {})
 
     const unsubDrive = window.api.on('drive:detected', (data: unknown) => {
       setDetected(data as DriveDetectedEvent)
@@ -40,17 +41,8 @@ export default function DriveAlert(): React.ReactElement | null {
       setShowResults(false)
     })
 
-    const unsubWPD = window.api.on('tether:wpd-device-event', (data: unknown) => {
-      const event = data as WPDDeviceEvent
-      if (event.event === 'device-connected') {
-        setWpdDevice(event.device)
-        setDetected(null)
-        setProgress({ stage: 'idle', message: '', current: 0, total: 0, matched: 0, unmatched: 0, copied: 0, uploadQueued: 0 })
-        setShowResults(false)
-      } else {
-        setWpdDevice((current) => current && current.id === event.device.id ? null : current)
-      }
-    })
+    // WPD/MTP disabled — using folder-watch mode
+    const unsubWPD = (): void => {}
 
     const unsubProgress = window.api.on('photos:progress', (data: unknown) => {
       const p = data as { stage: string; total: number; current: number }
@@ -226,11 +218,7 @@ export default function DriveAlert(): React.ReactElement | null {
               Watch Live
             </button>
           )}
-          {wpdDevice && progress.stage === 'idle' && hasCompetition && (
-            <button className="da-btn primary" onClick={handleStartWPDTether} title="Watch this MTP/PTP camera live">
-              Watch Live (MTP)
-            </button>
-          )}
+          {/* WPD/MTP direct watch disabled — use Settings > Photo Tether > Auto-Watch Folder instead */}
           {progress.stage === 'done' && (
             <button className="da-btn" onClick={handleDismiss}>Done</button>
           )}

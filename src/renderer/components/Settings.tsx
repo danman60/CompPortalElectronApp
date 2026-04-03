@@ -443,11 +443,114 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
+        {/* Next Sequence */}
+        <div className="settings-section">
+          <div className="settings-section-title">Next Sequence</div>
+          <p className="section-desc">Configure what happens when you press the NEXT button during a show.</p>
+          {[
+            { key: 'stopRecording', label: 'Stop current recording', desc: 'Stop OBS recording before advancing to next routine' },
+            { key: 'startRecording', label: 'Start recording', desc: 'Automatically start recording on the new routine' },
+            { key: 'fireLowerThird', label: 'Fire lower third', desc: 'Show the lower third overlay after advancing' },
+          ].map(({ key, label, desc }) => (
+            <div className="toggle-row" key={key}>
+              <div>
+                <div className="toggle-label">{label}</div>
+                <div className="toggle-desc">{desc}</div>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={draft.nextSequence[key as keyof typeof draft.nextSequence] as boolean}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      nextSequence: { ...draft.nextSequence, [key]: e.target.checked },
+                    })
+                  }
+                />
+                <span className="toggle-slider" />
+              </label>
+            </div>
+          ))}
+          <div className="settings-grid">
+            <div className="field">
+              <label>Pause after stop (seconds)</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                value={(draft.nextSequence.pauseAfterStopMs / 1000)}
+                onChange={(e) => update('nextSequence', { pauseAfterStopMs: Math.round(parseFloat(e.target.value || '0') * 1000) })}
+              />
+              <span className="hint">Wait time after stopping the current recording before advancing</span>
+            </div>
+            <div className="field">
+              <label>Pause before record (seconds)</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                value={(draft.nextSequence.pauseBeforeRecordMs / 1000)}
+                onChange={(e) => update('nextSequence', { pauseBeforeRecordMs: Math.round(parseFloat(e.target.value || '0') * 1000) })}
+              />
+              <span className="hint">Wait time after advancing before starting the new recording</span>
+            </div>
+            <div className="field">
+              <label>Pause before lower third (seconds)</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                value={(draft.nextSequence.pauseBeforeLowerThirdMs / 1000)}
+                onChange={(e) => update('nextSequence', { pauseBeforeLowerThirdMs: Math.round(parseFloat(e.target.value || '0') * 1000) })}
+              />
+              <span className="hint">Wait time before firing the lower third</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Photo Tether */}
+        <div className="settings-section">
+          <div className="settings-section-title">Photo Tether</div>
+          <p className="section-desc">
+            Watch a folder for new photos (e.g., Lumix Tether output). Photos are matched to routines by capture time and auto-uploaded.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>Auto-Watch Folder</label>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value={draft.tether?.autoWatchFolder || ''}
+                  onChange={(e) => update('tether', { autoWatchFolder: e.target.value })}
+                  placeholder="e.g., C:\Users\User\Pictures\Lumix Tether"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="back-btn"
+                  onClick={async () => {
+                    const dir = await window.api.settingsBrowseDir()
+                    if (dir) update('tether', { autoWatchFolder: dir })
+                  }}
+                >
+                  Browse...
+                </button>
+              </div>
+              <span className="hint">
+                Set this to your tethering software's output folder. The app will automatically watch for new photos on startup.
+                Leave empty to disable auto-watch.
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Behavior Toggles */}
         <div className="settings-section">
           <div className="settings-section-title">Behavior</div>
           {[
-            { key: 'autoRecordOnNext', label: 'Auto-record on Next', desc: 'Automatically start recording when advancing to next routine' },
             { key: 'autoUploadAfterEncoding', label: 'Auto-upload after processing', desc: 'Queue uploads immediately after FFmpeg completes' },
             { key: 'autoEncodeRecordings', label: 'Auto-process recordings', desc: 'Run FFmpeg track split automatically after each recording' },
             { key: 'syncLowerThird', label: 'Sync lower third overlay', desc: 'Update overlay data when advancing routines' },

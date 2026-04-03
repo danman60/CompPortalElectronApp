@@ -57,6 +57,8 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.OBS_START_RECORD, async () => {
     logIPC(IPC_CHANNELS.OBS_START_RECORD)
     if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
+    const confirmed = await recording.confirmReRecordIfNeeded()
+    if (!confirmed) return { cancelled: true }
     await obs.startRecord()
   })
 
@@ -135,6 +137,16 @@ export function registerAllHandlers(): void {
       processingMode: s.ffmpeg.processingMode,
       filePrefix: schedule.buildFilePrefix(routine.entryNumber),
     })
+  })
+
+  safeHandle(IPC_CHANNELS.FFMPEG_PAUSE, () => {
+    logIPC(IPC_CHANNELS.FFMPEG_PAUSE)
+    ffmpegService.pauseEncoding()
+  })
+
+  safeHandle(IPC_CHANNELS.FFMPEG_RESUME, () => {
+    logIPC(IPC_CHANNELS.FFMPEG_RESUME)
+    ffmpegService.resumeEncoding()
   })
 
   safeHandle(IPC_CHANNELS.FFMPEG_ENCODE_ALL, async () => {

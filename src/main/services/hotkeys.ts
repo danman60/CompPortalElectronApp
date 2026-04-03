@@ -21,6 +21,8 @@ export function register(): void {
     if (state.isRecording) {
       await obs.stopRecord()
     } else {
+      const confirmed = await recording.confirmReRecordIfNeeded()
+      if (!confirmed) return
       await obs.startRecord()
     }
   })

@@ -17,6 +17,7 @@ import * as systemMonitor from './services/systemMonitor'
 import * as driveMonitor from './services/driveMonitor'
 import * as schedule from './services/schedule'
 import * as wpdBridge from './services/wpdBridge'
+import * as tether from './services/tether'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -177,10 +178,26 @@ app.whenReady().then(async () => {
 
   // Start drive monitor for SD card auto-detect
   driveMonitor.startMonitoring()
-  tether.initWPDHandlers()
-  wpdBridge.startMonitor().catch((err) => {
-    logger.app.warn('WPD monitor start failed:', err)
-  })
+  // WPD/MTP disabled — using folder-watch mode instead
+  // tether.initWPDHandlers()
+  // wpdBridge.startMonitor().catch((err) => {
+  //   logger.app.warn('WPD monitor start failed:', err)
+  // })
+
+  // Auto-start tether folder watch if configured
+  const tetherSettings = getSettings().tether
+  if (tetherSettings?.autoWatchFolder) {
+    const fs = require('fs')
+    if (fs.existsSync(tetherSettings.autoWatchFolder)) {
+      tether.startWatching(tetherSettings.autoWatchFolder).then(() => {
+        logger.app.info(`Auto-started tether watch on ${tetherSettings.autoWatchFolder}`)
+      }).catch((err: Error) => {
+        logger.app.warn(`Auto-start tether watch failed: ${err.message}`)
+      })
+    } else {
+      logger.app.warn(`Tether auto-watch folder not found: ${tetherSettings.autoWatchFolder}`)
+    }
+  }
 
   // Check for crash recovery
   checkAndRecover().catch((err) => {
@@ -205,6 +222,9 @@ app.whenReady().then(async () => {
         uploadService.retryOrphanedCompletions().then(count => {
           if (count > 0) logger.app.info(`Recovered ${count} orphaned upload completions`)
         }).catch(() => {})
+        // Retry encoded routines that were skipped due to missing connection at encode time
+        const skippedRetried = uploadService.retrySkippedEncoded()
+        if (skippedRetried > 0) logger.app.info(`Retried ${skippedRetried} encoded routines that were skipped earlier`)
       })
       .catch((err) => {
         logger.app.warn(`Share code resolve failed: ${err instanceof Error ? err.message : err}`)
@@ -236,7 +256,7 @@ app.on('before-quit', async (event) => {
   hotkeys.unregister()
   systemMonitor.stopMonitoring()
   driveMonitor.stopMonitoring()
-  await wpdBridge.stop()
+  // await wpdBridge.stop() // WPD disabled
   wsHub.stop()
   overlay.stopServer()
 

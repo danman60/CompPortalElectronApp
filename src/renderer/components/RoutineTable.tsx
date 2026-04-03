@@ -53,12 +53,16 @@ function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
 
   // Stage 3: Photos
   const photos: PipelineStage = { label: 'PHOTO', state: 'inactive' }
+  const thumbCount = routine.photos?.filter(p => p.thumbnailPath).length ?? 0
   if (photoCount > 0 && photosUploaded === photoCount) {
     photos.state = 'done'
     photos.detail = `${photoCount} uploaded`
   } else if (photoCount > 0 && photosUploaded > 0) {
     photos.state = 'active'
     photos.detail = `${photosUploaded}/${photoCount} uploaded`
+  } else if (photoCount > 0 && thumbCount < photoCount) {
+    photos.state = 'active'
+    photos.detail = `${photoCount} matched, ${thumbCount}/${photoCount} thumbs`
   } else if (photoCount > 0) {
     photos.state = 'done'
     photos.detail = `${photoCount} matched`
@@ -132,7 +136,8 @@ function statusToLabel(routine: Routine): { text: string; className: string } {
       const hasPhotos = (routine.photos?.length ?? 0) > 0
       const allPhotosUp = hasPhotos && routine.photos!.every(p => p.uploaded)
       if (hasPhotos && allPhotosUp) return { text: 'All Media Uploaded', className: 'complete' }
-      return { text: 'Videos Uploaded', className: 'complete' }
+      if (hasPhotos) return { text: 'Video Uploaded', className: 'video-only' }
+      return { text: 'Uploaded', className: 'complete' }
     }
     case 'confirmed':
       return { text: 'Confirmed', className: 'complete' }

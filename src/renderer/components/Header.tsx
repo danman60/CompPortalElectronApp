@@ -16,9 +16,13 @@ function ActionBar(): React.ReactElement {
   const settings = useStore((s) => s.settings)
   const competition = useStore((s) => s.competition)
   const uploadingCount = useStore((s) => s.uploadingCount)
+  const encodingCount = useStore((s) => s.encodingCount)
   const loadCompOpen = useStore((s) => s.loadCompOpen)
   const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
+  const tetherState = useStore((s) => s.tetherState)
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadsPaused, setUploadsPaused] = useState(false)
+  const [encodingPaused, setEncodingPaused] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
 
   const autoEncode = settings?.behavior?.autoEncodeRecordings ?? false
@@ -91,7 +95,55 @@ function ActionBar(): React.ReactElement {
     alert(`Photo import complete:\n\n${result.matched ?? 0} matched to routines\n${result.unmatched ?? 0} unmatched${offset}`)
   }
 
+  const autoWatchActive = tetherState?.active && tetherState?.source === 'folder-watch'
+  const autoWatchFolder = settings?.tether?.autoWatchFolder || ''
+
+  async function toggleAutoWatchPhotos(e: React.MouseEvent): Promise<void> {
+    e.preventDefault()
+    if (!settings) return
+
+    if (autoWatchActive) {
+      // Stop watching
+      await window.api.tetherStop()
+      return
+    }
+
+    // If we have a saved folder, start watching it
+    let folder = autoWatchFolder
+    if (!folder) {
+      // No folder saved — prompt to pick one
+      folder = await window.api.photosBrowse()
+      if (!folder) return
+      // Save it to settings
+      const updated = { ...settings, tether: { ...settings.tether, autoWatchFolder: folder } }
+      await window.api.settingsSet(updated)
+      useStore.getState().setSettings(updated)
+    }
+    await window.api.tetherStart(folder)
+  }
+
+  async function toggleUploadPause(): Promise<void> {
+    if (uploadsPaused) {
+      await window.api.uploadStart()
+      setUploadsPaused(false)
+    } else {
+      await window.api.uploadStop()
+      setUploadsPaused(true)
+    }
+  }
+
+  async function toggleEncodePause(): Promise<void> {
+    if (encodingPaused) {
+      await window.api.ffmpegResume()
+      setEncodingPaused(false)
+    } else {
+      await window.api.ffmpegPause()
+      setEncodingPaused(true)
+    }
+  }
+
   const uploadDisabled = isUploading || uploadingCount > 0
+  const showPauseBar = encodingCount > 0 || uploadingCount > 0 || encodingPaused || uploadsPaused
 
   return (
     <div className="action-bar">
@@ -155,12 +207,18 @@ function ActionBar(): React.ReactElement {
 
       {/* Import Photos */}
       <button
-        className="ab-btn import-photo"
+        className={`ab-btn import-photo${autoWatchActive ? ' watching' : ''}`}
         onClick={handleImportPhotos}
-        title="Import photos from camera/SD card"
+        onContextMenu={toggleAutoWatchPhotos}
+        title={autoWatchActive
+          ? `Auto-watch ON: ${tetherState?.watchPath || autoWatchFolder} (right-click to stop)`
+          : autoWatchFolder
+            ? `Import photos (right-click to auto-watch ${autoWatchFolder})`
+            : 'Import photos (right-click to enable auto-watch)'}
       >
         <span className="ab-icon">{'\u{1F4F7}'}</span>
         <span className="ab-label">Photos</span>
+        {autoWatchActive && <span className="ab-auto-badge">LIVE</span>}
       </button>
 
       <div className="ab-divider" />
@@ -174,6 +232,29 @@ function ActionBar(): React.ReactElement {
         <span className="ab-icon">{'\u{1F6E0}'}</span>
         <span className="ab-label">Recovery</span>
       </button>
+      {showPauseBar && (
+        <div className="ab-pause-bar">
+          <button
+            className={`ab-pause-btn${encodingPaused ? ' paused' : ''}`}
+            onClick={toggleEncodePause}
+            title={encodingPaused ? 'Resume encoding' : 'Pause encoding (finishes current)'}
+          >
+            {encodingPaused ? '\u25B6 Encode' : '\u23F8 Encode'}
+            {encodingCount > 0 && !encodingPaused && <span className="ab-count">{encodingCount}</span>}
+          </button>
+          <button
+            className={`ab-pause-btn${uploadsPaused ? ' paused' : ''}`}
+            onClick={toggleUploadPause}
+            title={uploadsPaused ? 'Resume uploads' : 'Pause uploads (aborts current)'}
+          >
+            {uploadsPaused ? '\u25B6 Upload' : '\u23F8 Upload'}
+            {uploadingCount > 0 && !uploadsPaused && <span className="ab-count">{uploadingCount}</span>}
+          </button>
+        </div>
+      )}
+      <div className="ab-helper-text">
+        Click = one-time action &middot; Right-click = toggle auto mode
+      </div>
     </div>
   )
 }

@@ -8,6 +8,7 @@ export default function Controls(): React.ReactElement {
   const currentRoutine = useStore((s) => s.currentRoutine)
 
   const isConnected = obsState.connectionStatus === 'connected'
+  const isRecording = obsState.isRecording
 
   async function handlePrev(): Promise<void> {
     try { await window.api.recordingPrev() } catch { /* handled server-side */ }
@@ -16,16 +17,12 @@ export default function Controls(): React.ReactElement {
   async function handleToggleRecord(): Promise<void> {
     if (!isConnected) return
     try {
-      if (obsState.isRecording) {
+      if (isRecording) {
         await window.api.obsStopRecord()
       } else {
         await window.api.obsStartRecord()
       }
     } catch { /* handled server-side */ }
-  }
-
-  async function handleNext(): Promise<void> {
-    try { await window.api.recordingNext() } catch { /* handled server-side */ }
   }
 
   async function handleNextFull(): Promise<void> {
@@ -56,25 +53,46 @@ export default function Controls(): React.ReactElement {
 
   const hotkeys = settings?.hotkeys
 
+  // Primary action button swaps based on state:
+  // - Not recording: big RECORD button (with red glow CTA)
+  // - Recording: big NEXT button (to advance)
+  const primaryBtn = isRecording ? (
+    <button className="ctrl-btn next-full" onClick={handleNextFull}>
+      NEXT
+    </button>
+  ) : (
+    <button
+      className={`ctrl-btn record-cta${isConnected ? '' : ' disabled'}`}
+      onClick={handleToggleRecord}
+      disabled={!isConnected}
+    >
+      RECORD
+      <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
+    </button>
+  )
+
   return (
     <div className="section controls-section">
-      <button className="ctrl-btn next-full" onClick={handleNextFull}>
-        NEXT
-      </button>
+      {primaryBtn}
       <div className="control-row">
         <button className="ctrl-btn" onClick={handlePrev}>
           Prev
         </button>
         <button
-          className={`ctrl-btn record ${obsState.isRecording ? 'is-recording' : ''}`}
+          className={`ctrl-btn record ${isRecording ? 'is-recording' : ''}`}
           onClick={handleToggleRecord}
           disabled={!isConnected}
         >
-          {obsState.isRecording ? 'Stop Rec' : 'Record'}
+          {isRecording ? 'Stop Rec' : 'Record'}
           <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
         </button>
-        <button className="ctrl-btn" onClick={handleNext}>
-          Next Only
+        <button
+          className={`ctrl-btn${isRecording ? '' : ' disabled-muted'}`}
+          onClick={isRecording ? handleNextFull : undefined}
+          disabled={!isRecording}
+          title={!isRecording ? 'Start recording first' : 'Stop, advance, record, fire LT'}
+        >
+          Next
         </button>
       </div>
       <div className="control-row">

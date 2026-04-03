@@ -60,7 +60,8 @@ let tetherState: TetherState = {
 }
 
 let watcher: import('chokidar').FSWatcher | null = null
-const importedFiles = new Set<string>()
+// path → matched routineId, or null if seen but unmatched
+const importedFiles = new Map<string, string | null>()
 const clockOffsetSamples: number[] = []
 const MAX_OFFSET_SAMPLES = 10
 
@@ -191,10 +192,16 @@ async function processNewPhoto(
   incomingMetadata: Partial<StagedPhotoMetadata> = {},
 ): Promise<void> {
   const normalizedPath = path.normalize(filePath)
-  if (importedFiles.has(normalizedPath)) return
-  importedFiles.add(normalizedPath)
+  const previousMatch = importedFiles.get(normalizedPath)
+  if (previousMatch) return // already matched to a routine — skip
+  // previousMatch === null → seen but unmatched, retry
+  // previousMatch === undefined → never seen
 
-  logger.photos.info(`Tether: New photo detected: ${path.basename(filePath)}`)
+  const isRetry = previousMatch === null
+
+  if (!isRetry) {
+    logger.photos.info(`Tether: New photo detected: ${path.basename(filePath)}`)
+  }
 
   const stagedMetadata = await getStagedPhotoMetadata(filePath)
   const captureTime =
@@ -202,7 +209,10 @@ async function processNewPhoto(
     parseCaptureTime(stagedMetadata?.captureTime) ||
     (await getPhotoCaptureTime(filePath))
   if (!captureTime) {
-    logger.photos.warn(`Tether: No EXIF timestamp for ${path.basename(filePath)} — skipping`)
+    if (!isRetry) {
+      logger.photos.warn(`Tether: No EXIF timestamp for ${path.basename(filePath)} — skipping`)
+    }
+    importedFiles.set(normalizedPath, null)
     return
   }
 
@@ -215,12 +225,15 @@ async function processNewPhoto(
   const match = matchSinglePhoto(adjustedCaptureTime, windows)
 
   if (!match) {
-    logger.photos.info(
-      `Tether: Photo ${path.basename(filePath)} at ${captureTime.toISOString()} (adjusted ${adjustedCaptureTime.toISOString()}) — no routine match`,
-    )
-    tetherState.photosReceived++
-    tetherState.lastPhotoTime = captureTime.toISOString()
-    broadcastTetherState()
+    if (!isRetry) {
+      logger.photos.info(
+        `Tether: Photo ${path.basename(filePath)} at ${captureTime.toISOString()} (adjusted ${adjustedCaptureTime.toISOString()}) — no routine match`,
+      )
+      tetherState.photosReceived++
+      tetherState.lastPhotoTime = captureTime.toISOString()
+      broadcastTetherState()
+    }
+    importedFiles.set(normalizedPath, null)
     return
   }
 
@@ -257,16 +270,19 @@ async function processNewPhoto(
   const destFile = path.join(photosDir, `photo_${String(photoNum).padStart(3, '0')}${ext}`)
   fs.copyFileSync(filePath, destFile)
 
-  // Generate thumbnail
+  // Generate thumbnail (only for formats sharp can handle — JPEG, PNG, TIFF, WebP)
   let thumbPath: string | undefined
-  try {
-    const thumbDir = path.join(photosDir, 'thumbnails')
-    if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
-    thumbPath = path.join(thumbDir, `thumb_${String(photoNum).padStart(3, '0')}.jpg`)
-    await sharp(destFile).resize(200, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath)
-  } catch (err) {
-    logger.photos.warn(`Tether: Thumbnail failed for ${destFile}:`, err)
-    thumbPath = undefined
+  const thumbableExts = /\.(jpg|jpeg|png|tiff?|webp)$/i
+  if (thumbableExts.test(ext)) {
+    try {
+      const thumbDir = path.join(photosDir, 'thumbnails')
+      if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
+      thumbPath = path.join(thumbDir, `thumb_${String(photoNum).padStart(3, '0')}.jpg`)
+      await sharp(destFile).resize(200, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath)
+    } catch (err) {
+      logger.photos.warn(`Tether: Thumbnail failed for ${destFile}:`, err)
+      thumbPath = undefined
+    }
   }
 
   // Build PhotoMatch
@@ -279,9 +295,10 @@ async function processNewPhoto(
     matchedRoutineId: match.routineId,
   }
 
-  // Update routine state
+  // Update routine state + mark as matched
   const updatedPhotos = [...existingPhotos, photoMatch]
   state.updateRoutineStatus(routine.id, routine.status, { photos: updatedPhotos })
+  importedFiles.set(normalizedPath, match.routineId)
 
   logger.photos.info(
     `Tether: Photo matched to #${routine.entryNumber} "${routine.routineTitle}" (${match.confidence}) — ${updatedPhotos.length} total photos`,
@@ -317,6 +334,66 @@ function appDataTetherDir(): string {
 
 function broadcastTetherState(): void {
   sendToRenderer(IPC_CHANNELS.TETHER_PROGRESS, { ...tetherState })
+}
+
+// --- Rescan: retry unmatched + pick up new files (called after recording stops) ---
+
+async function walkPhotos(dir: string, depth = 0): Promise<string[]> {
+  if (depth > 5) return []
+  const results: string[] = []
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      results.push(...await walkPhotos(fullPath, depth + 1))
+    } else if (PHOTO_EXTENSIONS.test(entry.name)) {
+      results.push(fullPath)
+    }
+  }
+  return results
+}
+
+export async function rescanPhotos(): Promise<number> {
+  const watcherActive = tetherState.active && tetherState.source === 'folder-watch'
+  const watchPath = tetherState.watchPath || getSettings().tether?.autoWatchFolder
+
+  if (!watchPath) {
+    logger.photos.info('Tether: rescanPhotos — no watch folder configured')
+    return 0
+  }
+
+  let matched = 0
+  const unmatchedCount = [...importedFiles.values()].filter((v) => v === null).length
+
+  // 1. Retry previously unmatched photos (now we may have new recording windows)
+  if (unmatchedCount > 0) {
+    logger.photos.info(`Tether: Retrying ${unmatchedCount} unmatched photos`)
+    for (const [filePath, routineId] of importedFiles) {
+      if (routineId !== null) continue
+      await processNewPhoto(filePath)
+      if (importedFiles.get(filePath) !== null) matched++
+    }
+  }
+
+  // 2. Only walk folder if watcher is NOT running (it already caught everything)
+  if (!watcherActive) {
+    if (!fs.existsSync(watchPath)) {
+      logger.photos.warn(`Tether: rescanPhotos — folder not found: ${watchPath}`)
+      return matched
+    }
+    logger.photos.info(`Tether: No live watcher — walking ${watchPath} for unseen files`)
+    const allFiles = await walkPhotos(watchPath)
+    for (const filePath of allFiles) {
+      const normalized = path.normalize(filePath)
+      if (importedFiles.has(normalized)) continue
+      await processNewPhoto(filePath)
+      if (importedFiles.get(normalized) !== null) matched++
+    }
+  }
+
+  logger.photos.info(`Tether: Rescan complete — ${matched} new matches (${importedFiles.size} total tracked)`)
+  return matched
 }
 
 // --- Public API ---
@@ -442,14 +519,18 @@ export function getTetherState(): TetherState {
 }
 
 export function initWPDHandlers(): void {
+  logger.photos.info('Tether: Registering WPD handlers')
   wpdBridge.setHandlers({
     onPhoto: ({ path: filePath, captureTime, deviceName }) => {
+      logger.photos.info(`Tether: WPD photo received — ${path.basename(filePath)} (captureTime=${captureTime || 'none'}, device=${deviceName || 'unknown'})`)
       processNewPhoto(filePath, { captureTime, deviceName }).catch((err) => {
         logger.photos.error(`Tether: WPD photo processing failed for ${path.basename(filePath)}:`, err)
       })
     },
     onDeviceEvent: (event: WPDDeviceEvent) => {
+      logger.photos.info(`Tether: WPD device event — ${event.event}: ${event.device.name} (${event.device.id})`)
       sendToRenderer(IPC_CHANNELS.TETHER_WPD_DEVICE_EVENT, event)
     },
   })
+  logger.photos.info('Tether: WPD handlers registered')
 }

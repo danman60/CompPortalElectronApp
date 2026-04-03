@@ -7,6 +7,7 @@ import { IPC_CHANNELS, UploadProgress, Routine } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getResolvedConnection } from './schedule'
+import { getSettings } from './settings'
 import * as state from './state'
 import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate } from './recording'
@@ -292,7 +293,24 @@ async function processLoop(): Promise<void> {
             photoStoragePaths,
           })
 
-          state.updateRoutineStatus(payload.routineId, 'uploaded')
+          // Mark individual files as uploaded with their storage paths
+          const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
+          if (routine) {
+            const updatedFiles = (routine.encodedFiles || []).map(f => {
+              const sp = storagePaths[f.role]
+              return sp ? { ...f, uploaded: true, storagePath: sp } : f
+            })
+            const updatedPhotos = (routine.photos || []).map((p, i) => {
+              const sp = photoStoragePaths[i]
+              return sp ? { ...p, uploaded: true, storagePath: sp } : p
+            })
+            state.updateRoutineStatus(payload.routineId, 'uploaded', {
+              encodedFiles: updatedFiles,
+              photos: updatedPhotos,
+            })
+          } else {
+            state.updateRoutineStatus(payload.routineId, 'uploaded')
+          }
           activeUploadRoutineIds.delete(payload.routineId)
           broadcastRoutineUpdate(payload.routineId)
           sendProgress(payload.routineId, {
@@ -332,6 +350,12 @@ async function processLoop(): Promise<void> {
         filesTotal: 1,
         error: errMsg,
       })
+
+      // Backoff before next attempt: 5s, 10s, 20s, 40s, 60s max
+      const attempts = job.attempts || 1
+      const backoffMs = Math.min(5000 * Math.pow(2, attempts - 1), 60000)
+      logger.upload.info(`Upload backoff: waiting ${backoffMs / 1000}s before next job`)
+      await new Promise(resolve => setTimeout(resolve, backoffMs))
     } finally {
       // ALWAYS clean up abort controller
       currentAbortController = null
@@ -426,10 +450,15 @@ function uploadFileToSignedUrl(
       },
     )
 
+    function cleanup(): void {
+      if (!fileStream.destroyed) fileStream.destroy()
+      clearTimeout(timer)
+    }
+
     // Timeout timer
     const timer = setTimeout(() => {
+      cleanup()
       req.destroy()
-      fileStream.destroy()
       reject(new Error(`Upload timed out after ${timeoutMs / 1000}s`))
     }, timeoutMs)
 
@@ -437,15 +466,13 @@ function uploadFileToSignedUrl(
     currentAbortController = new AbortController()
     currentAbortRoutineId = payload.routineId
     currentAbortController.signal.addEventListener('abort', () => {
-      clearTimeout(timer)
+      cleanup()
       req.destroy()
-      fileStream.destroy()
       reject(new Error('Upload aborted'))
     })
 
     req.on('error', (err) => {
-      clearTimeout(timer)
-      fileStream.destroy()
+      cleanup()
       reject(err)
     })
 
@@ -583,6 +610,35 @@ export async function retryOrphanedCompletions(): Promise<number> {
     }
   }
 
+  return retried
+}
+
+/** Retry uploading any routines stuck at 'encoded' that were skipped due to missing connection. */
+export function retrySkippedEncoded(): number {
+  const comp = state.getCompetition()
+  if (!comp) return 0
+  if (!hasResolvedUploadConnection()) return 0
+
+  const settings = getSettings()
+  if (!settings.behavior.autoUploadAfterEncoding) return 0
+
+  let retried = 0
+  for (const routine of comp.routines) {
+    if (routine.status !== 'encoded') continue
+    const existingJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
+    const hasPendingOrDone = existingJobs.some(j => j.status === 'pending' || j.status === 'running' || j.status === 'done')
+    if (hasPendingOrDone) continue
+
+    const result = enqueueRoutine(routine)
+    if (result.queuedJobs > 0) {
+      retried++
+      logger.upload.info(`Retrying skipped upload for encoded routine ${routine.entryNumber} "${routine.routineTitle}" (${result.queuedJobs} jobs)`)
+    }
+  }
+
+  if (retried > 0) {
+    startUploads()
+  }
   return retried
 }
 

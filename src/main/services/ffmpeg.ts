@@ -13,6 +13,7 @@ import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
+let isPaused = false
 
 const PID_FILE = 'ffmpeg.pid'
 const DEFAULT_TIMEOUT_MS = 600000 // 10 minutes
@@ -228,6 +229,10 @@ async function processNext(): Promise<void> {
 
   // Iterative loop — no recursion, no deep call stacks
   while (true) {
+    if (isPaused) {
+      logger.ffmpeg.info('Encode queue paused')
+      break
+    }
     const jobRecord = jobQueue.getNext('encode')
     if (!jobRecord) break
 
@@ -566,6 +571,22 @@ function cleanupTempFiles(outputDir: string): void {
 
 export function getQueueLength(): number {
   return jobQueue.getPending('encode').length + jobQueue.getRunning('encode').length
+}
+
+export function pauseEncoding(): void {
+  isPaused = true
+  logger.ffmpeg.info('Encoding paused — will finish current job then stop')
+}
+
+export function resumeEncoding(): void {
+  if (!isPaused) return
+  isPaused = false
+  logger.ffmpeg.info('Encoding resumed')
+  processNext()
+}
+
+export function isEncodingPaused(): boolean {
+  return isPaused
 }
 
 export function cancelCurrent(): void {

@@ -87,3 +87,41 @@
   color: white;
 }
 .ctrl-btn.next-full:hover { background: var(--accent-hover); }
+
+/* Big RECORD call-to-action when not recording */
+.ctrl-btn.record-cta {
+  padding: 14px 10px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: var(--recording);
+  border-color: var(--recording);
+  color: white;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.4), 0 0 32px rgba(239, 68, 68, 0.15);
+  animation: record-glow 2s ease-in-out infinite;
+}
+.ctrl-btn.record-cta:hover:not(:disabled) {
+  background: #dc2626;
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.6), 0 0 48px rgba(239, 68, 68, 0.25);
+}
+.ctrl-btn.record-cta.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes record-glow {
+  0%, 100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.3), 0 0 24px rgba(239, 68, 68, 0.1); }
+  50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5), 0 0 40px rgba(239, 68, 68, 0.2); }
+}
+
+/* Muted disabled state for Next when not recording */
+.ctrl-btn.disabled-muted {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.ctrl-btn.disabled-muted:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}

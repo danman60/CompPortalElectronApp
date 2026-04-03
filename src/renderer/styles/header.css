@@ -143,6 +143,8 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 2px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .ab-divider {
@@ -209,6 +211,62 @@
 
 .ab-btn.import-vid:hover { border-color: var(--accent); }
 .ab-btn.import-photo:hover { border-color: #a855f7; }
+.ab-btn.import-photo.watching { color: #a855f7; border-color: #a855f7; }
+.ab-btn.import-photo.watching .ab-icon { color: #a855f7; }
+
+.ab-pause-bar {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 4px 0;
+}
+
+.ab-pause-btn {
+  font-size: 8px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ab-pause-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.ab-pause-btn.paused {
+  background: rgba(239,68,68,0.1);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.ab-pause-btn .ab-count {
+  font-size: 7px;
+  background: var(--text-muted);
+  color: var(--bg-primary);
+  padding: 0 3px;
+  border-radius: 3px;
+  line-height: 1.3;
+}
+
+.ab-helper-text {
+  width: 100%;
+  text-align: center;
+  font-size: 7px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  padding: 1px 4px 0;
+  letter-spacing: 0.3px;
+}
 
 /* Legacy action-btn kept for any remaining uses */
 .action-btn {

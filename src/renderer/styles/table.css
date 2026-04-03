@@ -78,6 +78,7 @@
 .status-label.processing { color: var(--warning); }
 .status-label.uploading { color: var(--upload-blue); }
 .status-label.complete { color: var(--success); }
+.status-label.video-only { color: var(--upload-blue); }
 .status-label.waiting { color: var(--text-muted); }
 .status-label.recording { color: var(--recording); font-weight: 700; }
 .status-label.failed { color: var(--danger); }

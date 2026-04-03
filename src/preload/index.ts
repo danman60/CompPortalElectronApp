@@ -25,6 +25,8 @@ const api = {
   ffmpegEncode: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_ENCODE, routineId),
   ffmpegEncodeAll: () => ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_ENCODE_ALL),
+  ffmpegPause: () => ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_PAUSE),
+  ffmpegResume: () => ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_RESUME),
 
   // Schedule
   scheduleLoadCSV: (filePath: string) =>

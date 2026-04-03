@@ -1,44 +1,54 @@
 # Current Work - CompSync Electron App
 
 ## Last Session Summary
-Fixed 4 bugs from code audit + 7 production safety fixes. Full audit completed. Deployed to DART.
+Major testing and bugfix session. Fixed Next button, PTP tether pipeline, upload retry, re-record confirmation, Controls UI, overlay layout. Full E2E verified.
 
-## What Changed
-- `1f69ae6` fix: 11 production safety fixes — upload targeting, recovery multi-file, encoding guards, disk monitoring
-- `a560798` chore: update CURRENT_WORK.md — session wrap-up
-- `cdb3388` fix: 5 critical safety fixes — recording race, upload safety, state decoupling, tether offset, async photos
+## What Changed (this session)
+- `d244823` (prior) fix: 11 production safety fixes
+- **Uncommitted changes:**
+  - `recording.ts` — fixed nextFull() broken dynamic require, added configurable next sequence, re-record confirmation dialog, verbose logging
+  - `types.ts` — added nextSequence settings (6 fields), tether.autoWatchFolder setting
+  - `Settings.tsx` — added Next Sequence section, Photo Tether section, removed duplicate autoRecordOnNext toggle
+  - `Controls.tsx` — button swap (RECORD/NEXT based on recording state), disabled states, red glow CTA
+  - `controls.css` — record-cta glow animation, disabled-muted style
+  - `overlay-controls.css` — spacing between sections
+  - `OverlayControls.tsx` — split Animation into Style and Timing sections
+  - `index.ts` — added tether import (was missing!), auto-watch folder on startup, retrySkippedEncoded call
+  - `upload.ts` — added retrySkippedEncoded(), added getSettings import (was missing!), per-file upload tracking (storagePath + uploaded flag)
+  - `wpdBridge.ts` — verbose logging throughout
+  - `tether.ts` — verbose WPD handler logging, thumbnail RAW file skip
+  - `DriveAlert.tsx` — disabled WPD/MTP direct button
+  - `ipc.ts` — confirmReRecordIfNeeded before startRecord
+  - `hotkeys.ts` — confirmReRecordIfNeeded before startRecord
+  - `package.json` — fixed sharp version mismatch (0.34.5 → 0.33.5)
+  - `tools/wpd-helper/` — complete rewrite with MediaDevices NuGet (v4), proper PTP event support
 
 ## Build Status
-PASSING — deployed to DART at 2026-04-01, app running v2.6.0
+PASSING — deployed to DART multiple times today. Last deploy at ~12:09.
 
-## Fixes Applied This Session
-1. Upload cancel targets correct routine (was killing wrong upload)
-2. Recovery splits from correct MKV via sourceFileIndex (was hardcoded [0])
-3. Crash recovery looks up routine by entry number (was using folder name as ID)
-4. OBS max record time configurable (was hardcoded 15min)
-5. Pre-encode disk space check (~2x input file)
-6. Audio track validation + auto-clamp judgeCount
-7. NVENC auto-fallback to libx264
-8. Job queue flushSync on enqueue (crash-safe)
-9. retryOrphanedCompletions() on startup
-10. Temp judge video cleanup in crash recovery
-11. Disk meter glow indicator (yellow <10GB, red <2GB)
+## E2E Verification Results
+- 7 routines (108-114) recorded, encoded, uploaded, plugin/complete succeeded
+- CompPortal DB confirmed all 7 media_packages with correct R2 paths
+- CompPortal fixed status from "processing" → "complete" (commit c0c5dec0)
+- Upload retry for skipped routines working (109-111 recovered on restart)
+- Zero errors since last restart
 
 ## Known Issues
-- Visual editor drag targets are half-scale approximations of 1920px overlay elements
-- WPD helper is polling-based MVP, not COM event-driven yet
-- No UI banner for "uploads disabled — no share code"
+- PTP event-driven photo capture: MediaDevices ObjectAdded event connects but doesn't fire on GH5M2. Workaround: use folder-watch mode pointing at Lumix Tether output folder (Settings > Photo Tether > Auto-Watch Folder)
+- Thumbnail generation: sharp version mismatch fixed, but untested since fix deployed
+- WPD helper needs to be built on DART (can't build .NET from WSL due to NuGet permission issues)
 
 ## Next Steps (priority order)
-1. Hardware smoke test on DART with OBS — full recording + encoding + upload flow
-2. Test overlay in OBS browser source
-3. Test camera tethering with real camera
-4. Add upload-disabled UI banner
-5. Test recovery mode with actual MKV
+1. **Test photo tether folder-watch** — set Lumix Tether output folder in Settings, take photos, verify pipeline
+2. **Test re-record confirmation** — click Record on already-recorded routine, verify dialog appears
+3. **Test Controls UI** — verify RECORD/NEXT button swap, disabled states, red glow
+4. **Test Next Sequence settings** — adjust pause times, verify they take effect
+5. **Commit all changes** — large uncommitted diff
+6. **Push to DART** — rebuild with committed changes
 
 ## Gotchas
-- Hot update to DART requires BOTH app.asar AND CompSync Media.exe
+- Hot update to DART requires BOTH app.asar AND CompSync Media.exe (exe only if native deps change)
 - DART Desktop is OneDrive: `C:\Users\User\OneDrive\Desktop\`
-- npm install needs `--force` on Linux (sharp win32 platform constraint)
-- WPD helper built on DART (.NET 8), exe at `C:\Program Files\CompSync Media\resources\wpd-helper.exe`
+- WPD helper built on DART via `dotnet publish` in CMD (not WSL — NuGet permissions broken via WSL)
+- MediaDevices NuGet had to be manually extracted (NuGet restore fails on "content" folder — system-wide issue on DART)
 - UDC-LONDON share code active, 526 routines
