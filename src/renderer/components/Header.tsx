@@ -104,7 +104,7 @@ function ActionBar(): React.ReactElement {
 
   async function handleTabletToggle(): Promise<void> {
     const wd = settings?.wifiDisplay
-    if (!wd?.binaryPath || wd.monitorIndex === null || wd.monitorIndex === undefined) {
+    if (wd?.monitorIndex === null || wd?.monitorIndex === undefined) {
       useStore.getState().setSettingsOpen(true)
       return
     }

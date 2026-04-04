@@ -1,54 +1,88 @@
 # Current Work - CompSync Electron App
 
 ## Last Session Summary
-Major testing and bugfix session. Fixed Next button, PTP tether pipeline, upload retry, re-record confirmation, Controls UI, overlay layout. Full E2E verified.
+Built the Wireless Tablet Display feature — integrates WifiDisplay streaming server into CompSync as a managed service, plus a new CSController Android app with video stream + 11 CS control buttons. Deployed to DART and APK to shared drive. Testing in progress — video stream works, WS connection and touch injection need verification after firewall fix.
 
-## What Changed (this session)
-- `d244823` (prior) fix: 11 production safety fixes
-- **Uncommitted changes:**
-  - `recording.ts` — fixed nextFull() broken dynamic require, added configurable next sequence, re-record confirmation dialog, verbose logging
-  - `types.ts` — added nextSequence settings (6 fields), tether.autoWatchFolder setting
-  - `Settings.tsx` — added Next Sequence section, Photo Tether section, removed duplicate autoRecordOnNext toggle
-  - `Controls.tsx` — button swap (RECORD/NEXT based on recording state), disabled states, red glow CTA
-  - `controls.css` — record-cta glow animation, disabled-muted style
-  - `overlay-controls.css` — spacing between sections
-  - `OverlayControls.tsx` — split Animation into Style and Timing sections
-  - `index.ts` — added tether import (was missing!), auto-watch folder on startup, retrySkippedEncoded call
-  - `upload.ts` — added retrySkippedEncoded(), added getSettings import (was missing!), per-file upload tracking (storagePath + uploaded flag)
-  - `wpdBridge.ts` — verbose logging throughout
-  - `tether.ts` — verbose WPD handler logging, thumbnail RAW file skip
-  - `DriveAlert.tsx` — disabled WPD/MTP direct button
-  - `ipc.ts` — confirmReRecordIfNeeded before startRecord
-  - `hotkeys.ts` — confirmReRecordIfNeeded before startRecord
-  - `package.json` — fixed sharp version mismatch (0.34.5 → 0.33.5)
-  - `tools/wpd-helper/` — complete rewrite with MediaDevices NuGet (v4), proper PTP event support
+## What Changed
+
+### Committed (this session)
+- `4efc392` feat: add wifi tablet display backend — types, service, IPC, preload, lifecycle
+- `99e1687` feat: add wifiDisplayState to Zustand store  
+- `50b637c` feat: add Tablet Display section to Settings panel
+- `4d891a3` feat: add Tablet button to Header action bar
+
+### Uncommitted (staged for wrap-up commit)
+- `src/main/services/wifiDisplay.ts` — removed binaryPath setting, added bundled binary resolution (resources → userData), added UDP discovery listener (request/response, not polling)
+- `src/main/services/wsHub.ts` — bind to `0.0.0.0` (was `127.0.0.1`), added `'tablet'` to clientType
+- `src/shared/types.ts` — removed `binaryPath` from AppSettings/DEFAULT_SETTINGS
+- `src/renderer/components/Settings.tsx` — removed binary path field from Tablet Display section
+- `src/renderer/components/Header.tsx` — removed binaryPath check from tablet toggle
+- `src/main/index.ts` — removed binaryPath from auto-start check
+- `package.json` — added `wifi-display-server.exe`, `driver-setup.exe`, `VDDControl.exe` to extraResources
+
+### New files (bundled binaries)
+- `resources/wifi-display-server.exe` (1.9MB) — streaming server, copied from DART
+- `resources/driver-setup.exe` (5.3MB) — VDD installer
+- `resources/VDDControl.exe` (16MB) — VDD config tool
+
+### CSController Android app (separate repo)
+- Created at `/home/danman60/projects/CSController/`
+- Kotlin + Jetpack Compose, 19 files
+- Video decode + touch input (from WifiDisplay), WsController (new), 11-button control bar
+- UDP auto-discovery with request/response pairing
+- APK at `/mnt/firmament/CSController-2026-04-03.apk` and Google Drive APK folder
 
 ## Build Status
-PASSING — deployed to DART multiple times today. Last deploy at ~12:09.
+- **Electron**: PASSING — tsc clean, deployed to DART
+- **Android**: PASSING — 9.2MB APK built and deployed
+- **Rollback**: git tag `v2.7.0-stable` = commit `11b97af`, backup `app.asar.v2.7.0-stable` on DART
 
-## E2E Verification Results
-- 7 routines (108-114) recorded, encoded, uploaded, plugin/complete succeeded
-- CompPortal DB confirmed all 7 media_packages with correct R2 paths
-- CompPortal fixed status from "processing" → "complete" (commit c0c5dec0)
-- Upload retry for skipped routines working (109-111 recovered on restart)
-- Zero errors since last restart
+## Known Bugs & Issues
+- **WS disconnected on tablet**: Added firewall rules for TCP 9877 and UDP 5000-5002 on DART. Needs retest — user hasn't confirmed if this fixed it.
+- **Touch injection not working**: wifi-display-server uses SendInput which needs matching privilege level. If OBS runs as admin, the server (child of CS) also needs admin. CS may need to spawn the server elevated, or CS itself needs to run as admin.
+- **Sharp thumbnails broken on Windows**: `TypeError: A boolean was expected` — disabled, pre-existing from v2.7.0
 
-## Known Issues
-- PTP event-driven photo capture: MediaDevices ObjectAdded event connects but doesn't fire on GH5M2. Workaround: use folder-watch mode pointing at Lumix Tether output folder (Settings > Photo Tether > Auto-Watch Folder)
-- Thumbnail generation: sharp version mismatch fixed, but untested since fix deployed
-- WPD helper needs to be built on DART (can't build .NET from WSL due to NuGet permission issues)
+## Incomplete Work
+- Touch injection into admin OBS: may need to spawn wifi-display-server.exe with elevation (PowerShell `Start-Process -Verb RunAs`)
+- WS connection verification after firewall fix
+- Button functionality verification on tablet
+- End-to-end test: tap OBS scene switch + tap CS buttons
+
+## Tests
+- No automated tests for wifi display feature
+- Manual testing on DART: video stream confirmed working, WS and touch pending
+- QA agent checklists not updated for tablet feature
 
 ## Next Steps (priority order)
-1. **Test photo tether folder-watch** — set Lumix Tether output folder in Settings, take photos, verify pipeline
-2. **Test re-record confirmation** — click Record on already-recorded routine, verify dialog appears
-3. **Test Controls UI** — verify RECORD/NEXT button swap, disabled states, red glow
-4. **Test Next Sequence settings** — adjust pause times, verify they take effect
-5. **Commit all changes** — large uncommitted diff
-6. **Push to DART** — rebuild with committed changes
+1. **Verify WS connects after firewall fix** — restart CS on DART, check tablet shows "ws connected"
+2. **Fix touch injection** — if OBS is admin, spawn wifi-display-server elevated. Test tapping to switch OBS scenes.
+3. **Verify all 11 buttons work** — tap each on tablet, confirm CS responds
+4. **Commit all uncommitted changes** — large diff across ~20 files
+5. **Build the Rust server from source on DART** — current binary was pre-built, should be reproducible (`cargo build --release` in WifiDisplay/server, needs Rust installed on DART)
 
-## Gotchas
-- Hot update to DART requires BOTH app.asar AND CompSync Media.exe (exe only if native deps change)
-- DART Desktop is OneDrive: `C:\Users\User\OneDrive\Desktop\`
-- WPD helper built on DART via `dotnet publish` in CMD (not WSL — NuGet permissions broken via WSL)
-- MediaDevices NuGet had to be manually extracted (NuGet restore fails on "content" folder — system-wide issue on DART)
-- UDC-LONDON share code active, 526 routines
+## Gotchas for Next Session
+- wsHub was bound to 127.0.0.1 — changed to 0.0.0.0 so tablet can reach it. If StreamDeck breaks, this is why (unlikely but check).
+- Discovery uses port 5002 — both broadcast and listen. Request/response model, not persistent polling.
+- The compiled `out/main/index.js` shows both `127.0.0.1` (overlay on port 9876) and `0.0.0.0` (wsHub on port 9877). This is correct — overlay only needs localhost, wsHub needs network access.
+- VDD driver is pre-installed on DART. On fresh machines, need to run `driver-setup.exe` from resources.
+- Firewall rules were added manually via `netsh`. These persist across reboots but won't be on fresh machines — consider adding to installer.
+
+## Files Touched This Session
+### Electron (modified)
+- src/shared/types.ts — wifiDisplay settings, IPC channels, MonitorInfo, WifiDisplayState, tablet client type
+- src/main/services/wifiDisplay.ts — NEW service (process management, discovery)
+- src/main/services/wsHub.ts — bind 0.0.0.0, tablet client type
+- src/main/ipc.ts — 5 wifi-display handlers
+- src/preload/index.ts — 5 wifi-display API methods
+- src/main/index.ts — orphan kill, auto-start, cleanup
+- src/renderer/store/useStore.ts — wifiDisplayState
+- src/renderer/components/Settings.tsx — Tablet Display section
+- src/renderer/components/Header.tsx — Tablet button
+- package.json — extraResources for bundled binaries
+
+### Android (new repo at ~/projects/CSController/)
+- 19 files — full Kotlin/Compose app with video, touch, WS controls, auto-discovery
+
+## Specs & Plans
+- Spec: `docs/superpowers/specs/2026-04-03-wifi-tablet-display-design.md`
+- Plan: `docs/plans/2026-04-03-wifi-tablet-display-plan.md`

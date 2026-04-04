@@ -270,7 +270,6 @@ export interface AppSettings {
     matchBufferMs: number
   }
   wifiDisplay: {
-    binaryPath: string | null
     monitorIndex: number | null
     bitrate: number
     fps: number
@@ -686,7 +685,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     matchBufferMs: 1000,
   },
   wifiDisplay: {
-    binaryPath: null,
     monitorIndex: null,
     bitrate: 3000,
     fps: 30,

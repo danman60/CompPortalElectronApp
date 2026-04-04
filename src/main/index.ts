@@ -203,7 +203,7 @@ app.whenReady().then(async () => {
 
   // Auto-start wifi display if configured
   const wdSettings = getSettings().wifiDisplay
-  if (wdSettings?.autoStart && wdSettings.binaryPath && wdSettings.monitorIndex !== null) {
+  if (wdSettings?.autoStart && wdSettings.monitorIndex !== null) {
     wifiDisplay.start().then(() => {
       logger.app.info('Auto-started wifi display streaming')
     }).catch((err: Error) => {

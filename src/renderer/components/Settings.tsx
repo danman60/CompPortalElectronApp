@@ -572,27 +572,6 @@ export default function Settings(): React.ReactElement {
           </p>
           <div className="settings-grid single">
             <div className="field">
-              <label>Binary Path</label>
-              <div className="field-row">
-                <input
-                  type="text"
-                  value={draft.wifiDisplay?.binaryPath || ''}
-                  onChange={(e) => update('wifiDisplay', { binaryPath: e.target.value || null })}
-                  placeholder="Path to wifi-display-server.exe"
-                  style={{ flex: 1 }}
-                />
-                <button
-                  className="back-btn"
-                  onClick={async () => {
-                    const file = await window.api.settingsBrowseFile([{ name: 'Executables', extensions: ['exe'] }])
-                    if (file) update('wifiDisplay', { binaryPath: file })
-                  }}
-                >
-                  Browse...
-                </button>
-              </div>
-            </div>
-            <div className="field">
               <label>Monitor</label>
               <select
                 value={draft.wifiDisplay?.monitorIndex ?? ''}

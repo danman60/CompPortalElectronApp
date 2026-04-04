@@ -1,6 +1,6 @@
 {
   "name": "compsync-media",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "CompSync Media — OBS recording control, audio splitting, photo import, and upload for dance competitions",
   "author": "CompSync <danieljohnabrahamson@gmail.com>",
   "main": "./out/main/index.js",
@@ -73,6 +73,18 @@
       {
         "from": "tools/wpd-helper/bin/wpd-helper.exe",
         "to": "wpd-helper.exe"
+      },
+      {
+        "from": "resources/wifi-display-server.exe",
+        "to": "wifi-display-server.exe"
+      },
+      {
+        "from": "resources/driver-setup.exe",
+        "to": "driver-setup.exe"
+      },
+      {
+        "from": "resources/VDDControl.exe",
+        "to": "VDDControl.exe"
       }
     ],
     "win": {

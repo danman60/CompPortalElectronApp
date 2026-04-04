@@ -10,7 +10,7 @@ const PORT = 9877
 let wss: WebSocketServer | null = null
 
 interface TaggedSocket extends WebSocket {
-  clientType?: 'overlay' | 'streamdeck'
+  clientType?: 'overlay' | 'streamdeck' | 'tablet'
   isAlive?: boolean
 }
 
@@ -19,7 +19,7 @@ let heartbeatInterval: NodeJS.Timeout | null = null
 
 export function start(): void {
   if (wss) return
-  const host = process.env.COMPSYNC_BIND_HOST || '127.0.0.1'
+  const host = process.env.COMPSYNC_BIND_HOST || '0.0.0.0'
   wss = new WebSocketServer({ port: PORT, host })
 
   wss.on('listening', () => {
@@ -98,7 +98,7 @@ export function stop(): void {
 
 function handleMessage(ws: TaggedSocket, msg: Record<string, unknown>): void {
   if (msg.type === 'identify') {
-    ws.clientType = msg.client as 'overlay' | 'streamdeck'
+    ws.clientType = msg.client as 'overlay' | 'streamdeck' | 'tablet'
     logger.app.info(`WebSocket client identified as: ${ws.clientType}`)
     const state = buildStateMessage()
     ws.send(JSON.stringify(state))
