@@ -1,58 +1,45 @@
-# Current Work - CompSync Electron App
+# Current Work — CompSyncElectronApp
 
-## Last Session Summary
-Set up remote production diagnostics infrastructure. Created `~/projects/compsync-dart-ops/` with CLAUDE.md, hotfix-deploy.sh, rollback.sh, and health-check.sh for live SSH-based diagnostics and hotfix deployment to DART during production. No code changes to the app itself.
+## Last Session (2026-04-13)
 
-## What Changed
+Media-loss-prevention + time-of-day column. Decided to defer plugin/complete rewrite until end-to-end testing is possible. Real protection comes from manual R2 bucket lock (see below).
 
-### New project: compsync-dart-ops
-- `~/projects/compsync-dart-ops/CLAUDE.md` — full ops runbook (SSH commands, app architecture, log scopes, state files, safety rules)
-- `~/projects/compsync-dart-ops/scripts/hotfix-deploy.sh` — build on SpyBalloon, deploy asar to DART via SSH
-- `~/projects/compsync-dart-ops/scripts/rollback.sh` — restore .bak or v2.7.0-stable
-- `~/projects/compsync-dart-ops/scripts/health-check.sh` — full app health snapshot via SSH
-- All scripts use `dart-win` (native Windows SSH, port 22) — no WSL dependency
+## Committed this session
+- Phase 4 Electron changes: `uploadRunId` per attempt, reconcile pass with `RECONCILE_DRY_RUN = true`, types
+- Time column in RoutineTable showing `scheduledTime` (HH:MM)
 
-### Uncommitted (carried forward from prior sessions)
-- `src/main/services/overlay.ts` — bind host fix
-- `src/main/services/recording.ts` — recording pipeline changes
-- `src/main/services/tether.ts` — tether refactor
-- `src/main/services/upload.ts` — upload targeting improvements
-- `src/renderer/components/RightPanel.tsx` — removed unused section
-- `src/renderer/components/RoutineTable.tsx` — table updates
-- `src/renderer/components/TetherStatus.tsx` — status display changes
-- `src/renderer/styles/header.css` — header styling
-- `AGENTS.md`, `CLAUDE.md` — minor updates
+## DO NEXT (priority order)
 
-## Build Status
-NOT RUN this session — no app code changes
+1. **YOU: enable R2 bucket lock** (~30 sec, no code):
+   - Cloudflare → R2 → `compsyncmedia` → Settings → Bucket lock rules → Add rule
+   - Prefix: `00000000-0000-0000-0000-000000000004/`
+   - Retention: 365 days
+   - Closes the only real media-loss path (silent overwrite on retry). Verified from Cloudflare R2 docs — bucket lock prevents both delete and overwrite, prefix-scoped, retroactive.
 
-## Known Bugs & Issues
-- **WS disconnected on tablet**: Firewall rules added for TCP 9877 / UDP 5000-5002. Needs retest.
-- **Touch injection not working**: wifi-display-server needs elevation if OBS runs as admin
-- **Sharp thumbnails broken on Windows**: `TypeError: A boolean was expected` — disabled, pre-existing
+2. **YOU: decide compSync push** (claude:3 tmux window is on hold):
+   - compSync has Tier B + brief (b) ready and type-clean: soft-delete columns, deleted_at filters everywhere, deletePhoto soft-delete, schedule endpoint `mediaPackageStatus`/`mediaUpdatedAt`/`scheduledTime`
+   - Tell compSync "push" or "hold"
+   - If push, Vercel auto-deploys CompPortal → Time column in this app starts populating
 
-## Incomplete Work
-- 13 files with uncommitted changes from prior wifi-display sessions (see git status)
-- Touch injection elevation fix
-- WS connection verification after firewall fix
-- Tablet button functionality verification
+3. **NEXT SESSION: flip RECONCILE_DRY_RUN to false** in `src/main/services/state.ts` only after compSync deploys AND you've watched one share-code reload in dry-run mode and confirmed the demote log looks correct.
 
-## Tests
-- No tests run this session
-- QA agent checklists not updated for tablet feature
+## Deferred (do not build without explicit OK)
 
-## Next Steps (priority order)
-1. **Commit uncommitted changes** — 13 modified files from wifi-display work, review and commit
-2. **Verify WS connects after firewall fix** — restart CS on DART, check tablet
-3. **Fix touch injection** — spawn wifi-display-server elevated if OBS is admin
-4. **Test all 11 tablet buttons** — end-to-end verification
-5. **Production dry-run** — power on DART, run health-check.sh, verify ops workflow
+- **plugin/complete rewrite** (immutable upload paths, photo merge-by-filename, audit log writes) — held until end-to-end testing is possible. Tier B + bucket lock is the interim protection.
+- **Temp routine feature** — has 3 open design questions (entry number scheme, stub field defaults, promote-to-scheduled). See `CompPortal/INBOX.md`.
 
-## Gotchas for Next Session
-- DART is currently offline (last seen 2d ago as of 2026-04-06)
-- `dart-win` is the only SSH host to use during production (no WSL)
-- Rollback tag: `v2.7.0-stable` = commit `11b97af`
-- compsync-dart-ops is a separate project, not inside CompSyncElectronApp
+## Known residual risks (after bucket lock + Tier B)
 
-## Files Touched This Session
-None in CompSyncElectronApp — all work was in ~/projects/compsync-dart-ops/
+- `/api/plugin/complete` photos `deleteMany` still destructive — only fires if Electron sends a SHRUNK photo list. Document operator workflow: don't re-trigger photo uploads after first success. Monitor `media_photos` row counts during first real UDC.
+- Cross-tenant read in `src/app/api/mobile/v1/[...path]/route.ts` (CompPortal) — read-only, not a loss path. Separate security item.
+- No audit log writes yet (`plugin_write_log` table exists, empty).
+
+## State elsewhere
+
+- **Supabase COMPSYNC**: Phase 2 migrations applied (deleted_at columns, FK RESTRICT, plugin_write_log table). Do NOT re-run.
+- **CompPortal**: Tier B + brief (b) uncommitted in compSync window (claude:3). 16 modified files. Type-clean per compSync.
+- **`/home/danman60/projects/CompPortal/INBOX.md`**: contains 3 briefs for compSync. Item 1 (Phase 3 full) deferred. Item 2 (brief b) done. Item 3 (temp routines) deferred.
+
+## Pre-existing modified files NOT touched this session
+
+~31 files from prior sessions (SS editor, tablet display, OBS, tether, etc.). Do NOT commit accidentally. Filter commits by explicit file path.
