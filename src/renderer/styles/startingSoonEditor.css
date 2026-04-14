@@ -1,0 +1,608 @@
+/* ══════════════════════════════════════════════
+   Starting Soon Scene Editor — 3-Panel Layout
+   ══════════════════════════════════════════════ */
+
+.sse-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #111118;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+/* ── Header ── */
+.sse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #1a1a24;
+  border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+  min-height: 44px;
+}
+
+.sse-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0f0;
+  letter-spacing: 0.3px;
+}
+
+.sse-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sse-actions button {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  background: rgba(30, 30, 46, 0.8);
+  color: #c0c0e0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sse-actions button:hover {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: rgba(102, 126, 234, 0.5);
+  color: #e0e0f0;
+}
+
+.sse-actions .sse-btn-done {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.sse-actions .sse-btn-done:hover {
+  filter: brightness(1.1);
+}
+
+/* ── Body: 3-panel ── */
+.sse-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ── Left Panel: Element List ── */
+.sse-left {
+  width: 200px;
+  background: #1a1a24;
+  border-right: 1px solid rgba(102, 126, 234, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.sse-left-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #667eea;
+  padding: 12px 12px 8px;
+}
+
+.sse-element-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-left: 3px solid transparent;
+}
+
+.sse-element-item:hover {
+  background: rgba(102, 126, 234, 0.08);
+}
+
+.sse-element-item.selected {
+  background: rgba(102, 126, 234, 0.12);
+  border-left-color: #667eea;
+}
+
+.sse-element-item.background-item {
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(102, 126, 234, 0.1);
+}
+
+.sse-element-checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: #667eea;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sse-element-label {
+  font-size: 12px;
+  color: #c0c0e0;
+  user-select: none;
+  flex: 1;
+}
+
+.sse-element-item.disabled .sse-element-label {
+  color: #606080;
+}
+
+/* ── Center: Preview ── */
+.sse-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.sse-canvas {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.sse-preview-iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  border: none;
+  transform-origin: top left;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Right Panel: Properties ── */
+.sse-right {
+  width: 240px;
+  background: #1a1a24;
+  border-left: 1px solid rgba(102, 126, 234, 0.15);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.sse-props-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #667eea;
+}
+
+.sse-props-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sse-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9090b0;
+  margin-top: 4px;
+}
+
+/* ── Gradient Presets Grid ── */
+.sse-gradient-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.sse-gradient-thumb {
+  width: 100%;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid rgba(102, 126, 234, 0.15);
+  transition: border-color 0.15s ease, transform 0.1s ease;
+  background-size: 400% 400%;
+  animation: sse-gradient-preview 8s ease infinite;
+  overflow: hidden;
+}
+
+.sse-gradient-thumb:hover {
+  border-color: rgba(102, 126, 234, 0.5);
+  transform: scale(1.03);
+}
+
+.sse-gradient-thumb.selected {
+  border-color: #667eea;
+  box-shadow: 0 0 0 1px #667eea;
+}
+
+.sse-gradient-name {
+  display: block;
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  padding-top: 12px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+@keyframes sse-gradient-preview {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ── Slider / Input Fields ── */
+.sse-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sse-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9090b0;
+  min-width: 40px;
+}
+
+.sse-field input[type="range"] {
+  flex: 1;
+  accent-color: #667eea;
+  height: 4px;
+}
+
+.sse-field input[type="number"] {
+  width: 60px;
+  padding: 4px 6px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #e0e0f0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sse-field input[type="number"]:focus {
+  border-color: #667eea;
+  outline: none;
+}
+
+.sse-field span {
+  font-size: 11px;
+  color: #9090b0;
+}
+
+/* ── Custom Colors ── */
+.sse-custom-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sse-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sse-color-input {
+  width: 32px;
+  height: 24px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  background: transparent;
+}
+
+.sse-color-input::-webkit-color-swatch-wrapper {
+  padding: 1px;
+}
+
+.sse-color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.sse-color-hex {
+  width: 80px;
+  padding: 3px 6px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 4px;
+  color: #e0e0f0;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.sse-color-hex:focus {
+  border-color: #667eea;
+  outline: none;
+}
+
+.sse-add-color-btn,
+.sse-remove-color-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  background: rgba(30, 30, 46, 0.8);
+  color: #c0c0e0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sse-add-color-btn:hover,
+.sse-remove-color-btn:hover {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: rgba(102, 126, 234, 0.5);
+}
+
+.sse-remove-color-btn {
+  padding: 2px 6px;
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.sse-remove-color-btn:hover {
+  background: rgba(255, 107, 107, 0.15);
+  border-color: rgba(255, 107, 107, 0.5);
+}
+
+.sse-props-hint {
+  font-size: 10px;
+  color: #707090;
+  line-height: 1.4;
+  margin-top: 4px;
+}
+
+/* ── Social / Event field rows ── */
+.sse-social-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.sse-social-row select {
+  width: 90px;
+  padding: 4px 4px;
+  font-size: 11px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 4px;
+  color: #e0e0f0;
+}
+
+.sse-social-row select:focus,
+.sse-social-row input:focus {
+  border-color: #667eea;
+  outline: none;
+}
+
+.sse-social-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 4px;
+  color: #e0e0f0;
+}
+
+/* Selects in properties panel */
+.sse-props-section select {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #e0e0f0;
+  cursor: pointer;
+}
+
+.sse-props-section select:focus {
+  border-color: #667eea;
+  outline: none;
+}
+
+/* Checkbox labels in props */
+.sse-field label input[type="checkbox"] {
+  accent-color: #667eea;
+  margin-right: 6px;
+}
+
+/* Folder browser field */
+.sse-folder-field {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sse-folder-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #9090b0;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sse-browse-btn {
+  padding: 5px 12px;
+  font-size: 11px;
+  background: rgba(102, 126, 234, 0.15);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 6px;
+  color: #a5b4fc;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sse-browse-btn:hover {
+  background: rgba(102, 126, 234, 0.25);
+  border-color: rgba(102, 126, 234, 0.5);
+}
+
+/* File list */
+.sse-file-list {
+  max-height: 160px;
+  overflow-y: auto;
+  background: rgba(15, 15, 30, 0.5);
+  border: 1px solid rgba(102, 126, 234, 0.1);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.sse-file-item {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #9090b0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sse-file-item:nth-child(odd) {
+  background: rgba(102, 126, 234, 0.04);
+}
+
+/* ── Preset Bar ── */
+.sse-preset-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 16px;
+}
+
+.sse-preset-select {
+  width: 160px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #e0e0f0;
+  cursor: pointer;
+}
+
+.sse-preset-select:focus {
+  border-color: #667eea;
+  outline: none;
+}
+
+.sse-preset-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  background: rgba(30, 30, 46, 0.8);
+  color: #c0c0e0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sse-preset-btn:hover {
+  background: rgba(102, 126, 234, 0.15);
+  border-color: rgba(102, 126, 234, 0.5);
+  color: #e0e0f0;
+}
+
+.sse-preset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sse-preset-delete {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.sse-preset-delete:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.15);
+  border-color: rgba(255, 107, 107, 0.5);
+}
+
+/* ── Drag-to-move hit targets (on iframe preview) ── */
+.sse-handle-target {
+  border: 1px dashed transparent;
+  transition: border-color 0.15s, background 0.15s;
+  pointer-events: auto;
+  user-select: none;
+  z-index: 10;
+}
+.sse-handle-target:hover {
+  border-color: rgba(102, 126, 234, 0.5);
+  background: rgba(102, 126, 234, 0.08);
+}
+.sse-handle-target.selected {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.12);
+}
+.sse-handle-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  color: #667eea;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 1px 4px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ── Resize handles (only shown when selected) ── */
+.sse-resize-handle {
+  position: absolute;
+  background: var(--accent, #667eea);
+  pointer-events: auto;
+  z-index: 11;
+}
+.sse-handle-right {
+  right: -2px;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+}
+.sse-handle-bottom {
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  cursor: ns-resize;
+}
+.sse-handle-bottom-right {
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  cursor: nwse-resize;
+  border-radius: 2px;
+}

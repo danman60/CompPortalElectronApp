@@ -12,14 +12,14 @@
 /* --- Action Bar (Fire / Hide) --- */
 .oc-action-bar {
   display: flex;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 4px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
 }
 
 .oc-fire-btn {
   flex: 1;
-  padding: 10px 12px;
+  padding: 6px 8px;
   background: linear-gradient(135deg, #667eea, #764ba2);
   border: none;
   border-radius: 6px;
@@ -52,7 +52,7 @@
 }
 
 .oc-hide-btn {
-  padding: 10px 14px;
+  padding: 6px 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -73,7 +73,7 @@
 
 /* --- Section --- */
 .oc-section {
-  padding: 10px 12px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -305,8 +305,8 @@
 
 /* --- Module Card (Ticker / Starting Soon) --- */
 .oc-module {
-  padding: 10px 12px;
-  margin: 4px 0;
+  padding: 4px 8px;
+  margin: 2px 0;
   border-bottom: 1px solid var(--border);
   background: rgba(30, 30, 46, 0.5);
 }
@@ -441,4 +441,131 @@
   background: linear-gradient(135deg, #667eea, #764ba2);
   border-color: transparent;
   color: #fff;
+}
+
+/* --- Live Chat Module --- */
+.oc-chat-badge {
+  background: #667eea;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+}
+
+.oc-chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.oc-chat-pinned-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+
+.oc-chat-pinned-label {
+  font-size: 11px;
+  color: #667eea;
+  font-weight: 600;
+}
+
+.oc-chat-clear-btn {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.oc-chat-clear-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.oc-chat-messages {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.oc-chat-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 12px 0;
+}
+
+.oc-chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  position: relative;
+}
+.oc-chat-msg:hover {
+  background: var(--bg-hover);
+}
+.oc-chat-msg.pinned {
+  background: rgba(102, 126, 234, 0.08);
+  border-left: 2px solid #667eea;
+}
+
+.oc-chat-msg-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.oc-chat-msg-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #667eea;
+}
+
+.oc-chat-pinned-tag {
+  font-size: 9px;
+  font-weight: 600;
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.15);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.oc-chat-msg-text {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.3;
+  word-wrap: break-word;
+}
+
+.oc-chat-pin-btn {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.oc-chat-msg:hover .oc-chat-pin-btn {
+  opacity: 1;
+}
+.oc-chat-pin-btn.active {
+  opacity: 1;
+  border-color: #667eea;
+  color: #667eea;
 }

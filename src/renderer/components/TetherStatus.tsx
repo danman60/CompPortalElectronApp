@@ -4,8 +4,11 @@ import '../styles/tether-status.css'
 
 export default function TetherStatus(): React.ReactElement | null {
   const tetherState = useStore((s) => s.tetherState)
+  const currentRoutine = useStore((s) => s.currentRoutine)
 
   if (!tetherState.active) return null
+
+  const routinePhotoCount = currentRoutine?.photos?.length ?? 0
 
   const offsetSec = (tetherState.cameraClockOffset / 1000).toFixed(1)
   const sign = tetherState.cameraClockOffset >= 0 ? '+' : ''
@@ -45,7 +48,7 @@ export default function TetherStatus(): React.ReactElement | null {
           {tetherState.deviceName}
         </span>
       )}
-      <span className="tether-count">{tetherState.photosReceived} photos</span>
+      <span className="tether-count">{routinePhotoCount} photos</span>
       <span className={`tether-sync ${syncClass}`}>{syncLabel}</span>
       {tetherState.lastPhotoTime && (
         <span className="tether-last" title={tetherState.lastPhotoTime}>

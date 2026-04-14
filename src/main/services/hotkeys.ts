@@ -70,6 +70,10 @@ function registerKey(
 }
 
 export function unregister(): void {
-  globalShortcut.unregisterAll()
+  try {
+    globalShortcut.unregisterAll()
+  } catch {
+    // App may not be ready yet (e.g. second-instance quit)
+  }
   registeredKeys = []
 }

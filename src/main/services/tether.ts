@@ -45,7 +45,9 @@ interface StagedPhotoMetadata {
 }
 
 const PHOTO_EXTENSIONS = /\.(jpg|jpeg|arw|cr3|nef|raf)$/i
-const BUFFER_MS = 30_000
+function getBufferMs(): number {
+  return getSettings().tether?.matchBufferMs ?? 1000
+}
 const CLOCK_OK_THRESHOLD = 5_000
 const CLOCK_WARN_THRESHOLD = 30_000
 
@@ -144,17 +146,14 @@ function matchSinglePhoto(
   // Gap match (within 30s buffer)
   const gap = windows.find(
     (w) =>
-      t >= w.recordingStarted.getTime() - BUFFER_MS &&
-      t <= w.recordingStopped.getTime() + BUFFER_MS,
+      t >= w.recordingStarted.getTime() - getBufferMs() &&
+      t <= w.recordingStopped.getTime() + getBufferMs(),
   )
   if (gap) return { routineId: gap.routineId, confidence: 'gap' }
 
-  // Fallback: assign to most recently completed routine
-  const completed = windows.filter((w) => w.recordingStopped.getTime() <= t)
-  if (completed.length > 0) {
-    return { routineId: completed[completed.length - 1].routineId, confidence: 'gap' }
-  }
-
+  // No fallback — return null so rescan can retry when more windows exist.
+  // The old "assign to most recent completed routine" caused mis-matches
+  // when photos arrived before the correct routine's window was set.
   return null
 }
 
@@ -171,11 +170,12 @@ function updateClockOffset(exifTime: Date): void {
     clockOffsetSamples.shift()
   }
 
-  // Rolling average
-  const avg = clockOffsetSamples.reduce((sum, v) => sum + v, 0) / clockOffsetSamples.length
-  tetherState.cameraClockOffset = Math.round(avg)
+  // Use median (stable) instead of rolling average (bouncy)
+  const sorted = [...clockOffsetSamples].sort((a, b) => a - b)
+  const median = sorted[Math.floor(sorted.length / 2)]
+  tetherState.cameraClockOffset = Math.round(median)
 
-  const absOffset = Math.abs(avg)
+  const absOffset = Math.abs(median)
   if (absOffset < CLOCK_OK_THRESHOLD) {
     tetherState.clockSyncStatus = 'ok'
   } else if (absOffset < CLOCK_WARN_THRESHOLD) {
@@ -225,9 +225,13 @@ async function processNewPhoto(
   const match = matchSinglePhoto(adjustedCaptureTime, windows)
 
   if (!match) {
-    if (!isRetry) {
+    if (isRetry) {
       logger.photos.info(
-        `Tether: Photo ${path.basename(filePath)} at ${captureTime.toISOString()} (adjusted ${adjustedCaptureTime.toISOString()}) — no routine match`,
+        `Tether: Retry still no match — ${path.basename(filePath)} at ${adjustedCaptureTime.toISOString()} vs ${windows.length} windows`,
+      )
+    } else {
+      logger.photos.info(
+        `Tether: Photo ${path.basename(filePath)} at ${captureTime.toISOString()} (adjusted ${adjustedCaptureTime.toISOString()}) — no routine match (${windows.length} windows)`,
       )
       tetherState.photosReceived++
       tetherState.lastPhotoTime = captureTime.toISOString()
@@ -270,20 +274,9 @@ async function processNewPhoto(
   const destFile = path.join(photosDir, `photo_${String(photoNum).padStart(3, '0')}${ext}`)
   fs.copyFileSync(filePath, destFile)
 
-  // Generate thumbnail (only for formats sharp can handle — JPEG, PNG, TIFF, WebP)
-  let thumbPath: string | undefined
-  const thumbableExts = /\.(jpg|jpeg|png|tiff?|webp)$/i
-  if (thumbableExts.test(ext)) {
-    try {
-      const thumbDir = path.join(photosDir, 'thumbnails')
-      if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
-      thumbPath = path.join(thumbDir, `thumb_${String(photoNum).padStart(3, '0')}.jpg`)
-      await sharp(destFile).resize(200, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath)
-    } catch (err) {
-      logger.photos.warn(`Tether: Thumbnail failed for ${destFile}:`, err)
-      thumbPath = undefined
-    }
-  }
+  // Thumbnails disabled — sharp native module crashes on Windows with "A boolean was expected"
+  // TODO: investigate sharp win32-x64 binary compatibility with Electron 33
+  const thumbPath: string | undefined = undefined
 
   // Build PhotoMatch
   const photoMatch: PhotoMatch = {
@@ -301,7 +294,7 @@ async function processNewPhoto(
   importedFiles.set(normalizedPath, match.routineId)
 
   logger.photos.info(
-    `Tether: Photo matched to #${routine.entryNumber} "${routine.routineTitle}" (${match.confidence}) — ${updatedPhotos.length} total photos`,
+    `Tether: ${isRetry ? 'RETRY ' : ''}Photo matched to #${routine.entryNumber} "${routine.routineTitle}" (${match.confidence}) — ${updatedPhotos.length} total photos`,
   )
 
   // Auto-upload if enabled

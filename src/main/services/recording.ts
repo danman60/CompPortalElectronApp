@@ -527,8 +527,6 @@ function broadcastFullState(): void {
     const current = state.getCurrentRoutine()
     const nextR = state.getNextRoutine()
 
-    syncOverlayFromCurrent()
-
     sendToRenderer(IPC_CHANNELS.STATE_UPDATE, {
       competition,
       currentRoutine: current,
@@ -550,7 +548,7 @@ function broadcastFullStateImmediate(): void {
   const current = state.getCurrentRoutine()
   const nextR = state.getNextRoutine()
 
-  syncOverlayFromCurrent()
+  syncOverlayFromCurrent() // Only sync overlay on immediate (navigation/recording), not debounced
 
   sendToRenderer(IPC_CHANNELS.STATE_UPDATE, {
     competition,
@@ -568,11 +566,8 @@ export function broadcastRoutineUpdate(routineId: string): void {
   const routine = competition.routines.find(r => r.id === routineId)
   if (!routine) return
 
-  syncOverlayFromCurrent()
-
   sendToRenderer(IPC_CHANNELS.STATE_ROUTINE_UPDATE, { routineId, routine })
-
-  wsHub.broadcastState()
+  // Overlay gets state via broadcastFullState (debounced) — not here, to avoid rapid re-renders
 }
 
 export { broadcastFullState, broadcastFullStateImmediate }

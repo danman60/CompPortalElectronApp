@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore, initIPCListeners } from './store/useStore'
 import Header from './components/Header'
 import LeftPanel from './components/LeftPanel'
-import MiddlePanel from './components/MiddlePanel'
+
 import RightPanel from './components/RightPanel'
 import DragHandle from './components/DragHandle'
 import Settings from './components/Settings'
@@ -10,6 +10,15 @@ import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
 import DriveAlert from './components/DriveAlert'
 import './styles/app.css'
+
+function RecordingOverrunWarning(): React.ReactElement | null {
+  const obsState = useStore((s) => s.obsState)
+  if (!obsState.isRecording || obsState.recordTimeSec < 225) return null
+
+  return (
+    <div className="overrun-warning" />
+  )
+}
 
 function StartupToast(): React.ReactElement | null {
   const report = useStore((s) => s.startupReport)
@@ -116,15 +125,14 @@ export default function App(): React.ReactElement {
       <Header />
       <div className="main-split">
         <LeftPanel />
-        <DragHandle target=".left-panel" min={240} max={450} />
-        <MiddlePanel />
-        <DragHandle target=".middle-panel" min={200} max={400} />
+        <DragHandle target=".left-panel" min={400} max={1400} />
         <RightPanel />
       </div>
       {settingsOpen && <Settings />}
       {photoSorterOpen && <PhotoSorter />}
       {recoveryOpen && <RecoveryPanel />}
       <DriveAlert />
+      <RecordingOverrunWarning />
       <StartupToast />
     </div>
   )

@@ -1,7 +1,6 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
 import RoutineTable from './RoutineTable'
-import TetherStatus from './TetherStatus'
 import type { JobRecord } from '../../shared/types'
 import '../styles/rightpanel.css'
 
@@ -133,30 +132,7 @@ export default function RightPanel(): React.ReactElement {
 
       <JobQueuePanel />
 
-      <TetherStatus />
-
       <div className="stats-bar">
-        {outputDir ? (
-          <div className="stat output-dir-stat">
-            <span
-              className="output-dir-path"
-              title={outputDir}
-              onClick={handleOpenOutputDir}
-            >
-              {outputDir.length > 40 ? '...' + outputDir.slice(-37) : outputDir}
-            </span>
-            <button className="output-dir-change" onClick={handleChangeOutputDir}>
-              Change
-            </button>
-          </div>
-        ) : (
-          <div className="stat">
-            <button className="output-dir-change" onClick={handleChangeOutputDir}>
-              Set Output Dir
-            </button>
-          </div>
-        )}
-        <div style={{ flex: 1 }} />
         <button
           className="output-dir-change"
           onClick={handleExportReport}

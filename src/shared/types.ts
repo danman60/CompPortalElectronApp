@@ -2,6 +2,12 @@
 // CompSync Media — Shared Types (Main + Renderer)
 // ============================================================
 
+// --- Chat (Livestream Pinned Comments) ---
+
+export interface ChatMessage { id: string; name: string; text: string; timestamp: number }
+export interface PinnedChatMessage { id: string; name: string; text: string; pinnedAt: number }
+export interface PinnedChatConfig { enabled: boolean; maxVisible: number; rotateIntervalSec: number; showTimestamps: boolean }
+
 // --- Routine & Schedule ---
 
 export type RoutineStatus =
@@ -42,6 +48,10 @@ export interface Routine {
   uploadProgress?: UploadProgress
   error?: string
   notes?: string // operator notes (e.g. "wrong music", "re-do requested")
+  // Media loss prevention (Phase 4)
+  uploadRunId?: string // set when an upload attempt starts; passed to /upload-url and /complete
+  mediaPackageStatus?: 'none' | 'complete' // populated by server schedule endpoint; drives reconcile pass
+  mediaUpdatedAt?: string // ISO — media_packages.updated_at from server, or null
 }
 
 export interface EncodedFile {
@@ -190,6 +200,121 @@ export interface StartingSoonState {
   subtitle: string
   showCountdown: boolean
   countdownTarget: string // ISO timestamp
+  config?: StartingSoonConfig
+}
+
+// ── Starting Soon Scene Editor Types ──
+
+export type GradientPreset =
+  | 'midnight-pulse' | 'sunset-drift' | 'ocean-wave' | 'aurora'
+  | 'ember-glow' | 'monochrome-shift' | 'neon-cyber' | 'forest-mist' | 'custom' | 'brand'
+
+export interface GradientConfig {
+  preset: GradientPreset
+  customColors?: string[]
+  speed: number
+  angle: number
+}
+
+export interface SSElementPosition {
+  x: number; y: number; width: number; height: number; visible: boolean
+}
+
+export interface StartingSoonLayout {
+  logo: SSElementPosition
+  title: SSElementPosition
+  subtitle: SSElementPosition
+  countdown: SSElementPosition
+  timeDate: SSElementPosition
+  videoPlaylist: SSElementPosition
+  photoSlideshow: SSElementPosition
+  ticker: SSElementPosition
+  socialBar: SSElementPosition
+  sponsorCarousel: SSElementPosition
+  visualizer: SSElementPosition
+  eventCard: SSElementPosition
+  upNext: SSElementPosition
+  pinnedChat: SSElementPosition
+}
+
+export interface VideoPlaylistConfig {
+  enabled: boolean; folderPath: string; fileList: string[]
+  loop: boolean; muted: boolean; shuffled: boolean
+}
+
+export interface PhotoSlideshowConfig {
+  enabled: boolean; folderPath: string; fileList: string[]
+  intervalSeconds: number; transitionType: 'crossfade' | 'slide' | 'zoom' | 'none'
+  transitionDuration: number
+}
+
+export interface SocialHandle {
+  platform: 'instagram' | 'facebook' | 'tiktok' | 'youtube' | 'twitter' | 'website'
+  handle: string
+}
+
+export interface SocialBarConfig {
+  enabled: boolean; handles: SocialHandle[]
+  position: 'bottom' | 'top' | 'left' | 'right'
+  style: 'icons-and-text' | 'icons-only' | 'text-only'
+}
+
+export interface SponsorCarouselConfig {
+  enabled: boolean; folderPath: string; logoFiles: string[]
+  intervalSeconds: number; transitionType: 'fade' | 'slide'
+}
+
+export interface VisualizerConfig {
+  enabled: boolean; barCount: number
+  colorStart: string; colorEnd: string
+  style: 'bars' | 'wave' | 'circle'
+}
+
+export interface TimeDateConfig {
+  enabled: boolean; format: '12h' | '24h'
+  showDate: boolean; showSeconds: boolean
+  fontSize: number; color: string
+}
+
+export interface CountdownStyleConfig {
+  fontSize: number; color: string; fontWeight: number; showLabels: boolean
+}
+
+export interface EventInfoConfig {
+  enabled: boolean; showCompetitionName: boolean
+  showVenue: boolean; showDate: boolean
+  customFields: { label: string; value: string }[]
+}
+
+export interface UpNextConfig {
+  enabled: boolean
+  count: number
+  showDancers: boolean
+  showStudio: boolean
+  showCategory: boolean
+}
+
+export interface StartingSoonPreset {
+  id: string; name: string; createdAt: string; config: StartingSoonConfig
+}
+
+export interface StartingSoonConfig {
+  gradient: GradientConfig
+  layout: StartingSoonLayout
+  title: string; titleFontSize: number; titleColor: string; titleFont: string
+  subtitle: string; subtitleFontSize: number; subtitleColor: string; subtitleFont: string
+  showCountdown: boolean; countdownTarget: string
+  countdownStyle: CountdownStyleConfig
+  timeDate: TimeDateConfig
+  videoPlaylist: VideoPlaylistConfig
+  photoSlideshow: PhotoSlideshowConfig
+  socialBar: SocialBarConfig
+  sponsorCarousel: SponsorCarouselConfig
+  visualizer: VisualizerConfig
+  eventInfo: EventInfoConfig
+  upNext: UpNextConfig
+  pinnedChat: PinnedChatConfig
+  tickerEnabled: boolean
 }
 
 export interface AnimationConfig {
@@ -277,6 +402,18 @@ export interface AppSettings {
     videoPort: number
     touchPort: number
     autoStart: boolean
+  }
+  branding: {
+    organizationName: string
+    website: string
+    instagram: string
+    facebook: string
+    tiktok: string
+    youtube: string
+    twitter: string
+    brandColors: string[]
+    brandFont: string
+    brandLogoUrl: string
   }
 }
 
@@ -369,6 +506,7 @@ export const IPC_CHANNELS = {
   OVERLAY_SET_TICKER: 'overlay:set-ticker',
   OVERLAY_SET_STARTING_SOON: 'overlay:set-starting-soon',
   OVERLAY_SET_ANIMATION_CONFIG: 'overlay:set-animation-config',
+  OVERLAY_SET_LOGO: 'overlay:set-logo',
 
   // Recording
   RECORDING_NEXT_FULL: 'recording:next-full',
@@ -431,6 +569,26 @@ export const IPC_CHANNELS = {
   WIFI_DISPLAY_STOP: 'wifi-display:stop',
   WIFI_DISPLAY_STATUS: 'wifi-display:status',
   WIFI_DISPLAY_SET_MONITOR: 'wifi-display:set-monitor',
+
+  // Starting Soon Scene Editor
+  SS_GET_CONFIG: 'ss:get-config',
+  SS_SET_CONFIG: 'ss:set-config',
+  SS_BROWSE_FOLDER: 'ss:browse-folder',
+  SS_SCAN_FOLDER: 'ss:scan-folder',
+  SS_GET_PRESETS: 'ss:get-presets',
+  SS_SAVE_PRESET: 'ss:save-preset',
+  SS_DELETE_PRESET: 'ss:delete-preset',
+  SS_LOAD_PRESET: 'ss:load-preset',
+
+  // Brand Scraper
+  BRAND_SCRAPE: 'brand:scrape',
+
+  // Chat (Livestream Pinned Comments)
+  CHAT_GET_MESSAGES: 'chat:get-messages',
+  CHAT_GET_PINNED: 'chat:get-pinned',
+  CHAT_PIN: 'chat:pin',
+  CHAT_UNPIN: 'chat:unpin',
+  CHAT_CLEAR_PINNED: 'chat:clear-pinned',
 } as const
 
 // --- FFmpeg ---
@@ -560,6 +718,21 @@ export interface WSStateMessage {
   streaming: boolean
   skippedCount: number
   overlay: OverlayState
+  ssConfig?: StartingSoonConfig
+  upcomingRoutines?: { entryNumber: string; routineTitle: string; dancers: string; studioName: string; category: string }[]
+  pinnedChat?: PinnedChatMessage[]
+  branding?: {
+    organizationName: string
+    website: string
+    instagram: string
+    facebook: string
+    tiktok: string
+    youtube: string
+    twitter: string
+    brandColors: string[]
+    brandFont: string
+    brandLogoUrl: string
+  }
 }
 
 export interface WSCommandMessage {
@@ -692,6 +865,18 @@ export const DEFAULT_SETTINGS: AppSettings = {
     videoPort: 5000,
     touchPort: 5001,
     autoStart: false,
+  },
+  branding: {
+    organizationName: '',
+    website: '',
+    instagram: '',
+    facebook: '',
+    tiktok: '',
+    youtube: '',
+    twitter: '',
+    brandColors: [],
+    brandFont: '',
+    brandLogoUrl: '',
   },
 }
 

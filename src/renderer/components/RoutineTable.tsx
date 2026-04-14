@@ -129,15 +129,14 @@ function statusToLabel(routine: Routine): { text: string; className: string } {
     case 'encoding':
       return { text: 'Splitting tracks...', className: 'processing' }
     case 'encoded':
-      return { text: 'Tracks ready', className: 'complete' }
+      return { text: 'Videos Rendered', className: 'complete' }
     case 'uploading':
       return { text: 'Uploading', className: 'uploading' }
     case 'uploaded': {
       const hasPhotos = (routine.photos?.length ?? 0) > 0
       const allPhotosUp = hasPhotos && routine.photos!.every(p => p.uploaded)
-      if (hasPhotos && allPhotosUp) return { text: 'All Media Uploaded', className: 'complete' }
-      if (hasPhotos) return { text: 'Video Uploaded', className: 'video-only' }
-      return { text: 'Uploaded', className: 'complete' }
+      if (hasPhotos && allPhotosUp) return { text: 'Uploaded', className: 'complete' }
+      return { text: 'Videos Uploaded', className: 'video-only' }
     }
     case 'confirmed':
       return { text: 'Confirmed', className: 'complete' }
@@ -320,6 +319,7 @@ export default function RoutineTable(): React.ReactElement {
         <thead>
           <tr>
             <th style={{ paddingLeft: '10px' }}>#</th>
+            <th className="th-time">Time</th>
             <th>Routine</th>
             {!compactMode && <th className="th-pipeline">REC</th>}
             {!compactMode && <th className="th-pipeline">SPLIT</th>}
@@ -369,14 +369,16 @@ export default function RoutineTable(): React.ReactElement {
                     {routine.entryNumber}
                   </span>
                 </td>
+                <td className="td-time">
+                  <span className="entry-time">
+                    {routine.scheduledTime ? routine.scheduledTime.slice(0, 5) : '\u2014'}
+                  </span>
+                </td>
                 <td>
                   <div className="r-name" style={isLive ? { display: 'flex', alignItems: 'center', gap: '5px' } : undefined}>
                     {isLive && <span className="live-indicator" />}
                     {routine.routineTitle}
                     {isLive && <span className="live-badge">LIVE</span>}
-                  </div>
-                  <div className="r-sub">
-                    {routine.studioCode} &bull; {routine.ageGroup} {routine.category}
                   </div>
                 </td>
                 {!compactMode && pipeline.map((stage, i) => (

@@ -19,6 +19,7 @@ import * as schedule from './services/schedule'
 import * as wpdBridge from './services/wpdBridge'
 import * as tether from './services/tether'
 import * as wifiDisplay from './services/wifiDisplay'
+import * as chatBridge from './services/chatBridge'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -175,6 +176,9 @@ app.whenReady().then(async () => {
   overlay.startServer()
   wsHub.start()
 
+  // Start chat bridge (connects to Supabase Realtime if share code already resolved)
+  chatBridge.startChatBridge()
+
   // Register global hotkeys
   hotkeys.register()
 
@@ -289,6 +293,7 @@ app.on('before-quit', async (event) => {
   hotkeys.unregister()
   systemMonitor.stopMonitoring()
   driveMonitor.stopMonitoring()
+  chatBridge.stopChatBridge()
   // await wpdBridge.stop() // WPD disabled
   wsHub.stop()
   overlay.stopServer()

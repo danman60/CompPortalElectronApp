@@ -3,8 +3,10 @@ import * as obs from './obs'
 import * as stateService from './state'
 import * as overlay from './overlay'
 import * as recording from './recording'
-import { WSCommandMessage, WSStateMessage } from '../../shared/types'
+import { WSCommandMessage, WSStateMessage, AudioLevel } from '../../shared/types'
+import * as chatBridge from './chatBridge'
 import { logger } from '../logger'
+import { getSettings } from './settings'
 
 const PORT = 9877
 let wss: WebSocketServer | null = null
@@ -78,6 +80,8 @@ export function start(): void {
   }, 30000)
 
   overlay.setOnStateChange(() => broadcastState())
+  obs.setOnAudioLevels((levels) => broadcastAudioLevels(levels))
+  chatBridge.setOnPinChange(() => broadcastState())
 }
 
 export function stop(): void {
@@ -200,6 +204,16 @@ function buildStateMessage(): WSStateMessage {
     skippedCount,
     overlay: overlayState,
     overlayLayout: overlay.getLayout(),
+    ssConfig: overlay.getSSConfig(),
+    upcomingRoutines: stateService.getUpcomingRoutines(5).map(r => ({
+      entryNumber: r.entryNumber,
+      routineTitle: r.routineTitle,
+      dancers: r.dancers,
+      studioName: r.studioName,
+      category: `${r.ageGroup} ${r.category}`,
+    })),
+    pinnedChat: chatBridge.getPinnedMessages(),
+    branding: getSettings().branding,
   }
 }
 
@@ -208,6 +222,43 @@ export function broadcastState(): void {
   const msg = JSON.stringify(buildStateMessage())
   for (const ws of clients) {
     if (ws.readyState === WebSocket.OPEN) {
+      ws.send(msg)
+    }
+  }
+}
+
+let lastAudioBroadcast = 0
+const AUDIO_BROADCAST_THROTTLE = 200
+
+function broadcastAudioLevels(rawLevels: AudioLevel[]): void {
+  const now = Date.now()
+  if (now - lastAudioBroadcast < AUDIO_BROADCAST_THROTTLE) return
+  lastAudioBroadcast = now
+
+  let hasTablet = false
+  let hasOverlay = false
+  for (const ws of clients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      if (ws.clientType === 'tablet') hasTablet = true
+      if (ws.clientType === 'overlay') hasOverlay = true
+    }
+  }
+  if (!hasTablet && !hasOverlay) return
+
+  const settings = getSettings()
+  const mapping = settings.audioInputMapping || {}
+
+  const mapped = Object.entries(mapping)
+    .filter(([, inputName]) => inputName)
+    .map(([role, inputName]) => {
+      const src = rawLevels.find((l) => l.inputName === inputName)
+      const peak = src && src.levels.length ? Math.max(...src.levels) : 0
+      return { role, peak }
+    })
+
+  const msg = JSON.stringify({ type: 'audioLevels', levels: mapped })
+  for (const ws of clients) {
+    if (ws.readyState === WebSocket.OPEN && (ws.clientType === 'tablet' || ws.clientType === 'overlay')) {
       ws.send(msg)
     }
   }

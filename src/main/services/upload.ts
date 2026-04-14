@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import https from 'https'
@@ -65,18 +66,14 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
     return { queuedJobs: 0, skippedReason: 'no-files' }
   }
 
-  // Check if already queued (any pending/running upload job for this routine)
   const existing = jobQueue.getByRoutine(routine.id)
-  if (existing.some(j => j.type === 'upload' && (j.status === 'pending' || j.status === 'running'))) {
-    return { queuedJobs: 0, skippedReason: 'already-queued' }
-  }
 
   let jobCount = 0
 
-  // Collect objectNames of already-done jobs to avoid duplicates on retry
-  const doneObjectNames = new Set(
+  // Collect objectNames of already-queued/running/done jobs to avoid duplicates
+  const skipObjectNames = new Set(
     existing
-      .filter(j => j.type === 'upload' && j.status === 'done')
+      .filter(j => j.type === 'upload' && (j.status === 'done' || j.status === 'pending' || j.status === 'running'))
       .map(j => (j.payload as Record<string, unknown>).objectName as string)
   )
 
@@ -85,7 +82,7 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
     if (!force && file.uploaded) continue
     const role = file.role
     const objectName = `${role}.mp4`
-    if (doneObjectNames.has(objectName)) continue
+    if (skipObjectNames.has(objectName)) continue
     jobQueue.enqueue('upload', routine.id, {
       routineId: routine.id,
       entryId: routine.id,
@@ -104,7 +101,7 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
     for (const photo of routine.photos) {
       if (!force && photo.uploaded) continue
       const photoObjectName = path.basename(photo.filePath)
-      if (doneObjectNames.has(photoObjectName)) continue
+      if (skipObjectNames.has(photoObjectName)) continue
       jobQueue.enqueue('upload', routine.id, {
         routineId: routine.id,
         entryId: routine.id,
@@ -141,7 +138,10 @@ export function startUploads(): void {
   isPaused = false
   const pendingCount = jobQueue.getPending('upload').length
   logger.upload.info(`Starting upload queue, ${pendingCount} jobs pending`)
-  processLoop()
+  processLoop().catch((err) => {
+    logger.upload.error('Upload process loop crashed:', err)
+    isUploading = false
+  })
 }
 
 export function stopUploads(): void {
@@ -210,12 +210,32 @@ async function processLoop(): Promise<void> {
     jobQueue.updateStatus(job.id, 'running')
     const payload = job.payload as unknown as UploadPayload
 
-    // Set routine status to uploading (only if not already uploading)
+    // Set routine status to uploading (only if not already uploading).
+    //
+    // uploadRunId lives on the Routine itself (persisted via updateRoutineStatus).
+    // Rationale: a single upload attempt for one routine spans multiple processLoop
+    // iterations (one per file). All jobs in the same attempt must share a runId so
+    // the R2 paths land under a single {.../uploadRunId/...} prefix AND /complete
+    // can match them. On retry after failure the routine is reset to 'encoded', so
+    // the next 'encoded → uploading' transition naturally generates a fresh runId.
+    // Persisting on the routine also survives app crashes mid-attempt.
     const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
     if (routine && routine.status !== 'uploading') {
-      state.updateRoutineStatus(payload.routineId, 'uploading')
+      const uploadRunId = crypto.randomUUID()
+      state.updateRoutineStatus(payload.routineId, 'uploading', { uploadRunId })
       activeUploadRoutineIds.add(payload.routineId)
       broadcastRoutineUpdate(payload.routineId)
+    }
+
+    // Read the current runId for this attempt (just set above, or already set by a
+    // prior iteration of this same attempt).
+    const currentRoutine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
+    const uploadRunId = currentRoutine?.uploadRunId
+    if (!uploadRunId) {
+      const errMsg = `Missing uploadRunId for routine ${payload.routineId} — cannot proceed`
+      logger.upload.error(errMsg)
+      jobQueue.updateStatus(job.id, 'failed', { error: errMsg })
+      continue
     }
 
     const allRoutineJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
@@ -255,6 +275,7 @@ async function processLoop(): Promise<void> {
         payload.type,
         payload.objectName,
         payload.contentType,
+        uploadRunId,
       )
 
       // Step 2: Upload file with timeout
@@ -269,17 +290,29 @@ async function processLoop(): Promise<void> {
       const allDone = updatedJobs.every(j => j.status === 'done')
 
       if (allDone) {
-        // Call plugin/complete — collect storagePaths from completed jobs
+        // Call plugin/complete — collect storagePaths from completed jobs + already-uploaded files
         try {
           const storagePaths: Record<string, string> = {}
           const photoStoragePaths: string[] = []
 
+          // Include already-uploaded files from routine state (covers prior session uploads)
+          const routineState = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
+          if (routineState) {
+            for (const f of routineState.encodedFiles || []) {
+              if (f.uploaded && f.storagePath) storagePaths[f.role] = f.storagePath
+            }
+            for (const p of routineState.photos || []) {
+              if (p.uploaded && p.storagePath) photoStoragePaths.push(p.storagePath)
+            }
+          }
+
+          // Overlay with paths from current job batch (freshest)
           for (const doneJob of updatedJobs) {
             const jp = doneJob.payload as unknown as UploadPayload
             const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
             if (!sp) continue
             if (jp.type === 'photos') {
-              photoStoragePaths.push(sp)
+              if (!photoStoragePaths.includes(sp)) photoStoragePaths.push(sp)
             } else if (jp.role) {
               storagePaths[jp.role] = sp
             }
@@ -289,6 +322,7 @@ async function processLoop(): Promise<void> {
             routineId: payload.routineId,
             entryId: payload.entryId,
             competitionId: payload.competitionId,
+            uploadRunId,
             storagePaths,
             photoStoragePaths,
           })
@@ -313,6 +347,7 @@ async function processLoop(): Promise<void> {
           }
           activeUploadRoutineIds.delete(payload.routineId)
           broadcastRoutineUpdate(payload.routineId)
+          broadcastFullState()
           sendProgress(payload.routineId, {
             state: 'complete',
             percent: 100,
@@ -372,6 +407,7 @@ async function getSignedUploadUrl(
   type: 'videos' | 'photos',
   filename: string,
   contentType: string,
+  uploadRunId: string,
 ): Promise<{ signedUrl: string; storagePath: string }> {
   const { apiBase, apiKey } = getConnection()
   const abort = new AbortController()
@@ -389,6 +425,7 @@ async function getSignedUploadUrl(
         type,
         filename,
         contentType,
+        uploadRunId,
       }),
       signal: abort.signal,
     })
@@ -509,6 +546,7 @@ async function callPluginComplete(info: {
   routineId: string
   entryId: string
   competitionId: string
+  uploadRunId: string
   storagePaths: Record<string, string>
   photoStoragePaths: string[]
 }): Promise<void> {
@@ -517,6 +555,7 @@ async function callPluginComplete(info: {
   const body = {
     entryId: info.entryId,
     competitionId: info.competitionId,
+    uploadRunId: info.uploadRunId,
     files: {
       performance: info.storagePaths['performance'] || undefined,
       judge1: info.storagePaths['judge1'] || undefined,
@@ -592,11 +631,20 @@ export async function retryOrphanedCompletions(): Promise<number> {
 
       if (!hasResolvedUploadConnection()) continue
 
+      // Reuse the routine's existing uploadRunId — the R2 files for this attempt
+      // were already written under that prefix. If missing (shouldn't happen for
+      // a routine with done jobs), skip this retry rather than invent a new one.
+      if (!routine.uploadRunId) {
+        logger.upload.warn(`Skipping orphaned completion for ${routineId}: no uploadRunId on routine`)
+        continue
+      }
+
       const conn = getConnection()
       await callPluginComplete({
         routineId,
         entryId: routineId,
         competitionId: conn.competitionId,
+        uploadRunId: routine.uploadRunId,
         storagePaths,
         photoStoragePaths,
       })
@@ -633,6 +681,32 @@ export function retrySkippedEncoded(): number {
     if (result.queuedJobs > 0) {
       retried++
       logger.upload.info(`Retrying skipped upload for encoded routine ${routine.entryNumber} "${routine.routineTitle}" (${result.queuedJobs} jobs)`)
+    }
+  }
+
+  if (retried > 0) {
+    startUploads()
+  }
+  return retried
+}
+
+/** Retry incomplete photo uploads for routines already at 'uploaded' status. */
+export function retryIncompletePhotoUploads(): number {
+  const comp = state.getCompetition()
+  if (!comp) return 0
+  if (!hasResolvedUploadConnection()) return 0
+
+  let retried = 0
+  for (const routine of comp.routines) {
+    if (routine.status !== 'uploaded') continue
+    const photos = routine.photos || []
+    const pendingPhotos = photos.filter(p => !p.uploaded)
+    if (pendingPhotos.length === 0) continue
+
+    const result = enqueueRoutine(routine)
+    if (result.queuedJobs > 0) {
+      retried++
+      logger.upload.info(`Retrying ${pendingPhotos.length} incomplete photo uploads for routine ${routine.entryNumber} "${routine.routineTitle}"`)
     }
   }
 

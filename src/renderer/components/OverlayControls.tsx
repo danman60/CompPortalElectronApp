@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { VisualEditor } from './VisualEditor'
-import type { OverlayAnimation, AnimationEasing } from '../../shared/types'
+import { StartingSoonEditor } from './StartingSoonEditor'
+import type { OverlayAnimation, AnimationEasing, ChatMessage, PinnedChatMessage } from '../../shared/types'
 import '../styles/overlay-controls.css'
 
 interface OverlayToggles {
@@ -32,18 +33,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
   const [autoHideSec, setAutoHideSec] = useState(8)
   const [selectedAnim, setSelectedAnim] = useState<OverlayAnimation>('random')
 
-  // Ticker
-  const [tickerText, setTickerText] = useState('')
-  const [tickerSpeed, setTickerSpeed] = useState(60)
-  const [tickerVisible, setTickerVisible] = useState(false)
-
-  // Starting Soon
-  const [ssTitle, setSsTitle] = useState('Starting Soon')
-  const [ssSubtitle, setSsSubtitle] = useState('')
-  const [ssVisible, setSsVisible] = useState(false)
-  const [ssCountdown, setSsCountdown] = useState(false)
-  const [ssMinutes, setSsMinutes] = useState(10)
-
   useEffect(() => {
     window.api.overlayGetState().then((state: any) => {
       if (state) {
@@ -61,18 +50,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
         if (state.lowerThird?.animation) {
           setSelectedAnim(state.lowerThird.animation)
         }
-        if (state.ticker) {
-          setTickerText(state.ticker.text ?? '')
-          setTickerSpeed(state.ticker.speed ?? 60)
-          setTickerVisible(state.ticker.visible ?? false)
-        }
-        if (state.startingSoon) {
-          setSsTitle(state.startingSoon.title ?? 'Starting Soon')
-          setSsSubtitle(state.startingSoon.subtitle ?? '')
-          setSsVisible(state.startingSoon.visible ?? false)
-          setSsCountdown(state.startingSoon.showCountdown ?? false)
-        }
-        // autoFire is now toggled via right-click on Process — no UI toggle needed
       }
     })
   }, [])
@@ -106,37 +83,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
     window.api.overlaySetAnimationConfig({ [key]: value })
   }
 
-  function handleTickerToggle(): void {
-    const newVisible = !tickerVisible
-    setTickerVisible(newVisible)
-    window.api.overlaySetTicker({ visible: newVisible, text: tickerText, speed: tickerSpeed })
-  }
-
-  function handleTickerUpdate(): void {
-    window.api.overlaySetTicker({ text: tickerText, speed: tickerSpeed })
-  }
-
-  function handleSsToggle(): void {
-    const newVisible = !ssVisible
-    setSsVisible(newVisible)
-    const updates: Record<string, unknown> = { visible: newVisible, title: ssTitle, subtitle: ssSubtitle, showCountdown: ssCountdown }
-    if (ssCountdown && newVisible) {
-      updates.countdownTarget = new Date(Date.now() + ssMinutes * 60000).toISOString()
-    }
-    window.api.overlaySetStartingSoon(updates)
-  }
-
-  function handleSsPreset(minutes: number): void {
-    setSsMinutes(minutes)
-    setSsCountdown(true)
-    if (ssVisible) {
-      window.api.overlaySetStartingSoon({
-        showCountdown: true,
-        countdownTarget: new Date(Date.now() + minutes * 60000).toISOString(),
-      })
-    }
-  }
-
   if (compact) {
     return (
       <div className="oc-compact-bar">
@@ -160,7 +106,7 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
 
   return (
     <div className="oc-panel">
-      {/* === Action Bar (Fire / Hide / Edit Layout) === */}
+      {/* === Action Bar === */}
       <div className="oc-action-bar">
         <button
           className="oc-fire-btn"
@@ -168,91 +114,49 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
           disabled={!currentRoutine}
           title={!currentRoutine ? 'Select a routine first' : 'Fire lower third'}
         >
-          Fire Lower Third
+          Fire LT
         </button>
         <button className="oc-hide-btn" onClick={() => window.api.overlayHideLT()}>
           Hide
         </button>
         <button
+          className={`oc-toggle${toggles.counter ? ' active' : ''}`}
+          onClick={() => handleToggle('counter')}
+        >Cnt</button>
+        <button
+          className={`oc-toggle${toggles.clock ? ' active' : ''}`}
+          onClick={() => handleToggle('clock')}
+        >Clk</button>
+        <button
+          className={`oc-toggle${toggles.logo ? ' active' : ''}`}
+          onClick={() => handleToggle('logo')}
+        >Logo</button>
+        <button
           className="oc-edit-layout-btn"
           onClick={() => setEditorOpen(true)}
           title="Open visual layout editor"
         >
-          Edit Layout
+          Edit
         </button>
       </div>
 
-      {/* === Elements === */}
-      <div className="oc-section">
-        <div className="oc-section-header">Elements</div>
-        <div className="oc-toggle-row">
-          <button
-            className={`oc-toggle${toggles.counter ? ' active' : ''}`}
-            onClick={() => handleToggle('counter')}
-          >
-            Counter
-          </button>
-          <button
-            className={`oc-toggle${toggles.clock ? ' active' : ''}`}
-            onClick={() => handleToggle('clock')}
-          >
-            Clock
-          </button>
-          <button
-            className={`oc-toggle${toggles.logo ? ' active' : ''}`}
-            onClick={() => handleToggle('logo')}
-          >
-            Logo
-          </button>
-        </div>
-      </div>
-
-      {/* === Animation Style === */}
-      <div className="oc-section">
-        <div className="oc-section-header">Animation Style</div>
-        <div className="oc-anim-chips">
-          {ALL_ANIMATIONS.map((anim) => (
-            <button
-              key={anim}
-              className={`oc-anim-chip${selectedAnim === anim ? ' selected' : ''}`}
-              onClick={() => handleAnimSelect(anim)}
-            >
-              {anim}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* === Animation Timing === */}
-      <div className="oc-section">
-        <div className="oc-section-header">Animation Timing</div>
-        <div className="oc-anim-config">
+      {/* === Animation — compact single row === */}
+      <div className="oc-section" style={{ padding: '4px 8px' }}>
+        <div className="oc-anim-config" style={{ marginTop: 0 }}>
           <div className="oc-anim-config-item">
-            <div className="oc-config-label">Duration ({animDuration}s)</div>
-            <input
-              type="range"
-              className="oc-slider"
-              min="0.1"
-              max="6.0"
-              step="0.1"
-              value={animDuration}
-              onChange={(e) => handleAnimConfigChange('animationDuration', parseFloat(e.target.value))}
-            />
-          </div>
-          <div className="oc-anim-config-item">
-            <div className="oc-config-label">Easing</div>
+            <div className="oc-config-label">Anim</div>
             <select
               className="oc-select"
-              value={animEasing}
-              onChange={(e) => handleAnimConfigChange('animationEasing', e.target.value)}
+              value={selectedAnim}
+              onChange={(e) => handleAnimSelect(e.target.value as OverlayAnimation)}
             >
-              {EASING_OPTIONS.map((e) => (
-                <option key={e} value={e}>{e}</option>
+              {ALL_ANIMATIONS.map((a) => (
+                <option key={a} value={a}>{a}</option>
               ))}
             </select>
           </div>
           <div className="oc-anim-config-item narrow">
-            <div className="oc-config-label">Auto-hide</div>
+            <div className="oc-config-label">Hide</div>
             <input
               type="number"
               className="oc-input center"
@@ -263,45 +167,118 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
               title="Seconds (0 = manual)"
             />
           </div>
+          <div className="oc-anim-config-item narrow">
+            <div className="oc-config-label">Dur</div>
+            <input
+              type="number"
+              className="oc-input center"
+              min="0.1"
+              max="6"
+              step="0.1"
+              value={animDuration}
+              onChange={(e) => handleAnimConfigChange('animationDuration', parseFloat(e.target.value) || 0.5)}
+            />
+          </div>
+          <div className="oc-anim-config-item">
+            <div className="oc-config-label">Ease</div>
+            <select
+              className="oc-select"
+              value={animEasing}
+              onChange={(e) => handleAnimConfigChange('animationEasing', e.target.value)}
+            >
+              {EASING_OPTIONS.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* === Ticker === */}
+      {editorOpen && <VisualEditor onClose={() => setEditorOpen(false)} />}
+    </div>
+  )
+}
+
+export function OverlayModules(): React.ReactElement {
+  const [tickerText, setTickerText] = useState('')
+  const [tickerSpeed, setTickerSpeed] = useState(60)
+  const [tickerVisible, setTickerVisible] = useState(false)
+  const [tickerExpanded, setTickerExpanded] = useState(false)
+
+  const [ssVisible, setSsVisible] = useState(false)
+  const [ssEditorOpen, setSsEditorOpen] = useState(false)
+
+  useEffect(() => {
+    window.api.overlayGetState().then((state: any) => {
+      if (state) {
+        if (state.ticker) {
+          setTickerText(state.ticker.text ?? '')
+          setTickerSpeed(state.ticker.speed ?? 60)
+          setTickerVisible(state.ticker.visible ?? false)
+        }
+        if (state.startingSoon) {
+          setSsVisible(state.startingSoon.visible ?? false)
+        }
+      }
+    })
+  }, [])
+
+  function handleTickerToggle(): void {
+    const newVisible = !tickerVisible
+    setTickerVisible(newVisible)
+    window.api.overlaySetTicker({ visible: newVisible, text: tickerText, speed: tickerSpeed })
+  }
+
+  function handleTickerUpdate(): void {
+    window.api.overlaySetTicker({ text: tickerText, speed: tickerSpeed })
+  }
+
+  function handleSsToggle(): void {
+    const newVisible = !ssVisible
+    setSsVisible(newVisible)
+    window.api.overlaySetStartingSoon({ visible: newVisible })
+  }
+
+  return (
+    <>
+      {/* === Ticker — collapsible === */}
       <div className="oc-module">
-        <div className="oc-module-header">
-          <span className="oc-module-title">Ticker / Crawl</span>
+        <div className="oc-module-header" onClick={() => setTickerExpanded(!tickerExpanded)} style={{ cursor: 'pointer', marginBottom: tickerExpanded ? 6 : 0 }}>
+          <span className="oc-module-title">Ticker</span>
           <button
             className={`oc-live-badge${tickerVisible ? ' on' : ' off'}`}
-            onClick={handleTickerToggle}
+            onClick={(e) => { e.stopPropagation(); handleTickerToggle() }}
           >
             {tickerVisible ? 'ON' : 'OFF'}
           </button>
         </div>
-        <div className="oc-module-row">
-          <input
-            type="text"
-            className="oc-input"
-            placeholder="Ticker text..."
-            value={tickerText}
-            onChange={(e) => setTickerText(e.target.value)}
-            onBlur={handleTickerUpdate}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleTickerUpdate() }}
-          />
-          <div className="oc-module-slider-wrap">
+        {tickerExpanded && (
+          <div className="oc-module-row">
             <input
-              type="range"
-              className="oc-slider"
-              min="20"
-              max="200"
-              value={tickerSpeed}
-              onChange={(e) => {
-                setTickerSpeed(parseInt(e.target.value))
-              }}
-              onMouseUp={handleTickerUpdate}
-              title={`Speed: ${tickerSpeed}px/s`}
+              type="text"
+              className="oc-input"
+              placeholder="Ticker text..."
+              value={tickerText}
+              onChange={(e) => setTickerText(e.target.value)}
+              onBlur={handleTickerUpdate}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleTickerUpdate() }}
             />
+            <div className="oc-module-slider-wrap">
+              <input
+                type="range"
+                className="oc-slider"
+                min="20"
+                max="200"
+                value={tickerSpeed}
+                onChange={(e) => {
+                  setTickerSpeed(parseInt(e.target.value))
+                }}
+                onMouseUp={handleTickerUpdate}
+                title={`Speed: ${tickerSpeed}px/s`}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* === Starting Soon === */}
@@ -309,56 +286,132 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
         <div className="oc-module-header">
           <span className="oc-module-title">Starting Soon</span>
           <button
+            className="oc-edit-layout-btn"
+            onClick={() => setSsEditorOpen(true)}
+            title="Open scene editor"
+            style={{ marginRight: 4 }}
+          >
+            Edit Scene
+          </button>
+          <button
             className={`oc-live-badge${ssVisible ? ' accent-on' : ' off'}`}
             onClick={handleSsToggle}
           >
             {ssVisible ? 'LIVE' : 'OFF'}
           </button>
         </div>
-        <div className="oc-module-row">
-          <input
-            type="text"
-            className="oc-input"
-            placeholder="Title"
-            value={ssTitle}
-            onChange={(e) => setSsTitle(e.target.value)}
-            onBlur={() => window.api.overlaySetStartingSoon({ title: ssTitle })}
-          />
-          <input
-            type="text"
-            className="oc-input"
-            placeholder="Subtitle"
-            value={ssSubtitle}
-            onChange={(e) => setSsSubtitle(e.target.value)}
-            onBlur={() => window.api.overlaySetStartingSoon({ subtitle: ssSubtitle })}
-          />
-        </div>
-        <div className="oc-module-row">
-          <button
-            className={`oc-preset-btn${ssCountdown ? ' active' : ''}`}
-            onClick={() => {
-              setSsCountdown(!ssCountdown)
-              if (ssVisible) {
-                const target = !ssCountdown ? new Date(Date.now() + ssMinutes * 60000).toISOString() : ''
-                window.api.overlaySetStartingSoon({ showCountdown: !ssCountdown, countdownTarget: target })
-              }
-            }}
-          >
-            Timer {ssCountdown ? 'ON' : 'OFF'}
-          </button>
-          {[5, 10, 15, 30].map((m) => (
-            <button
-              key={m}
-              className={`oc-preset-btn${ssMinutes === m && ssCountdown ? ' active' : ''}`}
-              onClick={() => handleSsPreset(m)}
-            >
-              {m}m
-            </button>
-          ))}
-        </div>
       </div>
 
-      {editorOpen && <VisualEditor onClose={() => setEditorOpen(false)} />}
+      {ssEditorOpen && <StartingSoonEditor onClose={() => setSsEditorOpen(false)} />}
+
+      {/* === Live Chat — collapsible === */}
+      <LiveChatModule />
+    </>
+  )
+}
+
+function LiveChatModule(): React.ReactElement {
+  const [expanded, setExpanded] = useState(false)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [msgs, pins] = await Promise.all([
+        window.api.chatGetMessages(),
+        window.api.chatGetPinned(),
+      ])
+      if (Array.isArray(msgs)) setMessages(msgs)
+      if (Array.isArray(pins)) setPinned(pins)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (expanded) {
+      fetchData()
+      pollRef.current = setInterval(fetchData, 2000)
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [expanded, fetchData])
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [messages])
+
+  const isPinned = (id: string) => pinned.some((p) => p.id === id)
+
+  async function handlePin(id: string): Promise<void> {
+    await window.api.chatPin(id)
+    fetchData()
+  }
+
+  async function handleUnpin(id: string): Promise<void> {
+    await window.api.chatUnpin(id)
+    fetchData()
+  }
+
+  async function handleClearPinned(): Promise<void> {
+    await window.api.chatClearPinned()
+    fetchData()
+  }
+
+  return (
+    <div className="oc-module">
+      <div
+        className="oc-module-header"
+        onClick={() => setExpanded(!expanded)}
+        style={{ cursor: 'pointer', marginBottom: expanded ? 6 : 0 }}
+      >
+        <span className="oc-module-title">Live Chat</span>
+        {messages.length > 0 && (
+          <span className="oc-chat-badge">{messages.length}</span>
+        )}
+      </div>
+      {expanded && (
+        <div className="oc-chat-panel">
+          {pinned.length > 0 && (
+            <div className="oc-chat-pinned-bar">
+              <span className="oc-chat-pinned-label">{pinned.length} pinned</span>
+              <button className="oc-chat-clear-btn" onClick={handleClearPinned}>
+                Clear All
+              </button>
+            </div>
+          )}
+          <div className="oc-chat-messages" ref={scrollRef}>
+            {messages.length === 0 ? (
+              <div className="oc-chat-empty">No chat messages yet</div>
+            ) : (
+              messages.map((msg) => {
+                const pinState = isPinned(msg.id)
+                return (
+                  <div key={msg.id} className={`oc-chat-msg${pinState ? ' pinned' : ''}`}>
+                    <div className="oc-chat-msg-header">
+                      <span className="oc-chat-msg-name">{msg.name}</span>
+                      {pinState && <span className="oc-chat-pinned-tag">Pinned</span>}
+                    </div>
+                    <div className="oc-chat-msg-text">{msg.text}</div>
+                    <button
+                      className={`oc-chat-pin-btn${pinState ? ' active' : ''}`}
+                      onClick={() => pinState ? handleUnpin(msg.id) : handlePin(msg.id)}
+                    >
+                      {pinState ? 'Unpin' : 'Pin'}
+                    </button>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

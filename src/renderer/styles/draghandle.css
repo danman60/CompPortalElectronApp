@@ -27,3 +27,18 @@
 }
 
 .drag-handle:hover::after { opacity: 0.5; }
+
+.drag-handle-vertical {
+  width: auto;
+  height: 5px;
+  cursor: row-resize;
+}
+
+.drag-handle-vertical::after {
+  width: 30px;
+  height: 3px;
+  border-left: none;
+  border-right: none;
+  border-top: 1px solid var(--text-muted);
+  border-bottom: 1px solid var(--text-muted);
+}

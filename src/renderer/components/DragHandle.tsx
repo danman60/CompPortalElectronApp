@@ -5,9 +5,10 @@ interface DragHandleProps {
   target: string
   min: number
   max: number
+  direction?: 'horizontal' | 'vertical'
 }
 
-export default function DragHandle({ target, min, max }: DragHandleProps): React.ReactElement {
+export default function DragHandle({ target, min, max, direction = 'horizontal' }: DragHandleProps): React.ReactElement {
   const handleRef = useRef<HTMLDivElement>(null)
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -15,18 +16,25 @@ export default function DragHandle({ target, min, max }: DragHandleProps): React
     const panel = document.querySelector(target) as HTMLElement
     if (!panel) return
 
-    const startX = e.clientX
-    const startWidth = panel.offsetWidth
+    const isVertical = direction === 'vertical'
+    const startPos = isVertical ? e.clientY : e.clientX
+    const startSize = isVertical ? panel.offsetHeight : panel.offsetWidth
     const handle = handleRef.current
 
     handle?.classList.add('dragging')
-    document.body.style.cursor = 'col-resize'
+    document.body.style.cursor = isVertical ? 'row-resize' : 'col-resize'
     document.body.style.userSelect = 'none'
 
     function onMouseMove(e: MouseEvent): void {
-      const newWidth = startWidth + (e.clientX - startX)
-      if (newWidth >= min && newWidth <= max) {
-        panel.style.width = newWidth + 'px'
+      const delta = (isVertical ? e.clientY : e.clientX) - startPos
+      const newSize = startSize + delta
+      if (newSize >= min && newSize <= max) {
+        if (isVertical) {
+          panel.style.height = newSize + 'px'
+          panel.style.flex = 'none'
+        } else {
+          panel.style.width = newSize + 'px'
+        }
       }
     }
 
@@ -40,7 +48,13 @@ export default function DragHandle({ target, min, max }: DragHandleProps): React
 
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-  }, [target, min, max])
+  }, [target, min, max, direction])
 
-  return <div className="drag-handle" ref={handleRef} onMouseDown={onMouseDown} />
+  return (
+    <div
+      className={`drag-handle ${direction === 'vertical' ? 'drag-handle-vertical' : ''}`}
+      ref={handleRef}
+      onMouseDown={onMouseDown}
+    />
+  )
 }

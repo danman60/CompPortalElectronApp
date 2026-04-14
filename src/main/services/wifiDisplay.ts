@@ -19,14 +19,29 @@ const DISCOVERY_PORT = 5002
 
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces()
+  const candidates: { address: string; priority: number }[] = []
+
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] || []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address
+      if (iface.family !== 'IPv4' || iface.internal) continue
+      // Prefer LAN IPs over Tailscale/virtual adapters
+      const addr = iface.address
+      if (addr.startsWith('192.168.') || addr.startsWith('10.')) {
+        candidates.push({ address: addr, priority: 0 })
+      } else if (addr.startsWith('172.')) {
+        // Could be private (172.16-31) or virtual — lower priority
+        candidates.push({ address: addr, priority: 2 })
+      } else if (addr.startsWith('100.')) {
+        // Tailscale CGNAT range (100.64-127) — lowest priority
+        candidates.push({ address: addr, priority: 3 })
+      } else {
+        candidates.push({ address: addr, priority: 1 })
       }
     }
   }
-  return '0.0.0.0'
+
+  candidates.sort((a, b) => a.priority - b.priority)
+  return candidates[0]?.address || '0.0.0.0'
 }
 
 function getDiscoveryPayload(): Buffer {

@@ -81,6 +81,7 @@ const api = {
   overlaySetTicker: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_TICKER, updates),
   overlaySetStartingSoon: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON, updates),
   overlaySetAnimationConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG, updates),
+  overlaySetLogo: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_LOGO),
 
   // Next Full
   recordingNextFull: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_NEXT_FULL),
@@ -142,6 +143,26 @@ const api = {
   wifiDisplayStatus: () => ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_STATUS),
   wifiDisplaySetMonitor: (monitorIndex: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.WIFI_DISPLAY_SET_MONITOR, monitorIndex),
+
+  // Brand Scraper
+  brandScrape: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.BRAND_SCRAPE, url),
+
+  // Starting Soon Scene Editor
+  ssGetConfig: () => ipcRenderer.invoke(IPC_CHANNELS.SS_GET_CONFIG),
+  ssSetConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.SS_SET_CONFIG, updates),
+  ssBrowseFolder: (type: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_BROWSE_FOLDER, type),
+  ssScanFolder: (path: string, type: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_SCAN_FOLDER, path, type),
+  ssGetPresets: () => ipcRenderer.invoke(IPC_CHANNELS.SS_GET_PRESETS),
+  ssSavePreset: (preset: any) => ipcRenderer.invoke(IPC_CHANNELS.SS_SAVE_PRESET, preset),
+  ssDeletePreset: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_DELETE_PRESET, id),
+  ssLoadPreset: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_LOAD_PRESET, id),
+
+  // Chat (Livestream Pinned Comments)
+  chatGetMessages: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES),
+  chatGetPinned: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_PINNED),
+  chatPin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_PIN, id),
+  chatUnpin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UNPIN, id),
+  chatClearPinned: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CLEAR_PINNED),
 
   // Recovery
   recoveryBrowseMkv: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_BROWSE_MKV),

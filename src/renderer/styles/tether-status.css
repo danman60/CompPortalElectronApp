@@ -1,0 +1,81 @@
+/* ===== Tether Status Bar ===== */
+
+.tether-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.tether-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.tether-label {
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  background: rgba(102, 126, 234, 0.15);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.tether-count {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tether-sync {
+  font-weight: 700;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.tether-sync-ok {
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.tether-sync-warning {
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.15);
+}
+
+.tether-sync-error {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.15);
+}
+
+.tether-sync-unknown {
+  color: var(--text-muted);
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.tether-last {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.tether-stop-btn {
+  font-size: 9px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tether-stop-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+}

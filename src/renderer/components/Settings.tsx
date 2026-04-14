@@ -406,6 +406,159 @@ export default function Settings(): React.ReactElement {
               </div>
               <span className="hint">Add this as a Browser Source in OBS (1920×1080). Controls lower third, counter, clock, and logo.</span>
             </div>
+            <div className="field">
+              <label>Logo Image</label>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value={draft.overlay?.logoUrl || ''}
+                  readOnly
+                  style={{ flex: 1, opacity: 0.85 }}
+                  placeholder="No logo selected"
+                />
+                <button
+                  className="back-btn"
+                  onClick={async () => {
+                    const url = await (window as any).api.overlaySetLogo()
+                    if (url) {
+                      update('overlay', { logoUrl: url })
+                    }
+                  }}
+                >
+                  Browse
+                </button>
+              </div>
+              <span className="hint">PNG or SVG logo shown in overlay. Persists across restarts.</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Branding / Socials */}
+        <div className="settings-section">
+          <div className="settings-section-title">Branding &amp; Socials</div>
+          <p className="section-desc">
+            Organization info and social handles. Used in overlay Starting Soon scene and lower thirds.
+          </p>
+          <div className="settings-grid">
+            <div className="field">
+              <label>Organization Name</label>
+              <input
+                type="text"
+                value={draft.branding?.organizationName || ''}
+                onChange={(e) => update('branding', { organizationName: e.target.value })}
+                placeholder="e.g., Dance Competition Inc."
+              />
+            </div>
+            <div className="field">
+              <label>Website</label>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value={draft.branding?.website || ''}
+                  onChange={(e) => update('branding', { website: e.target.value })}
+                  placeholder="e.g., www.example.com"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="back-btn"
+                  onClick={async () => {
+                    const url = draft.branding?.website
+                    if (!url) return
+                    try {
+                      const kit = await (window as any).api.brandScrape(url)
+                      update('branding', {
+                        brandColors: kit.colors || [],
+                        brandFont: kit.fonts?.[0] || '',
+                        brandLogoUrl: kit.logoUrl || '',
+                      })
+                    } catch (err) {
+                      console.error('Brand scrape failed:', err)
+                    }
+                  }}
+                  title="Scrape colors, fonts, and logo from website"
+                >
+                  Clone Brand
+                </button>
+              </div>
+              <span className="hint">Enter URL then click Clone Brand to extract colors, fonts, and logo</span>
+            </div>
+            {(draft.branding?.brandColors?.length ?? 0) > 0 && (
+              <div className="field" style={{ gridColumn: '1 / -1' }}>
+                <label>Brand Colors ({draft.branding?.brandColors?.length || 0})</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                  {(draft.branding?.brandColors || []).map((color, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        width: '32px',
+                        height: '32px',
+                        background: color,
+                        borderRadius: '4px',
+                        border: '1px solid var(--border)',
+                      }}
+                      title={color}
+                    />
+                  ))}
+                  <button
+                    className="back-btn"
+                    style={{ height: '32px', padding: '0 8px', fontSize: '10px' }}
+                    onClick={() => update('branding', { brandColors: [], brandFont: '', brandLogoUrl: '' })}
+                  >
+                    Clear
+                  </button>
+                </div>
+                {draft.branding?.brandFont && (
+                  <span className="hint" style={{ marginTop: '6px', display: 'block' }}>
+                    Font: <strong>{draft.branding.brandFont}</strong>
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="field">
+              <label>Instagram</label>
+              <input
+                type="text"
+                value={draft.branding?.instagram || ''}
+                onChange={(e) => update('branding', { instagram: e.target.value })}
+                placeholder="@handle"
+              />
+            </div>
+            <div className="field">
+              <label>Facebook</label>
+              <input
+                type="text"
+                value={draft.branding?.facebook || ''}
+                onChange={(e) => update('branding', { facebook: e.target.value })}
+                placeholder="@handle or page name"
+              />
+            </div>
+            <div className="field">
+              <label>TikTok</label>
+              <input
+                type="text"
+                value={draft.branding?.tiktok || ''}
+                onChange={(e) => update('branding', { tiktok: e.target.value })}
+                placeholder="@handle"
+              />
+            </div>
+            <div className="field">
+              <label>YouTube</label>
+              <input
+                type="text"
+                value={draft.branding?.youtube || ''}
+                onChange={(e) => update('branding', { youtube: e.target.value })}
+                placeholder="@channel"
+              />
+            </div>
+            <div className="field">
+              <label>Twitter / X</label>
+              <input
+                type="text"
+                value={draft.branding?.twitter || ''}
+                onChange={(e) => update('branding', { twitter: e.target.value })}
+                placeholder="@handle"
+              />
+            </div>
           </div>
         </div>
 

@@ -1,12 +1,14 @@
 .table-scroll {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .upload-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 11px;
+  table-layout: fixed;
 }
 
 .upload-table th {
@@ -34,6 +36,9 @@
 .upload-table tbody tr.current-row:hover td { background: rgba(99,102,241,0.12); }
 
 .entry-num { font-weight: 700; color: var(--accent); font-size: 11px; }
+.entry-time { font-weight: 600; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.th-time { width: 44px; }
+.td-time { white-space: nowrap; }
 .r-name { font-weight: 500; color: var(--text-primary); font-size: 11px; }
 .r-sub { font-size: 9px; color: var(--text-muted); }
 
@@ -87,17 +92,18 @@
 .th-pipeline {
   text-align: center !important;
   font-size: 8px !important;
-  width: 40px;
-  min-width: 40px;
-  max-width: 50px;
+  width: 28px;
+  min-width: 28px;
+  max-width: 32px;
+  padding: 5px 2px !important;
 }
 
 .td-pipeline {
   text-align: center;
-  padding: 4px 2px !important;
-  width: 40px;
-  min-width: 40px;
-  max-width: 50px;
+  padding: 4px 1px !important;
+  width: 28px;
+  min-width: 28px;
+  max-width: 32px;
 }
 
 .stage-icon {

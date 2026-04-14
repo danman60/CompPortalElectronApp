@@ -6,6 +6,13 @@ import { logger } from '../logger'
 
 const STATE_FILE = 'compsync-state.json'
 
+// Media loss prevention — reconcile pass gate.
+// First deployment runs in dry-run mode: logs intended demotes but never mutates
+// local routine status. Flip to false after verifying reconcile logs on a real
+// competition load. A backup snapshot of compsync-state.json is written BEFORE
+// any mutation when this is false.
+const RECONCILE_DRY_RUN = true
+
 interface PersistedState {
   competition: Competition | null
   currentRoutineId: string | null   // ID-based (was index-based)
@@ -201,6 +208,117 @@ export function setCompetition(comp: Competition): void {
     if (visible.length > 0) currentRoutineId = visible[0].id
   }
 
+  // ── Reconcile pass (Media loss prevention, Phase 4) ──
+  //
+  // Intent: if the server authoritatively reports mediaPackageStatus === 'none'
+  // for a routine we locally believe is 'uploaded' or 'confirmed', demote the
+  // local copy so the operator can re-upload. Strict safety rules:
+  //   1. Never run without a positive signal (mediaPackageStatus field present).
+  //      undefined → old server, never downgrade.
+  //   2. Only 'uploaded' and 'confirmed' are eligible. Any mid-pipeline status
+  //      (recording/recorded/queued/encoding/encoded/uploading) is skipped.
+  //   3. If encoded files still exist on disk → demote to 'encoded' (keep files,
+  //      outputPath, photos, notes — everything else untouched).
+  //   4. If encoded files are missing → demote to 'pending' and clear
+  //      encodedFiles/photos (nothing to re-upload from).
+  //   5. Backup compsync-state.json before first mutation (once per pass).
+  //
+  // Dry-run: logs every intended action without mutating.
+  const demoteCandidates: Array<{
+    routine: Routine
+    newStatus: RoutineStatus
+    filesExist: boolean
+    reason: string
+  }> = []
+
+  for (const routine of comp.routines) {
+    if (routine.mediaPackageStatus === undefined) continue // old server, no signal
+    if (routine.mediaPackageStatus !== 'none') continue
+    if (routine.status !== 'uploaded' && routine.status !== 'confirmed') continue
+
+    // Extra belt-and-suspenders: never touch mid-pipeline (shouldn't match above
+    // guard but cheap to double-check).
+    const midPipeline: RoutineStatus[] = ['recording', 'recorded', 'queued', 'encoding', 'encoded', 'uploading']
+    if (midPipeline.includes(routine.status)) continue
+
+    const encoded = routine.encodedFiles || []
+    if (encoded.length === 0) {
+      demoteCandidates.push({
+        routine,
+        newStatus: 'pending',
+        filesExist: false,
+        reason: 'no encodedFiles on local routine',
+      })
+      continue
+    }
+
+    const allExist = encoded.every(f => {
+      try { return fs.existsSync(f.filePath) } catch { return false }
+    })
+
+    if (allExist) {
+      demoteCandidates.push({
+        routine,
+        newStatus: 'encoded',
+        filesExist: true,
+        reason: 'server has no media package; local encoded files still on disk',
+      })
+    } else {
+      demoteCandidates.push({
+        routine,
+        newStatus: 'pending',
+        filesExist: false,
+        reason: 'server has no media package; local encoded files missing from disk',
+      })
+    }
+  }
+
+  if (demoteCandidates.length > 0) {
+    let demoted = 0
+    let dryRun = 0
+    const skipped = 0 // reserved for future filter branches; currently unused
+
+    // Backup BEFORE mutating — only if we will actually mutate.
+    if (!RECONCILE_DRY_RUN) {
+      try {
+        const statePathForBackup = getStatePath()
+        if (fs.existsSync(statePathForBackup)) {
+          const backupPath = `${statePathForBackup}.bak-${Date.now()}`
+          fs.copyFileSync(statePathForBackup, backupPath)
+          logger.app.info(`Reconcile: snapshotted state to ${backupPath}`)
+        }
+      } catch (err) {
+        logger.app.error('Reconcile: failed to snapshot state backup; aborting mutation', err)
+        // Safety: if we can't back up, don't mutate.
+        recomputeCachedCounts()
+        saveState()
+        return
+      }
+    }
+
+    for (const c of demoteCandidates) {
+      const oldStatus = c.routine.status
+      if (RECONCILE_DRY_RUN) {
+        logger.app.info(
+          `[DRY RUN] would demote entry #${c.routine.entryNumber} "${c.routine.routineTitle}": ${oldStatus} → ${c.newStatus} (filesExistOnDisk=${c.filesExist}, reason: ${c.reason})`,
+        )
+        dryRun++
+      } else {
+        logger.app.info(
+          `Reconcile demote: entry #${c.routine.entryNumber} "${c.routine.routineTitle}": ${oldStatus} → ${c.newStatus} (filesExistOnDisk=${c.filesExist}, reason: ${c.reason})`,
+        )
+        c.routine.status = c.newStatus
+        if (c.newStatus === 'pending') {
+          c.routine.encodedFiles = undefined
+          c.routine.photos = undefined
+        }
+        demoted++
+      }
+    }
+
+    logger.app.info(`Reconcile: ${demoted} demoted, ${dryRun} dry-run, ${skipped} skipped`)
+  }
+
   recomputeCachedCounts()
   saveState()
 }
@@ -224,6 +342,13 @@ export function getNextRoutine(): Routine | null {
   const visible = getVisibleRoutines()
   const idx = getCurrentIndex()
   return visible[idx + 1] || null
+}
+
+export function getUpcomingRoutines(count: number): Routine[] {
+  if (!currentCompetition) return []
+  const visible = getVisibleRoutines()
+  const idx = getCurrentIndex()
+  return visible.slice(idx + 1, idx + 1 + count)
 }
 
 export function advanceToNext(): Routine | null {

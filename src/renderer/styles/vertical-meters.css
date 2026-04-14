@@ -1,0 +1,48 @@
+.v-meters {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  padding: 8px 10px;
+  align-items: flex-end;
+  background: transparent;
+  min-width: 80px;
+}
+
+.v-meter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  gap: 2px;
+}
+
+.v-meter-track {
+  width: 100%;
+  max-width: 20px;
+  height: 100%;
+  background: rgba(45, 45, 66, 0.6);
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border: 1px solid rgba(80, 80, 120, 0.4);
+}
+
+.v-meter-fill {
+  width: 100%;
+  border-radius: 2px;
+  transition: height 0.1s;
+}
+
+.v-meter-fill.good { background: linear-gradient(0deg, #22c55e, #4ade80); }
+.v-meter-fill.medium { background: linear-gradient(0deg, #22c55e, #fbbf24); }
+.v-meter-fill.hot { background: linear-gradient(0deg, #22c55e, #fbbf24, #ef4444); }
+.v-meter-fill.silent { background: var(--text-muted); opacity: 0.3; }
+
+.v-meter-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}

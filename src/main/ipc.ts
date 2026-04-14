@@ -18,6 +18,8 @@ import * as clipVerify from './services/clipVerify'
 import * as driveMonitor from './services/driveMonitor'
 import * as tether from './services/tether'
 import * as wifiDisplay from './services/wifiDisplay'
+import * as chatBridge from './services/chatBridge'
+import * as brandScraper from './services/brandScraper'
 import { checkAndRecover } from './services/crashRecovery'
 import * as recovery from './services/recovery'
 import { logger } from './logger'
@@ -185,6 +187,9 @@ export function registerAllHandlers(): void {
     const comp = await schedule.loadFromShareCode(shareCode as string)
     stateService.setCompetition(comp)
     recording.broadcastFullState()
+    // Start chat bridge now that share code is resolved (competitionId available)
+    chatBridge.stopChatBridge()
+    chatBridge.startChatBridge()
     return comp
   })
 
@@ -426,6 +431,125 @@ export function registerAllHandlers(): void {
     logIPC(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG)
     overlay.setAnimationConfig(updates as Partial<import('../shared/types').AnimationConfig>)
     return overlay.getOverlayState().animConfig
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_SET_LOGO, async () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select Logo Image',
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+
+    overlay.setLogoUrl(result.filePaths[0])
+    return overlay.getOverlayState().logo.url
+  })
+
+  // --- Brand Scraper ---
+
+  safeHandle(IPC_CHANNELS.BRAND_SCRAPE, async (url: unknown) => {
+    logIPC(IPC_CHANNELS.BRAND_SCRAPE, url)
+    return await brandScraper.scrapeWebsite(url as string)
+  })
+
+  // --- Starting Soon Scene Editor ---
+
+  safeHandle(IPC_CHANNELS.SS_GET_CONFIG, () => {
+    logIPC(IPC_CHANNELS.SS_GET_CONFIG)
+    return overlay.getSSConfig()
+  })
+
+  safeHandle(IPC_CHANNELS.SS_SET_CONFIG, (updates: unknown) => {
+    logIPC(IPC_CHANNELS.SS_SET_CONFIG, updates)
+    return overlay.setSSConfig(updates as Partial<import('../shared/types').StartingSoonConfig>)
+  })
+
+  safeHandle(IPC_CHANNELS.SS_BROWSE_FOLDER, async (type: unknown) => {
+    logIPC(IPC_CHANNELS.SS_BROWSE_FOLDER, { type })
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: type === 'video' ? 'Select Video Folder' : type === 'image' ? 'Select Image Folder' : type === 'sponsor' ? 'Select Sponsor Logos Folder' : 'Select Folder',
+      properties: ['openDirectory'],
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  safeHandle(IPC_CHANNELS.SS_SCAN_FOLDER, async (folderPath: unknown, type: unknown) => {
+    logIPC(IPC_CHANNELS.SS_SCAN_FOLDER, { folderPath, type })
+    const pathStr = folderPath as string
+    const fileType = type as string
+    if (!pathStr || !fs.existsSync(pathStr)) return []
+    
+    try {
+      const files = fs.readdirSync(pathStr)
+      let extensions: string[]
+      
+      if (fileType === 'video') {
+        extensions = ['.mp4', '.webm', '.mov', '.avi', '.mkv']
+      } else if (fileType === 'image') {
+        extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+      } else if (fileType === 'sponsor') {
+        extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg']
+      } else {
+        extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.mp4', '.webm', '.mov', '.avi', '.mkv']
+      }
+      
+      const filtered = files
+        .filter(f => extensions.some(ext => f.toLowerCase().endsWith(ext)))
+        .sort()
+      
+      return filtered
+    } catch (_err) {
+      return []
+    }
+  })
+
+  safeHandle(IPC_CHANNELS.SS_GET_PRESETS, () => {
+    logIPC(IPC_CHANNELS.SS_GET_PRESETS)
+    return overlay.getSSPresets()
+  })
+
+  safeHandle(IPC_CHANNELS.SS_SAVE_PRESET, (preset: unknown) => {
+    logIPC(IPC_CHANNELS.SS_SAVE_PRESET, { name: (preset as any)?.name })
+    return overlay.saveSSPreset(preset as import('../shared/types').StartingSoonPreset)
+  })
+
+  safeHandle(IPC_CHANNELS.SS_DELETE_PRESET, (id: unknown) => {
+    logIPC(IPC_CHANNELS.SS_DELETE_PRESET, { id })
+    return overlay.deleteSSPreset(id as string)
+  })
+
+  safeHandle(IPC_CHANNELS.SS_LOAD_PRESET, (id: unknown) => {
+    logIPC(IPC_CHANNELS.SS_LOAD_PRESET, { id })
+    const result = overlay.loadSSPreset(id as string)
+    return result !== null ? result : { error: 'Preset not found' }
+  })
+
+  // --- Chat (Livestream Pinned Comments) ---
+  safeHandle(IPC_CHANNELS.CHAT_GET_MESSAGES, () => {
+    return chatBridge.getChatMessages()
+  })
+
+  safeHandle(IPC_CHANNELS.CHAT_GET_PINNED, () => {
+    return chatBridge.getPinnedMessages()
+  })
+
+  safeHandle(IPC_CHANNELS.CHAT_PIN, (id: unknown) => {
+    logIPC(IPC_CHANNELS.CHAT_PIN, { id })
+    return chatBridge.pinMessage(id as string)
+  })
+
+  safeHandle(IPC_CHANNELS.CHAT_UNPIN, (id: unknown) => {
+    logIPC(IPC_CHANNELS.CHAT_UNPIN, { id })
+    return chatBridge.unpinMessage(id as string)
+  })
+
+  safeHandle(IPC_CHANNELS.CHAT_CLEAR_PINNED, () => {
+    logIPC(IPC_CHANNELS.CHAT_CLEAR_PINNED)
+    chatBridge.clearPinned()
   })
 
   // Legacy LT compat

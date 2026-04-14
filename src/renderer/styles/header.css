@@ -143,8 +143,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 2px;
-  flex-wrap: wrap;
-  justify-content: center;
+  position: relative;
 }
 
 .ab-divider {
@@ -215,11 +214,20 @@
 .ab-btn.import-photo.watching .ab-icon { color: #a855f7; }
 
 .ab-pause-bar {
-  width: 100%;
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   justify-content: center;
   gap: 4px;
-  padding: 2px 4px 0;
+  padding: 3px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 0 0 4px 4px;
+  border-top: none;
+  z-index: 10;
+  white-space: nowrap;
 }
 
 .ab-pause-btn {
@@ -247,6 +255,16 @@
   background: rgba(239,68,68,0.1);
   border-color: var(--danger);
   color: var(--danger);
+}
+
+.ab-pause-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.ab-pause-btn:disabled:hover {
+  background: none;
+  border-color: var(--border);
+  color: var(--text-secondary);
 }
 
 .ab-pause-btn .ab-count {

@@ -21,6 +21,11 @@ export function onRecordStopped(cb: RecordingCallback): void {
   onRecordStoppedCb = cb
 }
 
+let onAudioLevelsCb: ((levels: AudioLevel[]) => void) | null = null
+export function setOnAudioLevels(cb: (levels: AudioLevel[]) => void): void {
+  onAudioLevelsCb = cb
+}
+
 let reconnectTimer: NodeJS.Timeout | null = null
 let reconnectAttempts = 0
 let lastUrl = ''
@@ -324,6 +329,7 @@ function registerOBSEvents(): void {
         levels: (input.inputLevelsMul as number[][]).map((ch) => ch[0] || 0),
       }))
       sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
+      onAudioLevelsCb?.(levels)
     }],
     ['ConnectionClosed', () => {
       if (state.connectionStatus === 'connected') {
