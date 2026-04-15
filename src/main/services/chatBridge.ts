@@ -20,9 +20,14 @@ let channel: RealtimeChannel | null = null
 let messages: ChatMessage[] = []
 let pinnedMessages: PinnedChatMessage[] = []
 let onPinChange: (() => void) | null = null
+let onMessagePush: ((msg: ChatMessage) => void) | null = null
 
 export function setOnPinChange(cb: () => void): void {
   onPinChange = cb
+}
+
+export function setOnMessagePush(cb: (msg: ChatMessage) => void): void {
+  onMessagePush = cb
 }
 
 function notifyPinChange(): void {
@@ -57,6 +62,7 @@ export function startChatBridge(): void {
     if (messages.length > MAX_MESSAGES) {
       messages = messages.slice(-MAX_MESSAGES)
     }
+    try { onMessagePush?.(msg) } catch {}
   })
 
   channel.subscribe((status) => {

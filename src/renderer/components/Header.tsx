@@ -409,6 +409,8 @@ export default function Header(): React.ReactElement {
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const compactMode = useStore((s) => s.compactMode)
   const setCompactMode = useStore((s) => s.setCompactMode)
+  const chatVisible = useStore((s) => s.chat.visible)
+  const setChatVisible = useStore((s) => s.setChatVisible)
 
   // Ctrl+Shift+C to toggle compact mode
   useEffect(() => {
@@ -459,6 +461,13 @@ export default function Header(): React.ReactElement {
           title={compactMode ? 'Switch to full mode (Ctrl+Shift+C)' : 'Switch to production mode (Ctrl+Shift+C)'}
         >
           {compactMode ? 'Full' : 'Compact'}
+        </button>
+        <button
+          className={`settings-btn${chatVisible ? ' active' : ''}`}
+          onClick={() => setChatVisible(!chatVisible)}
+          title="Toggle chat panel"
+        >
+          Chat
         </button>
         <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
           Settings

@@ -9,6 +9,8 @@ import {
   type UploadProgress,
   type SystemStats,
   type ObsStats,
+  type ChatMessage,
+  type PinnedChatMessage,
   type AudioMeterData,
   type AudioLevel,
   type JobRecord,
@@ -50,6 +52,13 @@ interface AppStore {
   // System stats
   systemStats: SystemStats | null
   obsStats: ObsStats | null
+
+  // Chat (commit 4)
+  chat: {
+    messages: ChatMessage[]
+    pinned: PinnedChatMessage[]
+    visible: boolean
+  }
 
   // Job queue
   jobQueue: JobRecord[]
@@ -103,6 +112,10 @@ interface AppStore {
   setSearchQuery: (query: string) => void
   setSystemStats: (stats: SystemStats) => void
   setObsStats: (stats: ObsStats | null) => void
+  setChatMessages: (messages: ChatMessage[]) => void
+  addChatMessage: (msg: ChatMessage) => void
+  setChatPinned: (pinned: PinnedChatMessage[]) => void
+  setChatVisible: (visible: boolean) => void
   updateRoutine: (routineId: string, update: Partial<Routine>) => void
   updateFFmpegProgress: (progress: FFmpegProgress) => void
   updateUploadProgress: (routineId: string, progress: UploadProgress) => void
@@ -152,6 +165,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   systemStats: null,
   obsStats: null,
+  chat: { messages: [], pinned: [], visible: false },
 
   photoSort: {
     status: 'idle',
@@ -223,6 +237,13 @@ export const useStore = create<AppStore>((set, get) => ({
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setSystemStats: (systemStats) => set({ systemStats }),
   setObsStats: (obsStats) => set({ obsStats }),
+  setChatMessages: (messages) => set((s) => ({ chat: { ...s.chat, messages } })),
+  addChatMessage: (msg) => set((s) => {
+    const next = [...s.chat.messages, msg]
+    return { chat: { ...s.chat, messages: next.length > 50 ? next.slice(-50) : next } }
+  }),
+  setChatPinned: (pinned) => set((s) => ({ chat: { ...s.chat, pinned } })),
+  setChatVisible: (visible) => set((s) => ({ chat: { ...s.chat, visible } })),
 
   updateRoutine: (routineId, update) => {
     const comp = get().competition
@@ -353,6 +374,14 @@ export function initIPCListeners(): () => void {
   // OBS stats (commit 3)
   window.api.on(IPC_CHANNELS.OBS_STATS, (data: unknown) => {
     useStore.setState({ obsStats: data as ObsStats })
+  })
+
+  // Chat push events (commit 4)
+  window.api.on(IPC_CHANNELS.CHAT_MESSAGE_NEW, (data: unknown) => {
+    store().addChatMessage(data as ChatMessage)
+  })
+  window.api.on(IPC_CHANNELS.CHAT_PINNED_CHANGED, (data: unknown) => {
+    store().setChatPinned(data as PinnedChatMessage[])
   })
 
   // Audio levels → AudioMeterData

@@ -251,6 +251,13 @@ app.whenReady().then(async () => {
 
   // Start chat bridge (connects to Supabase Realtime if share code already resolved)
   chatBridge.startChatBridge()
+  // Wire push broadcasts (commit 4): new messages + pin changes → renderer
+  chatBridge.setOnMessagePush((msg) => {
+    mainWindow?.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_NEW, msg)
+  })
+  chatBridge.setOnPinChange(() => {
+    mainWindow?.webContents.send(IPC_CHANNELS.CHAT_PINNED_CHANGED, chatBridge.getPinnedMessages())
+  })
 
   // Register global hotkeys
   hotkeys.register()
