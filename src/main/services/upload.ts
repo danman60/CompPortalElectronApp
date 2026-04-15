@@ -12,6 +12,7 @@ import { getSettings } from './settings'
 import * as state from './state'
 import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate } from './recording'
+import { ThrottleStream } from '../utils/throttle'
 
 interface UploadPayload {
   routineId: string
@@ -576,7 +577,19 @@ function uploadFileToSignedUrl(
       }
     })
 
-    fileStream.pipe(req)
+    // Bandwidth cap (commit 2): wrap body in ThrottleStream if configured
+    const bwCap = (getSettings() as any).upload?.bandwidthCapBytesPerSec ?? 0
+    if (bwCap > 0) {
+      logger.upload.info(`Upload bandwidth cap: ${Math.round(bwCap / 1024)} KB/s`)
+      const throttle = new ThrottleStream(bwCap)
+      throttle.on('error', (err) => {
+        cleanup()
+        reject(err)
+      })
+      fileStream.pipe(throttle).pipe(req)
+    } else {
+      fileStream.pipe(req)
+    }
   })
 }
 

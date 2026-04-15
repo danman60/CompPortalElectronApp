@@ -402,6 +402,29 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
+        {/* Upload */}
+        <div className="settings-section">
+          <div className="settings-section-title">Upload</div>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>Upload bandwidth cap</label>
+              <select
+                value={draft.upload?.bandwidthCapBytesPerSec ?? 0}
+                onChange={(e) => update('upload', { bandwidthCapBytesPerSec: parseInt(e.target.value, 10) || 0 })}
+              >
+                <option value={0}>Unlimited (default)</option>
+                <option value={512000}>500 KB/s (~4 Mbps)</option>
+                <option value={1048576}>1 MB/s (~8 Mbps)</option>
+                <option value={2621440}>2.5 MB/s (~20 Mbps)</option>
+                <option value={5242880}>5 MB/s (~40 Mbps)</option>
+                <option value={10485760}>10 MB/s (~80 Mbps)</option>
+                <option value={26214400}>25 MB/s (~200 Mbps)</option>
+              </select>
+              <span className="hint">Limit upload speed to leave headroom for livestream. Applies to next file upload.</span>
+            </div>
+          </div>
+        </div>
+
         {/* Overlay Browser Source */}
         <div className="settings-section">
           <div className="settings-section-title">Overlay</div>
