@@ -197,6 +197,88 @@ function getBarClass(status: RoutineStatus): string {
   }
 }
 
+// ── Session-aware visual grouping ─────────────────────────────────
+// Sessions are inferred client-side from gaps between consecutive routines.
+// TODO: move to AppSettings.schedule.sessionGapMinutes if operators need tunable thresholds.
+const SESSION_GAP_MIN = 15
+
+type GroupedItem =
+  | { type: 'routine'; routine: Routine }
+  | { type: 'day-header'; dayLabel: string; dayKey: string }
+  | { type: 'session-divider'; sessionNumber: number; gapMinutes: number; idleStartTime: string; idleEndTime: string }
+
+function parseHHMMToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + (m || 0)
+}
+
+function formatMinutesToHHMM(min: number): string {
+  const normalized = ((min % 1440) + 1440) % 1440
+  const h = Math.floor(normalized / 60)
+  const m = normalized % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function formatDayLabel(dayString: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dayString)) {
+    const d = new Date(dayString + 'T00:00:00')
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  }
+  return dayString || 'Unknown Day'
+}
+
+function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolean }): GroupedItem[] {
+  const result: GroupedItem[] = []
+  let lastDay: string | null = null
+  let lastEndMin: number | null = null
+  let sessionNumber = 1
+
+  for (const routine of routines) {
+    const currentDay = routine.scheduledDay || ''
+
+    if (currentDay !== lastDay) {
+      if (options.showDayHeaders) {
+        result.push({
+          type: 'day-header',
+          dayLabel: formatDayLabel(currentDay),
+          dayKey: currentDay,
+        })
+      }
+      lastDay = currentDay
+      lastEndMin = null
+      sessionNumber = 1
+    }
+
+    if (routine.scheduledTime) {
+      const startMin = parseHHMMToMinutes(routine.scheduledTime)
+      const duration = routine.durationMinutes || 3
+
+      if (lastEndMin !== null) {
+        let gap = startMin - lastEndMin
+        // midnight rollover — if the routine wraps past 24h, re-anchor
+        if (gap < -12 * 60) gap += 24 * 60
+        if (gap >= SESSION_GAP_MIN) {
+          sessionNumber++
+          result.push({
+            type: 'session-divider',
+            sessionNumber,
+            gapMinutes: Math.round(gap),
+            idleStartTime: formatMinutesToHHMM(lastEndMin),
+            idleEndTime: formatMinutesToHHMM(startMin),
+          })
+        }
+      }
+
+      result.push({ type: 'routine', routine })
+      lastEndMin = startMin + duration
+    } else {
+      result.push({ type: 'routine', routine })
+    }
+  }
+
+  return result
+}
+
 function NoteEditor({ routine }: { routine: Routine }): React.ReactElement {
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(routine.notes || '')
@@ -330,8 +412,36 @@ export default function RoutineTable(): React.ReactElement {
           </tr>
         </thead>
         <tbody>
-          {routines.map((routine) => {
-            const isLive = routine.status === 'recording'
+          {(() => {
+            const uniqueDays = Array.from(new Set(routines.map((r) => r.scheduledDay || '')))
+            const showDayHeaders = !dayFilter || uniqueDays.length > 1
+            const items = buildGroupedList(routines, { showDayHeaders })
+            return items.map((item, idx) => {
+              if (item.type === 'day-header') {
+                return (
+                  <tr key={`day-${item.dayKey}-${idx}`} className="day-header-row">
+                    <td colSpan={99}>
+                      <div className="day-header">
+                        <span className="day-label">{item.dayLabel}</span>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              }
+              if (item.type === 'session-divider') {
+                return (
+                  <tr key={`session-${idx}`} className="session-divider-row">
+                    <td colSpan={99}>
+                      <div className="session-divider">
+                        <span className="session-label">SESSION {item.sessionNumber}</span>
+                        <span className="session-gap">· {item.gapMinutes} min break ({item.idleStartTime}–{item.idleEndTime})</span>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              }
+              const routine = item.routine
+              const isLive = routine.status === 'recording'
             const isNotRecorded = routine.status === 'pending' || routine.status === 'skipped'
             const isCurrent = currentRoutine?.id === routine.id
             const statusInfo = statusToLabel(routine)
@@ -455,7 +565,8 @@ export default function RoutineTable(): React.ReactElement {
                 </td>
               </tr>
             )
-          })}
+            })
+          })()}
         </tbody>
       </table>
     </div>

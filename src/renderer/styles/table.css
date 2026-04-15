@@ -208,3 +208,42 @@
   outline: none;
   box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
 }
+
+/* Session-aware visual grouping */
+.day-header-row td {
+  background: linear-gradient(90deg, rgba(99,102,241,0.18) 0%, rgba(99,102,241,0.04) 100%);
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid rgba(99,102,241,0.3);
+  padding: 10px 14px !important;
+}
+.day-header {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.session-divider-row td {
+  background: rgba(255,255,255,0.02);
+  border-top: 1px dashed rgba(255,255,255,0.15);
+  border-bottom: 1px dashed rgba(255,255,255,0.15);
+  padding: 6px 14px !important;
+}
+.session-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.6);
+}
+.session-label {
+  font-weight: 700;
+  color: rgba(255,255,255,0.85);
+  background: rgba(99,102,241,0.2);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+.session-gap {
+  font-style: italic;
+}
