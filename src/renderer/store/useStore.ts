@@ -8,6 +8,7 @@ import {
   type FFmpegProgress,
   type UploadProgress,
   type SystemStats,
+  type ObsStats,
   type AudioMeterData,
   type AudioLevel,
   type JobRecord,
@@ -48,6 +49,7 @@ interface AppStore {
 
   // System stats
   systemStats: SystemStats | null
+  obsStats: ObsStats | null
 
   // Job queue
   jobQueue: JobRecord[]
@@ -100,6 +102,7 @@ interface AppStore {
   setDayFilter: (filter: string) => void
   setSearchQuery: (query: string) => void
   setSystemStats: (stats: SystemStats) => void
+  setObsStats: (stats: ObsStats | null) => void
   updateRoutine: (routineId: string, update: Partial<Routine>) => void
   updateFFmpegProgress: (progress: FFmpegProgress) => void
   updateUploadProgress: (routineId: string, progress: UploadProgress) => void
@@ -148,6 +151,7 @@ export const useStore = create<AppStore>((set, get) => ({
   audioMeters: { performance: -Infinity, judges: [] },
 
   systemStats: null,
+  obsStats: null,
 
   photoSort: {
     status: 'idle',
@@ -218,6 +222,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setDayFilter: (dayFilter) => set({ dayFilter }),
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setSystemStats: (systemStats) => set({ systemStats }),
+  setObsStats: (obsStats) => set({ obsStats }),
 
   updateRoutine: (routineId, update) => {
     const comp = get().competition
@@ -343,6 +348,11 @@ export function initIPCListeners(): () => void {
   // System stats
   window.api.on(IPC_CHANNELS.SYSTEM_STATS, (data: unknown) => {
     useStore.setState({ systemStats: data as SystemStats })
+  })
+
+  // OBS stats (commit 3)
+  window.api.on(IPC_CHANNELS.OBS_STATS, (data: unknown) => {
+    useStore.setState({ obsStats: data as ObsStats })
   })
 
   // Audio levels → AudioMeterData

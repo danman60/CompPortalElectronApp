@@ -1,5 +1,5 @@
 import OBSWebSocketDefault, { EventSubscription } from 'obs-websocket-js'
-import { OBSState, AudioLevel, IPC_CHANNELS } from '../../shared/types'
+import { OBSState, AudioLevel, IPC_CHANNELS, ObsStats } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getSettings } from './settings'
@@ -60,6 +60,12 @@ let blackFrameCount = 0
 let blackAlertFired = false
 let activeAlertRoutineId: string | null = null
 
+// Stats poller (commit 3): periodic GetStats / GetStreamStatus → ObsStats broadcasts
+let statsPollerTimer: NodeJS.Timeout | null = null
+let lastRenderSkippedFrames = 0
+let lastOutputSkippedFrames = 0
+let cachedTargetFps = 60
+
 export function setActiveAlertRoutineId(id: string | null): void {
   activeAlertRoutineId = id
 }
@@ -72,6 +78,93 @@ function emitRecordingAlert(level: 'warning' | 'error', message: string): void {
 
 function broadcastState(): void {
   sendToRenderer(IPC_CHANNELS.OBS_STATE, state)
+}
+
+// --- Stats poller (commit 3): cadence 5s, only while connected ---
+
+function broadcastDisconnectedStats(): void {
+  const payload: ObsStats = {
+    connected: false,
+    streaming: false,
+    recording: false,
+    fps: 0,
+    targetFps: cachedTargetFps,
+    renderSkippedFrames: 0,
+    outputSkippedFrames: 0,
+    congestion: 0,
+    renderSkippedDelta: 0,
+    outputSkippedDelta: 0,
+    timestamp: Date.now(),
+  }
+  sendToRenderer(IPC_CHANNELS.OBS_STATS, payload)
+}
+
+async function pollObsStats(): Promise<void> {
+  if (state.connectionStatus !== 'connected') {
+    broadcastDisconnectedStats()
+    return
+  }
+  try {
+    const stats = await obs.call('GetStats') as Record<string, any>
+    const fps = typeof stats.activeFps === 'number' ? stats.activeFps : (typeof stats.fps === 'number' ? stats.fps : 0)
+    const renderSkipped = typeof stats.renderSkippedFrames === 'number' ? stats.renderSkippedFrames : 0
+    const outputSkipped = typeof stats.outputSkippedFrames === 'number' ? stats.outputSkippedFrames : 0
+
+    let congestion = 0
+    if (state.isStreaming) {
+      try {
+        const ss = await obs.call('GetStreamStatus') as Record<string, any>
+        if (typeof ss.outputCongestion === 'number') congestion = ss.outputCongestion
+      } catch {
+        // ignore
+      }
+    }
+
+    const renderDelta = Math.max(0, renderSkipped - lastRenderSkippedFrames)
+    const outputDelta = Math.max(0, outputSkipped - lastOutputSkippedFrames)
+    lastRenderSkippedFrames = renderSkipped
+    lastOutputSkippedFrames = outputSkipped
+
+    const payload: ObsStats = {
+      connected: true,
+      streaming: state.isStreaming,
+      recording: state.isRecording,
+      fps,
+      targetFps: cachedTargetFps,
+      renderSkippedFrames: renderSkipped,
+      outputSkippedFrames: outputSkipped,
+      congestion,
+      renderSkippedDelta: renderDelta,
+      outputSkippedDelta: outputDelta,
+      timestamp: Date.now(),
+    }
+    sendToRenderer(IPC_CHANNELS.OBS_STATS, payload)
+  } catch (err) {
+    logger.obs.debug(`Stats poll failed: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+function startStatsPoller(): void {
+  if (statsPollerTimer) return
+  // Prime targetFps from video settings
+  obs.call('GetVideoSettings').then((v: any) => {
+    if (v && typeof v.fpsNumerator === 'number' && typeof v.fpsDenominator === 'number' && v.fpsDenominator > 0) {
+      cachedTargetFps = Math.round(v.fpsNumerator / v.fpsDenominator)
+    }
+  }).catch(() => { cachedTargetFps = 60 })
+  lastRenderSkippedFrames = 0
+  lastOutputSkippedFrames = 0
+  statsPollerTimer = setInterval(() => { pollObsStats().catch(() => {}) }, 5000)
+  // Fire one immediate poll for fast UI priming
+  pollObsStats().catch(() => {})
+}
+
+function stopStatsPoller(): void {
+  if (statsPollerTimer) {
+    clearInterval(statsPollerTimer)
+    statsPollerTimer = null
+  }
+  broadcastDisconnectedStats()
 }
 
 // --- Connection ---
@@ -104,6 +197,7 @@ export async function connect(url: string, password: string): Promise<void> {
     await syncState()
     broadcastState()
     registerOBSEvents()
+    startStatsPoller()
 
     if (reconnectTimer) {
       clearInterval(reconnectTimer)
@@ -129,6 +223,7 @@ export async function disconnect(): Promise<void> {
   }
   removeOBSEvents()
   reconnectAttempts = 0
+  stopStatsPoller()
   if (recordingTimer) {
     clearInterval(recordingTimer)
     recordingTimer = null
@@ -465,6 +560,7 @@ function registerOBSEvents(): void {
       state.isRecording = false
       state.isStreaming = false
       stopRecordingTimer()
+      stopStatsPoller()
       broadcastState()
       // Auto-reconnect with saved credentials
       if (lastUrl) {

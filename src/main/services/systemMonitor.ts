@@ -71,10 +71,19 @@ function poll(): void {
   const cpuPercent = getCpuPercent()
   const disk = getDiskStats(outputDir)
 
+  // Memory stats (commit 3)
+  const totalBytes = os.totalmem()
+  const freeBytes = os.freemem()
+  const memPercent = totalBytes > 0 ? Math.round(((totalBytes - freeBytes) / totalBytes) * 100) : 0
+
   const stats: SystemStats = {
     cpuPercent,
     diskFreeGB: disk.freeGB,
     diskTotalGB: disk.totalGB,
+    memPercent,
+    freeBytes,
+    totalBytes,
+    timestamp: Date.now(),
   }
 
   sendToRenderer(IPC_CHANNELS.SYSTEM_STATS, stats)

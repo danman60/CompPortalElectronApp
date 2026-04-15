@@ -308,48 +308,96 @@ import '../styles/header.css'
 
 function SystemMonitor(): React.ReactElement | null {
   const stats = useStore((s) => s.systemStats)
-  if (!stats) return null
+  const obsStats = useStore((s) => s.obsStats)
+  if (!stats && !obsStats) return null
 
   // CPU: higher is worse (usage), so fill shows utilization
-  const cpuPercent = Math.min(100, Math.max(0, stats.cpuPercent))
-  const cpuColor = cpuPercent > 95 ? 'var(--danger)' : cpuPercent > 80 ? 'var(--warning)' : 'var(--success)'
+  const cpuPercent = Math.min(100, Math.max(0, stats?.cpuPercent ?? 0))
+  const cpuColor = cpuPercent > 85 ? 'var(--danger)' : cpuPercent > 60 ? 'var(--warning)' : 'var(--success)'
+
+  const memPercent = Math.min(100, Math.max(0, stats?.memPercent ?? 0))
+  const memColor = memPercent > 85 ? 'var(--danger)' : memPercent > 60 ? 'var(--warning)' : 'var(--success)'
 
   // Disk: show used percentage (inverse of free)
-  // Assuming typical competition drive is 500GB-2TB, show relative fill
-  const diskUsedPercent = stats.diskTotalGB > 0
+  const diskUsedPercent = stats && stats.diskTotalGB > 0
     ? Math.min(100, Math.max(0, ((stats.diskTotalGB - stats.diskFreeGB) / stats.diskTotalGB) * 100))
     : 0
-  const diskColor = stats.diskFreeGB < 2 ? 'var(--danger)' : stats.diskFreeGB < 10 ? 'var(--warning)' : 'var(--success)'
+  const diskColor = stats && stats.diskFreeGB < 2 ? 'var(--danger)' : stats && stats.diskFreeGB < 10 ? 'var(--warning)' : 'var(--success)'
+
+  // OBS pills
+  let obsFpsLabel: string | null = null
+  let obsFpsColor = 'var(--text-muted)'
+  let dropCount: number | null = null
+  let dropColor = 'var(--text-muted)'
+  let congLabel: string | null = null
+  let congColor = 'var(--warning)'
+  if (obsStats) {
+    if (!obsStats.connected) {
+      obsFpsLabel = 'OFF'
+      obsFpsColor = 'var(--text-muted)'
+    } else {
+      const fps = obsStats.fps || 0
+      const tgt = obsStats.targetFps || 60
+      obsFpsLabel = `${fps.toFixed(0)}/${tgt}`
+      if (fps >= tgt * 0.95) obsFpsColor = 'var(--success)'
+      else if (fps >= tgt * 0.85) obsFpsColor = 'var(--warning)'
+      else obsFpsColor = 'var(--danger)'
+      const drops = (obsStats.outputSkippedDelta || 0) + (obsStats.renderSkippedDelta || 0)
+      dropCount = drops
+      dropColor = drops > 0 ? 'var(--danger)' : 'var(--text-muted)'
+      if (obsStats.streaming && obsStats.congestion > 0) {
+        const pct = Math.round(obsStats.congestion * 100)
+        congLabel = `${pct}%`
+        if (obsStats.congestion > 0.5) congColor = 'var(--danger)'
+        else if (obsStats.congestion > 0.3) congColor = 'var(--warning)'
+        else congLabel = null
+      }
+    }
+  }
 
   return (
     <div className="header-status" style={{ gap: '10px' }}>
-      <div className="meter-bar" title={`CPU: ${cpuPercent.toFixed(0)}%`}>
-        <span className="meter-label">CPU</span>
-        <div className="meter-track">
-          <div
-            className="meter-fill"
-            style={{
-              width: `${cpuPercent}%`,
-              background: cpuColor,
-            }}
-          />
+      {stats && (
+        <div className="meter-bar" title={`CPU: ${cpuPercent.toFixed(0)}%`}>
+          <span className="meter-label">CPU</span>
+          <div className="meter-track">
+            <div className="meter-fill" style={{ width: `${cpuPercent}%`, background: cpuColor }} />
+          </div>
+          <span className="meter-value">{cpuPercent.toFixed(0)}%</span>
         </div>
-        <span className="meter-value">{cpuPercent.toFixed(0)}%</span>
-      </div>
-      {stats.diskFreeGB >= 0 && (
+      )}
+      {stats && stats.memPercent !== undefined && (
+        <div className="meter-bar" title={`RAM: ${memPercent}%`}>
+          <span className="meter-label">RAM</span>
+          <div className="meter-track">
+            <div className="meter-fill" style={{ width: `${memPercent}%`, background: memColor }} />
+          </div>
+          <span className="meter-value">{memPercent}%</span>
+        </div>
+      )}
+      {stats && stats.diskFreeGB >= 0 && (
         <div className={`meter-bar ${stats.diskFreeGB < 2 ? 'disk-critical' : stats.diskFreeGB < 10 ? 'disk-warning' : ''}`} title={`Disk: ${stats.diskFreeGB.toFixed(1)}GB free`}>
           <span className="meter-label">Disk</span>
           <div className="meter-track">
-            <div
-              className="meter-fill"
-              style={{
-                width: `${diskUsedPercent}%`,
-                background: diskColor,
-              }}
-            />
+            <div className="meter-fill" style={{ width: `${diskUsedPercent}%`, background: diskColor }} />
           </div>
           <span className="meter-value">{stats.diskFreeGB.toFixed(0)}GB</span>
         </div>
+      )}
+      {obsStats && obsFpsLabel !== null && (
+        <span className="si" style={{ color: obsFpsColor }} title={`OBS FPS (commit 3)`}>
+          OBS {obsFpsLabel}
+        </span>
+      )}
+      {obsStats && obsStats.connected && dropCount !== null && (
+        <span className="si" style={{ color: dropColor }} title={`Dropped frames this tick`}>
+          Drop {dropCount}
+        </span>
+      )}
+      {obsStats && obsStats.connected && obsStats.streaming && congLabel && (
+        <span className="si" style={{ color: congColor }} title={`Stream output congestion`}>
+          Cong {congLabel}
+        </span>
       )}
     </div>
   )
