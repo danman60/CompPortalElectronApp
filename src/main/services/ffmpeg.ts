@@ -491,10 +491,21 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
 /** Spawn FFmpeg with a timeout. Kills process on timeout. */
 function spawnFFmpegWithTimeout(ffmpegPath: string, args: string[], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
-    logger.ffmpeg.info(`FFmpeg command: ${ffmpegPath} ${args.join(' ')}`)
+    // Inject ffmpeg.threadCount if > 0 (0 = auto, i.e. FFmpeg default)
+    let finalArgs = args
+    try {
+      const threads = getSettings().ffmpeg.threadCount
+      if (typeof threads === 'number' && threads > 0) {
+        finalArgs = ['-threads', String(threads), ...args]
+        logger.ffmpeg.info(`FFmpeg thread cap: ${threads} cores`)
+      }
+    } catch {
+      // settings unavailable — fall back to no cap
+    }
+    logger.ffmpeg.info(`FFmpeg command: ${ffmpegPath} ${finalArgs.join(' ')}`)
 
     const spawnOpts = getSpawnOptions()
-    ffmpegProcess = spawn(ffmpegPath, args, spawnOpts)
+    ffmpegProcess = spawn(ffmpegPath, finalArgs, spawnOpts)
 
     if (ffmpegProcess.pid) {
       setPriority(ffmpegProcess.pid)

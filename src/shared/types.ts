@@ -179,6 +179,28 @@ export interface SystemStats {
   cpuPercent: number // 0-100
   diskFreeGB: number // GB free on output drive
   diskTotalGB: number
+  memPercent?: number // 0-100 (added commit 3)
+  freeBytes?: number
+  totalBytes?: number
+  timestamp?: number
+}
+
+export interface SystemInfo {
+  cpuCount: number
+}
+
+export interface ObsStats {
+  connected: boolean
+  streaming: boolean
+  recording: boolean
+  fps: number
+  targetFps: number
+  renderSkippedFrames: number
+  outputSkippedFrames: number
+  congestion: number
+  renderSkippedDelta: number
+  outputSkippedDelta: number
+  timestamp: number
 }
 
 // --- Overlay Animation ---
@@ -352,6 +374,10 @@ export interface AppSettings {
     judgeResolution: 'same' | '720p' | '480p'
     useHardwareEncoding: boolean // NVENC (NVIDIA GPU)
     cpuPriority: 'normal' | 'below-normal' | 'idle'
+    threadCount: number // 0 = auto; otherwise injected as -threads N on encode spawn
+  }
+  upload: {
+    bandwidthCapBytesPerSec: number // 0 = unlimited
   }
   hotkeys: {
     toggleRecording: string
@@ -519,6 +545,17 @@ export const IPC_CHANNELS = {
 
   // System monitor
   SYSTEM_STATS: 'system:stats',
+  SYSTEM_GET_INFO: 'system:get-info',
+
+  // OBS stats
+  OBS_STATS: 'obs:stats',
+
+  // Chat push broadcasts (separate from REST chat:* queries)
+  CHAT_MESSAGE_NEW: 'chat:message-new',
+  CHAT_PINNED_CHANGED: 'chat:pinned-changed',
+
+  // Overlay pinned chat toggle
+  OVERLAY_TOGGLE_PINNED_CHAT: 'overlay:toggle-pinned-chat',
 
   // App
   APP_TOGGLE_ALWAYS_ON_TOP: 'app:toggle-always-on-top',
@@ -673,6 +710,7 @@ export interface OverlayState {
   lowerThird: OverlayLowerThirdState
   ticker: TickerState
   startingSoon: StartingSoonState
+  pinnedChatOverlay?: { visible: boolean }
   animConfig: AnimationConfig
 }
 
@@ -827,6 +865,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     judgeResolution: 'same',
     useHardwareEncoding: false,
     cpuPriority: 'below-normal',
+    threadCount: 0,
+  },
+  upload: {
+    bandwidthCapBytesPerSec: 0,
   },
   hotkeys: {
     toggleRecording: 'F5',

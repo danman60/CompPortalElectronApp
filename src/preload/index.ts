@@ -83,6 +83,9 @@ const api = {
   overlaySetAnimationConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG, updates),
   overlaySetLogo: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_LOGO),
 
+  // System info
+  getSystemInfo: () => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_GET_INFO),
+
   // Next Full
   recordingNextFull: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_NEXT_FULL),
 

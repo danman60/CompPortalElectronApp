@@ -238,6 +238,18 @@ export function getSettings(): AppSettings {
 export function setSettings(partial: Partial<AppSettings>): AppSettings {
   const current = store.store as unknown as Record<string, unknown>
 
+  // Clamp ffmpeg.threadCount to [0, os.cpus().length]
+  if (partial.ffmpeg && typeof (partial.ffmpeg as any).threadCount === 'number') {
+    const max = os.cpus().length
+    const n = (partial.ffmpeg as any).threadCount
+    ;(partial.ffmpeg as any).threadCount = Math.max(0, Math.min(max, Math.floor(n)))
+  }
+  // Clamp upload.bandwidthCapBytesPerSec to >= 0
+  if (partial.upload && typeof (partial.upload as any).bandwidthCapBytesPerSec === 'number') {
+    const n = (partial.upload as any).bandwidthCapBytesPerSec
+    ;(partial.upload as any).bandwidthCapBytesPerSec = Math.max(0, Math.floor(n))
+  }
+
   // Merge top-level keys
   for (const [key, value] of Object.entries(partial)) {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {

@@ -75,6 +75,7 @@ export default function Settings(): React.ReactElement {
   const [diagCopied, setDiagCopied] = useState(false)
   const [overlayCopied, setOverlayCopied] = useState(false)
   const [monitors, setMonitors] = useState<MonitorInfo[]>([])
+  const [cpuCount, setCpuCount] = useState<number>(8)
 
   useEffect(() => {
     if (currentSettings) {
@@ -83,6 +84,9 @@ export default function Settings(): React.ReactElement {
     }
     window.api?.obsGetInputList().then(setObsInputs).catch(() => {})
     window.api?.wifiDisplayGetMonitors().then((m: MonitorInfo[]) => setMonitors(m || [])).catch(() => {})
+    ;(window.api as any)?.getSystemInfo?.().then((info: { cpuCount: number } | undefined) => {
+      if (info?.cpuCount && info.cpuCount > 0) setCpuCount(info.cpuCount)
+    }).catch(() => {})
   }, [currentSettings])
 
   function updatePreview(pattern: string): void {
@@ -315,6 +319,24 @@ export default function Settings(): React.ReactElement {
                   <span className="toggle-slider" />
                 </label>
               </div>
+            </div>
+            <div className="field">
+              <label>FFmpeg thread count</label>
+              <input
+                type="range"
+                min={0}
+                max={cpuCount}
+                step={1}
+                value={draft.ffmpeg.threadCount ?? 0}
+                onChange={(e) => update('ffmpeg', { threadCount: parseInt(e.target.value, 10) || 0 })}
+                style={{ width: '100%' }}
+              />
+              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
+                {(draft.ffmpeg.threadCount ?? 0) === 0
+                  ? 'Auto (FFmpeg default)'
+                  : `${draft.ffmpeg.threadCount} ${draft.ffmpeg.threadCount === 1 ? 'core' : 'cores'} of ${cpuCount}`}
+              </div>
+              <span className="hint">Lower = more headroom for OBS (applies to next encode).</span>
             </div>
             <div className="field">
               <label>CPU Priority</label>

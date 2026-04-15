@@ -1,6 +1,7 @@
 import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import * as obs from './services/obs'
 import * as settings from './services/settings'
@@ -877,6 +878,11 @@ export function registerAllHandlers(): void {
     const s = settings.getSettings()
     settings.setSettings({ wifiDisplay: { ...s.wifiDisplay, monitorIndex: monitorIndex as number } })
     return { ok: true }
+  })
+
+  // --- System info ---
+  safeHandle(IPC_CHANNELS.SYSTEM_GET_INFO, () => {
+    return { cpuCount: os.cpus().length }
   })
 
   // Start system monitor
