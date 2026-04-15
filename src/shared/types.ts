@@ -554,8 +554,8 @@ export const IPC_CHANNELS = {
   CHAT_MESSAGE_NEW: 'chat:message-new',
   CHAT_PINNED_CHANGED: 'chat:pinned-changed',
 
-  // Overlay pinned chat toggle
-  OVERLAY_TOGGLE_PINNED_CHAT: 'overlay:toggle-pinned-chat',
+  // Overlay chat fire (pinning a chat message broadcasts it LT-style)
+  OVERLAY_FIRE_CHAT_MESSAGE: 'overlay:fire-chat-message',
 
   // App
   APP_TOGGLE_ALWAYS_ON_TOP: 'app:toggle-always-on-top',
@@ -703,6 +703,16 @@ export interface OverlayLowerThirdState extends OverlayElementState {
   showCategory: boolean
 }
 
+export interface OverlayChatFireState {
+  visible: boolean
+  messageId: string | null
+  username: string
+  message: string
+  animation: OverlayAnimation
+  autoHideSeconds: number
+  firedAt: number
+}
+
 export interface OverlayState {
   counter: OverlayCounterState
   clock: OverlayElementState
@@ -710,7 +720,7 @@ export interface OverlayState {
   lowerThird: OverlayLowerThirdState
   ticker: TickerState
   startingSoon: StartingSoonState
-  pinnedChatOverlay?: { visible: boolean }
+  chatFire?: OverlayChatFireState
   animConfig: AnimationConfig
 }
 

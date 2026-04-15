@@ -21,6 +21,7 @@ let messages: ChatMessage[] = []
 let pinnedMessages: PinnedChatMessage[] = []
 let onPinChange: (() => void) | null = null
 let onMessagePush: ((msg: ChatMessage) => void) | null = null
+let onMessagePinned: ((msg: ChatMessage) => void) | null = null
 
 export function setOnPinChange(cb: () => void): void {
   onPinChange = cb
@@ -28,6 +29,14 @@ export function setOnPinChange(cb: () => void): void {
 
 export function setOnMessagePush(cb: (msg: ChatMessage) => void): void {
   onMessagePush = cb
+}
+
+/**
+ * Called specifically when a NEW message is pinned (not unpinned).
+ * Used to fire the pinned message as an LT-style overlay broadcast.
+ */
+export function setOnMessagePinned(cb: (msg: ChatMessage) => void): void {
+  onMessagePinned = cb
 }
 
 function notifyPinChange(): void {
@@ -109,6 +118,9 @@ export function pinMessage(id: string): boolean {
     text: msg.text,
     pinnedAt: Date.now(),
   })
+
+  // Fire the LT-style overlay broadcast BEFORE notifying pin change
+  try { onMessagePinned?.(msg) } catch {}
 
   notifyPinChange()
   return true

@@ -3,7 +3,7 @@ import http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
-import { OverlayState, OverlayLayout, DEFAULT_LAYOUT, TickerState, StartingSoonState, AnimationConfig, StartingSoonConfig, StartingSoonPreset, StartingSoonLayout, GradientConfig, SSElementPosition, TimeDateConfig, CountdownStyleConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SocialBarConfig, SponsorCarouselConfig, VisualizerConfig, EventInfoConfig } from '../../shared/types'
+import { OverlayState, OverlayLayout, DEFAULT_LAYOUT, TickerState, StartingSoonState, AnimationConfig, StartingSoonConfig, StartingSoonPreset, StartingSoonLayout, GradientConfig, SSElementPosition, TimeDateConfig, CountdownStyleConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SocialBarConfig, SponsorCarouselConfig, VisualizerConfig, EventInfoConfig, ChatMessage, OverlayAnimation } from '../../shared/types'
 import { getSettings } from './settings'
 import { logger } from '../logger'
 import { setupMediaRoutes, setVideoFolder, setPhotoFolder, setSponsorFolder } from './startingSoonMedia'
@@ -11,6 +11,7 @@ import { setupMediaRoutes, setVideoFolder, setPhotoFolder, setSponsorFolder } fr
 const PORT = 9876
 let server: http.Server | null = null
 let autoHideTimer: NodeJS.Timeout | null = null
+let chatFireTimer: NodeJS.Timeout | null = null
 
 let overlayState: OverlayState = {
   counter: { visible: true, current: 0, total: 0, entryNumber: '' },
@@ -45,7 +46,15 @@ let overlayState: OverlayState = {
     showCountdown: false,
     countdownTarget: '',
   },
-  pinnedChatOverlay: { visible: false },
+  chatFire: {
+    visible: false,
+    messageId: null,
+    username: '',
+    message: '',
+    animation: 'random',
+    autoHideSeconds: 8,
+    firedAt: 0,
+  },
   animConfig: {
     animationDuration: 0.5,
     animationEasing: 'ease',
@@ -492,13 +501,34 @@ export function getOverlayState(): OverlayState {
   }
 }
 
-export function togglePinnedChatOverlay(): OverlayState {
-  const pc = overlayState.pinnedChatOverlay || { visible: false }
-  pc.visible = !pc.visible
-  overlayState.pinnedChatOverlay = pc
-  logger.app.info(`Overlay pinnedChatOverlay: ${pc.visible ? 'ON' : 'OFF'}`)
+/**
+ * Fire a chat message as a transient LT-style overlay broadcast.
+ * Inherits the current lower-third animation + animConfig.autoHideSeconds.
+ * If called again while a fire is still visible, replaces the current
+ * message and resets the auto-hide timer (simplest queue policy).
+ */
+export function fireChatMessage(msg: ChatMessage): void {
+  const animation = (overlayState.lowerThird.animation || 'random') as OverlayAnimation
+  const seconds = overlayState.animConfig.autoHideSeconds ?? 8
+  overlayState.chatFire = {
+    visible: true,
+    messageId: msg.id,
+    username: msg.name || 'Anonymous',
+    message: msg.text || '',
+    animation,
+    autoHideSeconds: seconds,
+    firedAt: Date.now(),
+  }
+  logger.app.info(`Overlay chat fire: "${msg.text?.slice(0, 40) ?? ''}" (${animation}, ${seconds}s)`)
+  if (chatFireTimer) clearTimeout(chatFireTimer)
+  if (seconds > 0) {
+    chatFireTimer = setTimeout(() => {
+      if (overlayState.chatFire) overlayState.chatFire.visible = false
+      chatFireTimer = null
+      notifyChange()
+    }, seconds * 1000)
+  }
   notifyChange()
-  return overlayState
 }
 
 export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird'): OverlayState {
@@ -1226,44 +1256,67 @@ function buildOverlayHTML(): string {
     margin-top: 4px;
   }
 
-  /* ── Independent Pinned Chat Overlay (commit 5) ── */
-  .oc-pinned-chat {
+  /* ── Chat Fire — LT-style transient broadcast of pinned chat messages (commit 6) ── */
+  /* Positioned top-center so it doesn't clobber a bottom-anchored LT for an active routine. */
+  .chat-fire {
     position: absolute;
-    right: 20px;
-    bottom: 20px;
-    max-width: 320px;
-    display: none;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 5;
-  }
-  .oc-pinned-chat.visible { display: flex; }
-  .oc-pinned-card {
-    background: rgba(20, 22, 32, 0.85);
-    border: 1px solid rgba(255, 193, 7, 0.45);
-    border-left: 3px solid #ffc107;
-    border-radius: 10px;
-    padding: 10px 14px;
-    backdrop-filter: blur(6px);
-    color: #f0f0f5;
-    font-family: Inter, system-ui, sans-serif;
-    animation: ocPinIn 0.35s ease forwards;
+    left: 50%;
+    top: 10%;
+    transform: translateX(-50%);
     opacity: 0;
-    transform: translateX(8px);
+    transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease), filter var(--anim-dur) var(--anim-ease);
+    max-width: 720px;
+    z-index: 6;
   }
-  @keyframes ocPinIn {
-    to { opacity: 1; transform: translateX(0); }
+  .chat-fire.visible { opacity: 1; }
+  /* Reuse the same animation variants as .lower-third — mirror classes */
+  .chat-fire.anim-slide { transform: translateX(calc(-50% - 100px)); }
+  .chat-fire.anim-slide.visible { transform: translateX(-50%); transition: opacity calc(var(--anim-dur) * 0.6) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  .chat-fire.anim-fade { transform: translateX(-50%); }
+  .chat-fire.anim-zoom { transform: translateX(-50%) scale(0.3); }
+  .chat-fire.anim-zoom.visible { transform: translateX(-50%) scale(1); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .chat-fire.anim-rise { transform: translateX(-50%) translateY(60px); }
+  .chat-fire.anim-rise.visible { transform: translateX(-50%) translateY(0); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  .chat-fire.anim-bounce { transform: translateX(-50%) translateY(-80px); }
+  .chat-fire.anim-bounce.visible { transform: translateX(-50%) translateY(0); transition: opacity calc(var(--anim-dur) * 0.3) ease, transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .chat-fire.anim-split { transform: translateX(-50%) scaleX(0); transform-origin: center; }
+  .chat-fire.anim-split.visible { transform: translateX(-50%) scaleX(1); transition: opacity calc(var(--anim-dur) * 0.4) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  .chat-fire.anim-blur { filter: blur(20px); transform: translateX(-50%) scale(1.1); }
+  .chat-fire.anim-blur.visible { filter: blur(0px); transform: translateX(-50%) scale(1); }
+  .chat-fire.anim-sparkle {
+    transform: translateX(-50%) scale(0.9);
+    filter: brightness(1.8) drop-shadow(0 0 0px rgba(255,215,0,0));
   }
-  .oc-pinned-name {
-    font-size: 12px;
+  .chat-fire.anim-sparkle.visible {
+    transform: translateX(-50%) scale(1);
+    filter: brightness(1) drop-shadow(0 0 12px rgba(255,215,0,0.35));
+    transition: opacity calc(var(--anim-dur) * 0.5) ease,
+                transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1),
+                filter calc(var(--anim-dur) * 1.2) ease;
+  }
+  .chat-fire.anim-typewriter { transform: translateX(-50%); }
+  .cf-card {
+    background: rgba(30, 30, 46, 0.92);
+    border: 1px solid rgba(255, 193, 7, 0.55);
+    border-left: 4px solid #ffc107;
+    border-radius: 10px;
+    padding: 18px 28px;
+    backdrop-filter: blur(10px);
+    min-width: 420px;
+    font-family: Inter, system-ui, sans-serif;
+  }
+  .cf-name {
+    font-size: 18px;
     font-weight: 700;
     color: #ffc107;
-    margin-bottom: 2px;
+    margin-bottom: 6px;
     letter-spacing: 0.3px;
   }
-  .oc-pinned-text {
-    font-size: 14px;
-    line-height: 1.4;
+  .cf-text {
+    font-size: 26px;
+    font-weight: 600;
+    color: #e0e0f0;
+    line-height: 1.35;
     word-wrap: break-word;
   }
 </style>
@@ -1326,8 +1379,13 @@ function buildOverlayHTML(): string {
   <div class="ss-pinned-chat" id="ss-pinned-chat"></div>
 </div>
 
-<!-- Independent pinned chat overlay (commit 5) — renders regardless of Starting Soon state -->
-<div class="oc-pinned-chat" id="oc-pinned-chat"></div>
+<!-- Chat fire (commit 6) — transient LT-style broadcast when operator pins a chat message -->
+<div class="chat-fire" id="chat-fire">
+  <div class="cf-card">
+    <div class="cf-name" id="cf-name"></div>
+    <div class="cf-text" id="cf-text"></div>
+  </div>
+</div>
 
 <script>
   const WS_URL = 'ws://localhost:9877';
@@ -1336,6 +1394,8 @@ function buildOverlayHTML(): string {
   let reconnectDelay = 1000;
   let lastCounterEntry = '';
   let currentAnim = '';
+  let currentChatFireAnim = '';
+  let lastChatFireId = '';
   let typewriterTimer = null;
   let countdownInterval = null;
   let timeDateInterval = null;
@@ -2156,33 +2216,54 @@ function buildOverlayHTML(): string {
       tickerEl.classList.add('visible');
     }
 
-    // --- Independent Pinned Chat Overlay (commit 5) ---
-    // Renders regardless of Starting Soon state. Consumes state.pinnedChat.
-    var ocPinEl = document.getElementById('oc-pinned-chat');
-    var pcOverlay = o && o.pinnedChatOverlay;
-    if (ocPinEl) {
-      if (pcOverlay && pcOverlay.visible && state.pinnedChat && state.pinnedChat.length > 0) {
-        var ocPins = state.pinnedChat.slice(-5);
-        var ocHash = JSON.stringify(ocPins.map(function(p){ return p.id + ':' + p.text }));
-        if (ocPinEl.dataset.ocHash !== ocHash) {
-          ocPinEl.dataset.ocHash = ocHash;
-          var ocHtml = '';
-          for (var opi = 0; opi < ocPins.length; opi++) {
-            var op = ocPins[opi];
-            var safeName = (op.name || 'Anonymous').replace(/</g, '&lt;');
-            var safeText = (op.text || '').replace(/</g, '&lt;');
-            ocHtml += '<div class="oc-pinned-card" style="animation-delay:' + (opi * 0.06) + 's">';
-            ocHtml += '<div class="oc-pinned-name">' + safeName + '</div>';
-            ocHtml += '<div class="oc-pinned-text">' + safeText + '</div>';
-            ocHtml += '</div>';
+    // --- Chat Fire (commit 6) ---
+    // Transient LT-style broadcast when operator pins a chat message.
+    // Inherits animation from lowerThird + autoHideSeconds from animConfig.
+    var cfEl = document.getElementById('chat-fire');
+    var cfState = o && o.chatFire;
+    if (cfEl) {
+      cfEl.style.setProperty('--anim-dur', dur);
+      cfEl.style.setProperty('--anim-ease', ease);
+      if (cfState && cfState.visible) {
+        // New fire (new id) or first time visible — apply enter animation
+        if (cfState.messageId && cfState.messageId !== lastChatFireId) {
+          lastChatFireId = cfState.messageId;
+          // Clear stale animation classes
+          LT_ANIMS.forEach(function(a) { cfEl.classList.remove(a); });
+          cfEl.classList.remove('visible');
+          var cfAnim = cfState.animation || 'random';
+          if (cfAnim === 'random') {
+            currentChatFireAnim = LT_ANIMS[Math.floor(Math.random() * LT_ANIMS.length)];
+          } else {
+            currentChatFireAnim = 'anim-' + cfAnim;
           }
-          ocPinEl.innerHTML = ocHtml;
+          cfEl.classList.add(currentChatFireAnim);
+          var cfName = document.getElementById('cf-name');
+          var cfText = document.getElementById('cf-text');
+          if (cfName) cfName.textContent = cfState.username || 'Anonymous';
+          if (cfText) cfText.textContent = cfState.message || '';
+          requestAnimationFrame(function() {
+            cfEl.classList.add('visible');
+          });
+        } else {
+          // Same id — ensure visible class stays on
+          cfEl.classList.add('visible');
         }
-        ocPinEl.classList.add('visible');
       } else {
-        ocPinEl.classList.remove('visible');
-        ocPinEl.innerHTML = '';
-        delete ocPinEl.dataset.ocHash;
+        // Exit animation: remove visible; clear anim class after transition
+        if (cfEl.classList.contains('visible')) {
+          cfEl.classList.remove('visible');
+          var clearAnim = currentChatFireAnim;
+          setTimeout(function() {
+            if (clearAnim) cfEl.classList.remove(clearAnim);
+            var cfN = document.getElementById('cf-name');
+            var cfT = document.getElementById('cf-text');
+            if (cfN) cfN.textContent = '';
+            if (cfT) cfT.textContent = '';
+          }, 600);
+          currentChatFireAnim = '';
+          lastChatFireId = '';
+        }
       }
     }
   }

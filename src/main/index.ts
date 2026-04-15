@@ -258,6 +258,12 @@ app.whenReady().then(async () => {
   chatBridge.setOnPinChange(() => {
     mainWindow?.webContents.send(IPC_CHANNELS.CHAT_PINNED_CHANGED, chatBridge.getPinnedMessages())
   })
+  // Commit 6: when a new chat message is pinned, fire it as an LT-style overlay broadcast
+  chatBridge.setOnMessagePinned((msg) => {
+    try { overlay.fireChatMessage(msg) } catch (err) {
+      logger.app.warn('overlay.fireChatMessage failed:', err instanceof Error ? err.message : String(err))
+    }
+  })
 
   // Register global hotkeys
   hotkeys.register()

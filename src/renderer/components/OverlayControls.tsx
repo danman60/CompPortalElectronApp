@@ -10,7 +10,6 @@ interface OverlayToggles {
   clock: boolean
   logo: boolean
   lowerThird: boolean
-  pinnedChatOverlay: boolean
 }
 
 const ALL_ANIMATIONS: OverlayAnimation[] = [
@@ -25,7 +24,7 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
   const currentRoutine = useStore((s) => s.currentRoutine)
   const [editorOpen, setEditorOpen] = useState(false)
   const [toggles, setToggles] = useState<OverlayToggles>({
-    counter: true, clock: false, logo: true, lowerThird: false, pinnedChatOverlay: false,
+    counter: true, clock: false, logo: true, lowerThird: false,
   })
 
   // Animation config
@@ -42,7 +41,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
           clock: state.clock?.visible ?? false,
           logo: state.logo?.visible ?? true,
           lowerThird: state.lowerThird?.visible ?? false,
-          pinnedChatOverlay: state.pinnedChatOverlay?.visible ?? false,
         })
         if (state.animConfig) {
           setAnimDuration(state.animConfig.animationDuration ?? 0.5)
@@ -57,14 +55,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
   }, [])
 
   async function handleToggle(element: keyof OverlayToggles): Promise<void> {
-    // Pinned chat overlay uses a dedicated IPC (commit 5) so it's independent from startingSoon
-    if (element === 'pinnedChatOverlay') {
-      const result = await (window.api as any).overlayTogglePinnedChat() as any
-      if (result) {
-        setToggles((t) => ({ ...t, pinnedChatOverlay: result.pinnedChatOverlay?.visible ?? !t.pinnedChatOverlay }))
-      }
-      return
-    }
     const result = await window.api.overlayToggle(element) as any
     if (result) {
       setToggles({
@@ -72,7 +62,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
         clock: result.clock?.visible ?? toggles.clock,
         logo: result.logo?.visible ?? toggles.logo,
         lowerThird: result.lowerThird?.visible ?? toggles.lowerThird,
-        pinnedChatOverlay: result.pinnedChatOverlay?.visible ?? toggles.pinnedChatOverlay,
       })
     }
   }
@@ -142,11 +131,6 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
           className={`oc-toggle${toggles.logo ? ' active' : ''}`}
           onClick={() => handleToggle('logo')}
         >Logo</button>
-        <button
-          className={`oc-toggle${toggles.pinnedChatOverlay ? ' active' : ''}`}
-          onClick={() => handleToggle('pinnedChatOverlay')}
-          title="Toggle pinned chat overlay (independent of Starting Soon)"
-        >Pin</button>
         <button
           className="oc-edit-layout-btn"
           onClick={() => setEditorOpen(true)}

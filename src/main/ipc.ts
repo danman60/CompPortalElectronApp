@@ -885,10 +885,13 @@ export function registerAllHandlers(): void {
     return { cpuCount: os.cpus().length }
   })
 
-  // --- Overlay: pinned chat overlay toggle ---
-  safeHandle(IPC_CHANNELS.OVERLAY_TOGGLE_PINNED_CHAT, () => {
-    logIPC(IPC_CHANNELS.OVERLAY_TOGGLE_PINNED_CHAT)
-    return overlay.togglePinnedChatOverlay()
+  // --- Overlay: fire a chat message as LT-style broadcast ---
+  safeHandle(IPC_CHANNELS.OVERLAY_FIRE_CHAT_MESSAGE, (msg: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_FIRE_CHAT_MESSAGE)
+    if (msg && typeof msg === 'object') {
+      overlay.fireChatMessage(msg as any)
+    }
+    return { ok: true }
   })
 
   // Start system monitor
