@@ -82,6 +82,7 @@ const api = {
   overlaySetStartingSoon: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON, updates),
   overlaySetAnimationConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG, updates),
   overlaySetLogo: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_LOGO),
+  overlayTogglePinnedChat: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_TOGGLE_PINNED_CHAT),
 
   // System info
   getSystemInfo: () => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_GET_INFO),

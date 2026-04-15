@@ -885,6 +885,12 @@ export function registerAllHandlers(): void {
     return { cpuCount: os.cpus().length }
   })
 
+  // --- Overlay: pinned chat overlay toggle ---
+  safeHandle(IPC_CHANNELS.OVERLAY_TOGGLE_PINNED_CHAT, () => {
+    logIPC(IPC_CHANNELS.OVERLAY_TOGGLE_PINNED_CHAT)
+    return overlay.togglePinnedChatOverlay()
+  })
+
   // Start system monitor
   systemMonitor.startMonitoring()
 

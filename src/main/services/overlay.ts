@@ -45,6 +45,7 @@ let overlayState: OverlayState = {
     showCountdown: false,
     countdownTarget: '',
   },
+  pinnedChatOverlay: { visible: false },
   animConfig: {
     animationDuration: 0.5,
     animationEasing: 'ease',
@@ -489,6 +490,15 @@ export function getOverlayState(): OverlayState {
       config: startingSoonConfig,
     },
   }
+}
+
+export function togglePinnedChatOverlay(): OverlayState {
+  const pc = overlayState.pinnedChatOverlay || { visible: false }
+  pc.visible = !pc.visible
+  overlayState.pinnedChatOverlay = pc
+  logger.app.info(`Overlay pinnedChatOverlay: ${pc.visible ? 'ON' : 'OFF'}`)
+  notifyChange()
+  return overlayState
 }
 
 export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird'): OverlayState {
@@ -1215,6 +1225,47 @@ function buildOverlayHTML(): string {
     color: #7070a0;
     margin-top: 4px;
   }
+
+  /* ── Independent Pinned Chat Overlay (commit 5) ── */
+  .oc-pinned-chat {
+    position: absolute;
+    right: 20px;
+    bottom: 20px;
+    max-width: 320px;
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 5;
+  }
+  .oc-pinned-chat.visible { display: flex; }
+  .oc-pinned-card {
+    background: rgba(20, 22, 32, 0.85);
+    border: 1px solid rgba(255, 193, 7, 0.45);
+    border-left: 3px solid #ffc107;
+    border-radius: 10px;
+    padding: 10px 14px;
+    backdrop-filter: blur(6px);
+    color: #f0f0f5;
+    font-family: Inter, system-ui, sans-serif;
+    animation: ocPinIn 0.35s ease forwards;
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  @keyframes ocPinIn {
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .oc-pinned-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffc107;
+    margin-bottom: 2px;
+    letter-spacing: 0.3px;
+  }
+  .oc-pinned-text {
+    font-size: 14px;
+    line-height: 1.4;
+    word-wrap: break-word;
+  }
 </style>
 </head>
 <body>
@@ -1274,6 +1325,9 @@ function buildOverlayHTML(): string {
   <div class="ss-visualizer" id="ss-visualizer" style="display:none"></div>
   <div class="ss-pinned-chat" id="ss-pinned-chat"></div>
 </div>
+
+<!-- Independent pinned chat overlay (commit 5) — renders regardless of Starting Soon state -->
+<div class="oc-pinned-chat" id="oc-pinned-chat"></div>
 
 <script>
   const WS_URL = 'ws://localhost:9877';
@@ -2100,6 +2154,36 @@ function buildOverlayHTML(): string {
     var tickerEl = document.getElementById('ticker');
     if (tickerEl && ss.visible && ssCfg && ssCfg.tickerEnabled) {
       tickerEl.classList.add('visible');
+    }
+
+    // --- Independent Pinned Chat Overlay (commit 5) ---
+    // Renders regardless of Starting Soon state. Consumes state.pinnedChat.
+    var ocPinEl = document.getElementById('oc-pinned-chat');
+    var pcOverlay = o && o.pinnedChatOverlay;
+    if (ocPinEl) {
+      if (pcOverlay && pcOverlay.visible && state.pinnedChat && state.pinnedChat.length > 0) {
+        var ocPins = state.pinnedChat.slice(-5);
+        var ocHash = JSON.stringify(ocPins.map(function(p){ return p.id + ':' + p.text }));
+        if (ocPinEl.dataset.ocHash !== ocHash) {
+          ocPinEl.dataset.ocHash = ocHash;
+          var ocHtml = '';
+          for (var opi = 0; opi < ocPins.length; opi++) {
+            var op = ocPins[opi];
+            var safeName = (op.name || 'Anonymous').replace(/</g, '&lt;');
+            var safeText = (op.text || '').replace(/</g, '&lt;');
+            ocHtml += '<div class="oc-pinned-card" style="animation-delay:' + (opi * 0.06) + 's">';
+            ocHtml += '<div class="oc-pinned-name">' + safeName + '</div>';
+            ocHtml += '<div class="oc-pinned-text">' + safeText + '</div>';
+            ocHtml += '</div>';
+          }
+          ocPinEl.innerHTML = ocHtml;
+        }
+        ocPinEl.classList.add('visible');
+      } else {
+        ocPinEl.classList.remove('visible');
+        ocPinEl.innerHTML = '';
+        delete ocPinEl.dataset.ocHash;
+      }
     }
   }
 
