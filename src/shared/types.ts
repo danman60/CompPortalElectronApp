@@ -14,6 +14,7 @@ export type RoutineStatus =
   | 'pending'
   | 'skipped'
   | 'recording'
+  | 'recording_interrupted'
   | 'recorded'
   | 'queued'
   | 'encoding'
@@ -381,6 +382,7 @@ export interface AppSettings {
     alwaysOnTop: boolean
     zoomFactor: number
     compactMode: boolean
+    allowNonElevated: boolean
   }
   nextSequence: {
     stopRecording: boolean
@@ -589,6 +591,16 @@ export const IPC_CHANNELS = {
   CHAT_PIN: 'chat:pin',
   CHAT_UNPIN: 'chat:unpin',
   CHAT_CLEAR_PINNED: 'chat:clear-pinned',
+
+  // Event-day hardening alerts
+  RECORDING_MAX_WARNING: 'recording:max-warning',
+  RECORDING_BLOCKED: 'recording:blocked',
+  RECORDING_ALERT: 'recording:alert',
+  DEV_BUILD_WARNING: 'app:dev-build-warning',
+  DISK_SPACE_ALERT: 'disk:space-alert',
+  DRIVE_LOST: 'drive:lost',
+  DRIVE_RECOVERED: 'drive:recovered',
+  STATE_RECOVERED_FROM_BACKUP: 'state:recovered-from-backup',
 } as const
 
 // --- FFmpeg ---
@@ -695,6 +707,7 @@ export interface StartupReport {
   diskWarning: boolean
   resumedJobs: number
   orphanedFiles: number
+  warnings: string[]
 }
 
 // --- WebSocket Hub ---
@@ -844,6 +857,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     alwaysOnTop: false,
     zoomFactor: 1.25,
     compactMode: false,
+    allowNonElevated: false,
   },
   nextSequence: {
     stopRecording: true,

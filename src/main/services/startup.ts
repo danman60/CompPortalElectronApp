@@ -1,4 +1,5 @@
 import fs from 'fs'
+import { execSync } from 'child_process'
 import { StartupReport, IPC_CHANNELS } from '../../shared/types'
 import { logger } from '../logger'
 import { getSettings } from './settings'
@@ -7,10 +8,41 @@ import * as jobQueue from './jobQueue'
 import { sendToRenderer } from '../ipcUtil'
 
 const DISK_WARNING_THRESHOLD_GB = 10
+const SYNC_FOLDER_MARKERS = ['onedrive', 'dropbox', 'google drive', 'icloud']
+
+function checkSyncFolder(dir: string): string | null {
+  const lower = dir.toLowerCase()
+  for (const marker of SYNC_FOLDER_MARKERS) {
+    if (lower.includes(marker)) {
+      return `Output directory appears to be inside a cloud sync folder (${marker}). Recordings may be copied in the background and cause sync conflicts.`
+    }
+  }
+  return null
+}
+
+function checkBattery(): string | null {
+  try {
+    if (process.platform === 'win32') {
+      const out = execSync('wmic path Win32_Battery get EstimatedChargeRemaining /value', { timeout: 3000 }).toString()
+      const match = out.match(/EstimatedChargeRemaining=(\d+)/i)
+      if (match) {
+        const pct = parseInt(match[1], 10)
+        if (!isNaN(pct) && pct > 0 && pct < 30) {
+          return `Battery is at ${pct}%. Plug in before the event.`
+        }
+      }
+    }
+  } catch {
+    // No battery or wmic unavailable — skip silently
+  }
+  return null
+}
 
 /** Run startup validation checks. Called after window is ready. */
 export async function runStartupChecks(): Promise<StartupReport> {
   logger.app.info('Running startup validation...')
+
+  const warnings: string[] = []
 
   // 1. FFmpeg check
   const ffmpegVersion = await ffmpegService.validateFFmpeg()
@@ -59,12 +91,36 @@ export async function runStartupChecks(): Promise<StartupReport> {
   // 5. Orphaned file count (from crash recovery — already ran)
   const orphanedFiles = 0 // crashRecovery handles this separately
 
+  // Fix 7: sync-folder detection
+  if (outputDir) {
+    const syncWarning = checkSyncFolder(outputDir)
+    if (syncWarning) {
+      logger.app.warn(syncWarning)
+      warnings.push(syncWarning)
+    }
+  }
+
+  // Fix 7: battery check
+  const batteryWarning = checkBattery()
+  if (batteryWarning) {
+    logger.app.warn(batteryWarning)
+    warnings.push(batteryWarning)
+  }
+
+  if (diskWarning) {
+    warnings.push(`Low disk space: ${diskFreeGB}GB free on output drive`)
+  }
+  if (!ffmpegAvailable) {
+    warnings.push('FFmpeg not found — encoding will fail')
+  }
+
   const report: StartupReport = {
     ffmpegAvailable,
     diskFreeGB,
     diskWarning,
     resumedJobs,
     orphanedFiles,
+    warnings,
   }
 
   // Send to renderer for display

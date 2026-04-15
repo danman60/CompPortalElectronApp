@@ -14,6 +14,22 @@ import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
 let isPaused = false
+let pausedByDriveLoss = false
+
+export function pauseForDriveLoss(): void {
+  if (pausedByDriveLoss) return
+  pausedByDriveLoss = true
+  isPaused = true
+  logger.ffmpeg.warn('Encode paused: drive lost')
+}
+
+export function resumeFromDriveLoss(): void {
+  if (!pausedByDriveLoss) return
+  pausedByDriveLoss = false
+  isPaused = false
+  logger.ffmpeg.info('Encode resumed after drive recovery')
+  processNext()
+}
 
 const PID_FILE = 'ffmpeg.pid'
 const DEFAULT_TIMEOUT_MS = 600000 // 10 minutes

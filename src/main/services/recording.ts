@@ -20,6 +20,133 @@ import { logger } from '../logger'
 let activeRecordingRoutineId: string | null = null
 let pendingStopProcessing: { promise: Promise<void>; resolve: () => void } | null = null
 
+// --- Fix 11: Watchdog tracking ---
+let recordStartedAt: number | null = null
+let expectedObsOutputDir: string | null = null
+let watchdogTimer: NodeJS.Timeout | null = null
+let lastDisconnectAlert = 0
+let silentStopAlertFired = false
+let stuckAlertFired = false
+
+function startRecordingWatchdog(): void {
+  if (watchdogTimer) clearInterval(watchdogTimer)
+  lastDisconnectAlert = 0
+  silentStopAlertFired = false
+  stuckAlertFired = false
+  watchdogTimer = setInterval(() => {
+    if (!activeRecordingRoutineId) { stopRecordingWatchdog(); return }
+    const s = obs.getState()
+    const now = Date.now()
+    if (s.connectionStatus !== 'connected') {
+      if (now - lastDisconnectAlert > 30000) {
+        lastDisconnectAlert = now
+        sendToRenderer(IPC_CHANNELS.RECORDING_ALERT, {
+          level: 'error',
+          message: `OBS disconnected mid-record for routine ${activeRecordingRoutineId}`,
+          routineId: activeRecordingRoutineId,
+        })
+        logger.app.error(`Watchdog: OBS disconnected mid-record for routine ${activeRecordingRoutineId}`)
+      }
+      return
+    }
+    if (!s.isRecording && recordStartedAt && now - recordStartedAt > 10000 && !silentStopAlertFired) {
+      silentStopAlertFired = true
+      sendToRenderer(IPC_CHANNELS.RECORDING_ALERT, {
+        level: 'error',
+        message: 'OBS stopped recording but routine still marked recording',
+        routineId: activeRecordingRoutineId,
+      })
+      logger.app.error('Watchdog: OBS stopped recording but routine still marked recording')
+      reconcileOrphanedRecording().catch((err) => logger.app.warn('Reconcile from watchdog failed:', err))
+    }
+    const maxMinutes = getSettings().obs.maxRecordMinutes || 0
+    if (maxMinutes > 0 && recordStartedAt && !stuckAlertFired) {
+      const elapsedMs = now - recordStartedAt
+      if (elapsedMs > (maxMinutes + 2) * 60000) {
+        stuckAlertFired = true
+        sendToRenderer(IPC_CHANNELS.RECORDING_ALERT, {
+          level: 'error',
+          message: `Recording has been active > ${maxMinutes + 2}min. Check OBS.`,
+          routineId: activeRecordingRoutineId,
+        })
+        logger.app.error(`Watchdog: recording stuck > ${maxMinutes + 2}min for routine ${activeRecordingRoutineId}`)
+      }
+    }
+  }, 5000)
+}
+
+function stopRecordingWatchdog(): void {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer)
+    watchdogTimer = null
+  }
+  recordStartedAt = null
+  expectedObsOutputDir = null
+  lastDisconnectAlert = 0
+  silentStopAlertFired = false
+  stuckAlertFired = false
+}
+
+async function reconcileOrphanedRecording(): Promise<void> {
+  if (!activeRecordingRoutineId || !recordStartedAt) return
+  const searchDirs: string[] = []
+  if (expectedObsOutputDir) searchDirs.push(expectedObsOutputDir)
+  const dynamicDir = await obs.getRecordDirectory().catch(() => null)
+  if (dynamicDir && !searchDirs.includes(dynamicDir)) searchDirs.push(dynamicDir)
+
+  const windowStart = recordStartedAt - 5000
+  for (const dir of searchDirs) {
+    try {
+      if (!fs.existsSync(dir)) continue
+      const entries = await fs.promises.readdir(dir)
+      const candidates: Array<{ p: string; mtime: number }> = []
+      for (const e of entries) {
+        if (!/\.(mkv|mp4|flv)$/i.test(e)) continue
+        const p = path.join(dir, e)
+        try {
+          const st = await fs.promises.stat(p)
+          if (st.mtimeMs >= windowStart) candidates.push({ p, mtime: st.mtimeMs })
+        } catch {}
+      }
+      candidates.sort((a, b) => b.mtime - a.mtime)
+      if (candidates.length > 0) {
+        const best = candidates[0]
+        logger.app.warn(`Reconcile: salvaging orphaned recording ${best.p}`)
+        await handleRecordingStopped(best.p, new Date().toISOString())
+        return
+      }
+    } catch (err) {
+      logger.app.warn(`Reconcile: scan failed for ${dir}: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+  const routineId = activeRecordingRoutineId
+  logger.app.error(`Reconcile: no orphaned file found for routine ${routineId} — marking interrupted`)
+  state.updateRoutineStatus(routineId, 'recording_interrupted', {
+    error: 'Recording interrupted (OBS disconnected or stopped silently). No output file recovered.',
+  })
+  activeRecordingRoutineId = null
+  stopRecordingWatchdog()
+  obs.setActiveAlertRoutineId(null)
+  broadcastFullStateImmediate()
+}
+
+export function handleObsReconcile(info: { outputActive: boolean; recordDirectory: string | null }): void {
+  if (!activeRecordingRoutineId) {
+    if (info.outputActive) {
+      logger.app.warn('OBS reports active recording but no activeRecordingRoutineId — ghost recording')
+    }
+    return
+  }
+  if (info.outputActive) {
+    logger.app.info(`Reconcile: OBS still recording for routine ${activeRecordingRoutineId} — no action`)
+    if (info.recordDirectory) expectedObsOutputDir = info.recordDirectory
+    return
+  }
+  logger.app.warn('Reconcile: OBS not recording but routine still marked active — attempting salvage')
+  if (info.recordDirectory) expectedObsOutputDir = info.recordDirectory
+  reconcileOrphanedRecording().catch((err) => logger.app.warn('Reconcile salvage failed:', err))
+}
+
 // --- Navigation busy guard (prevents rapid double-advance) ---
 let navBusy = false
 
@@ -47,6 +174,44 @@ function scheduleAutoFire(): void {
     autoFireTimer = null
     logger.app.info('Overlay lower third auto-fired (3s delay)')
   }, 3000)
+}
+
+const MIN_FREE_GB_TO_RECORD = 5
+
+/** Fix 2 + Fix 8: Validate that recording can start. Returns null if OK, or a blocked reason. */
+export function canStartRecording(): { blocked: true; reason: 'no-output-dir' | 'dir-not-accessible' | 'disk-space-low'; detail?: string } | null {
+  const settings = getSettings()
+  const outputDir = settings.fileNaming.outputDirectory
+  if (!outputDir || outputDir.trim() === '') {
+    logger.app.error('No output directory configured — recording blocked')
+    sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'no-output-dir' })
+    return { blocked: true, reason: 'no-output-dir' }
+  }
+  if (!fs.existsSync(outputDir)) {
+    logger.app.error(`Output directory not found: ${outputDir}`)
+    sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'dir-not-accessible', detail: outputDir })
+    return { blocked: true, reason: 'dir-not-accessible', detail: outputDir }
+  }
+  try {
+    fs.accessSync(outputDir, fs.constants.W_OK)
+  } catch {
+    logger.app.error(`Output directory not writable: ${outputDir}`)
+    sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'dir-not-accessible', detail: outputDir })
+    return { blocked: true, reason: 'dir-not-accessible', detail: outputDir }
+  }
+  try {
+    const drive = outputDir.match(/^[a-zA-Z]:\\/) ? outputDir.slice(0, 3) : outputDir
+    const stats = fs.statfsSync(drive)
+    const freeGB = (stats.bavail * stats.bsize) / (1024 * 1024 * 1024)
+    if (freeGB < MIN_FREE_GB_TO_RECORD) {
+      logger.app.error(`Disk space too low to record: ${freeGB.toFixed(1)}GB free`)
+      sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'disk-space-low', detail: `${freeGB.toFixed(1)}GB free` })
+      return { blocked: true, reason: 'disk-space-low', detail: `${freeGB.toFixed(1)}GB free` }
+    }
+  } catch (err) {
+    logger.app.warn(`Could not check disk space for ${outputDir}: ${err instanceof Error ? err.message : err}`)
+  }
+  return null
 }
 
 /** Check if starting a recording would overwrite an existing one, and ask for confirmation. */
@@ -214,6 +379,8 @@ export async function handleRecordingStopped(
     const routineId = activeRecordingRoutineId
     stoppedRoutineId = routineId
     activeRecordingRoutineId = null
+    stopRecordingWatchdog()
+    obs.setActiveAlertRoutineId(null)
 
     if (!routineId) {
       logger.app.error(`Recording stopped but no activeRecordingRoutineId — raw file preserved at: ${outputPath}`)
@@ -354,6 +521,10 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
   if (!routine) return
 
   activeRecordingRoutineId = routine.id
+  recordStartedAt = Date.parse(timestamp) || Date.now()
+  expectedObsOutputDir = await obs.getRecordDirectory().catch(() => null)
+  obs.setActiveAlertRoutineId(routine.id)
+  startRecordingWatchdog()
 
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,
@@ -418,10 +589,15 @@ export async function next(): Promise<void> {
 
     // Auto-record if enabled
     if (settings.behavior.autoRecordOnNext && obsState.connectionStatus === 'connected') {
-      try {
-        await obs.startRecord()
-      } catch (err) {
-        logger.app.error('Auto-record failed:', err instanceof Error ? err.message : err)
+      const blocked = canStartRecording()
+      if (blocked) {
+        logger.app.error(`Auto-record blocked: ${blocked.reason}${blocked.detail ? ` (${blocked.detail})` : ''}`)
+      } else {
+        try {
+          await obs.startRecord()
+        } catch (err) {
+          logger.app.error('Auto-record failed:', err instanceof Error ? err.message : err)
+        }
       }
     }
 
@@ -467,12 +643,17 @@ export async function nextFull(): Promise<void> {
     // 3. Start recording
     if (seq.startRecording && connected) {
       if (seq.pauseBeforeRecordMs > 0) await sleep(seq.pauseBeforeRecordMs)
-      logger.app.info('nextFull: starting recording...')
-      try {
-        await obs.startRecord()
-        logger.app.info('nextFull: recording started')
-      } catch (err) {
-        logger.app.error('nextFull: auto-record failed:', err instanceof Error ? err.message : err)
+      const blocked = canStartRecording()
+      if (blocked) {
+        logger.app.error(`nextFull: auto-record blocked: ${blocked.reason}${blocked.detail ? ` (${blocked.detail})` : ''}`)
+      } else {
+        logger.app.info('nextFull: starting recording...')
+        try {
+          await obs.startRecord()
+          logger.app.info('nextFull: recording started')
+        } catch (err) {
+          logger.app.error('nextFull: auto-record failed:', err instanceof Error ? err.message : err)
+        }
       }
     } else {
       logger.app.info(`nextFull: skipping auto-record (seq.startRecording=${seq.startRecording}, connected=${connected})`)

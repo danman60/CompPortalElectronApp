@@ -60,6 +60,8 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.OBS_START_RECORD, async () => {
     logIPC(IPC_CHANNELS.OBS_START_RECORD)
     if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
+    const blocked = recording.canStartRecording()
+    if (blocked) return { error: `Recording blocked: ${blocked.reason}` }
     const confirmed = await recording.confirmReRecordIfNeeded()
     if (!confirmed) return { cancelled: true }
     await obs.startRecord()

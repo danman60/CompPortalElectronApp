@@ -60,6 +60,17 @@ export default function LoadCompetition(): React.ReactElement {
       setError('Enter a share code')
       return
     }
+    // Fix 10: confirmation dialog when switching competitions
+    const currentCode = settings?.compsync.shareCode || ''
+    if (competition && currentCode && currentCode !== code) {
+      const recordedCount = competition.routines.filter(
+        (r) => r.status !== 'pending' && r.status !== 'skipped',
+      ).length
+      const confirmed = window.confirm(
+        `Load '${code}' and unload '${competition.name}' (${competition.routines.length} routines, ${recordedCount} recorded)? This cannot be undone.`,
+      )
+      if (!confirmed) return
+    }
     setError('')
     setLoading(true)
     try {

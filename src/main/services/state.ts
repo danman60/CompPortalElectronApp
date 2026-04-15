@@ -1,17 +1,47 @@
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
-import { Competition, Routine, RoutineStatus } from '../../shared/types'
+import { app, BrowserWindow } from 'electron'
+import { Competition, Routine, RoutineStatus, IPC_CHANNELS } from '../../shared/types'
 import { logger } from '../logger'
 
 const STATE_FILE = 'compsync-state.json'
+const STATE_BACKUP_KEEP = 10
+const STATE_BACKUP_PRUNE_THRESHOLD = 15
+
+function listStateBackups(statePath: string): string[] {
+  try {
+    const dir = path.dirname(statePath)
+    const base = path.basename(statePath)
+    const prefix = `${base}.bak-`
+    const entries = fs.readdirSync(dir)
+    return entries
+      .filter((e) => e.startsWith(prefix))
+      .map((e) => path.join(dir, e))
+      .sort((a, b) => {
+        const ta = parseInt(path.basename(a).slice(prefix.length), 10) || 0
+        const tb = parseInt(path.basename(b).slice(prefix.length), 10) || 0
+        return tb - ta
+      })
+  } catch {
+    return []
+  }
+}
+
+function pruneStateBackups(statePath: string, keep: number): void {
+  const backups = listStateBackups(statePath)
+  if (backups.length <= keep) return
+  for (const old of backups.slice(keep)) {
+    try { fs.unlinkSync(old) } catch {}
+  }
+}
 
 // Media loss prevention — reconcile pass gate.
-// First deployment runs in dry-run mode: logs intended demotes but never mutates
-// local routine status. Flip to false after verifying reconcile logs on a real
-// competition load. A backup snapshot of compsync-state.json is written BEFORE
-// any mutation when this is false.
-const RECONCILE_DRY_RUN = true
+// Live mode (false): on each fresh schedule load, routines locally flagged
+// 'uploaded'/'confirmed' but which the server authoritatively reports as
+// having no media_package (mediaPackageStatus === 'none') are demoted so
+// the operator can re-upload. A backup snapshot of compsync-state.json is
+// written BEFORE the first mutation in each reconcile pass.
+const RECONCILE_DRY_RUN = false
 
 interface PersistedState {
   competition: Competition | null
@@ -74,37 +104,85 @@ function doSave(): void {
     fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2))
     fs.renameSync(tmpPath, statePath)
     logger.app.debug(`State saved to ${statePath}`)
+
+    // Fix 12: rolling backup
+    try {
+      const backupPath = `${statePath}.bak-${Date.now()}`
+      fs.copyFileSync(statePath, backupPath)
+      const existing = listStateBackups(statePath)
+      if (existing.length > STATE_BACKUP_PRUNE_THRESHOLD) {
+        pruneStateBackups(statePath, STATE_BACKUP_KEEP)
+      }
+    } catch (bErr) {
+      logger.app.warn(`State backup failed: ${bErr instanceof Error ? bErr.message : bErr}`)
+    }
   } catch (err) {
     logger.app.error('Failed to save state:', err)
   }
 }
 
+function tryParseStateFile(filePath: string): PersistedState | null {
+  try {
+    if (!fs.existsSync(filePath)) return null
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as PersistedState
+  } catch {
+    return null
+  }
+}
+
+function applyLoadedState(data: PersistedState): void {
+  currentCompetition = data.competition
+  recomputeCachedCounts()
+
+  if (data.currentRoutineId) {
+    currentRoutineId = data.currentRoutineId
+  } else if (data.currentRoutineIndex !== undefined && data.competition) {
+    const visibleRoutines = data.competition.routines.filter(r => r.status !== 'skipped')
+    const routine = visibleRoutines[data.currentRoutineIndex]
+    currentRoutineId = routine?.id || null
+    logger.app.info(`Migrated state from index ${data.currentRoutineIndex} to ID ${currentRoutineId}`)
+  } else {
+    currentRoutineId = null
+  }
+}
+
 export function loadState(): PersistedState | null {
   const statePath = getStatePath()
-  try {
-    if (fs.existsSync(statePath)) {
-      const data: PersistedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
-      logger.app.info(`State loaded from ${statePath}`)
-      currentCompetition = data.competition
-      recomputeCachedCounts()
 
-      // Migrate from index-based to ID-based
-      if (data.currentRoutineId) {
-        currentRoutineId = data.currentRoutineId
-      } else if (data.currentRoutineIndex !== undefined && data.competition) {
-        const visibleRoutines = data.competition.routines.filter(r => r.status !== 'skipped')
-        const routine = visibleRoutines[data.currentRoutineIndex]
-        currentRoutineId = routine?.id || null
-        logger.app.info(`Migrated state from index ${data.currentRoutineIndex} to ID ${currentRoutineId}`)
-      } else {
-        currentRoutineId = null
-      }
+  // Primary path
+  const primary = tryParseStateFile(statePath)
+  if (primary) {
+    logger.app.info(`State loaded from ${statePath}`)
+    applyLoadedState(primary)
+    return primary
+  }
 
+  if (fs.existsSync(statePath)) {
+    logger.app.error(`Primary state file ${statePath} unreadable — trying backups`)
+  }
+
+  // Fix 12: fall back to most-recent backup that parses
+  const backups = listStateBackups(statePath)
+  for (const backup of backups) {
+    const data = tryParseStateFile(backup)
+    if (data) {
+      let ageMs = 0
+      try {
+        const match = path.basename(backup).match(/\.bak-(\d+)$/)
+        if (match) ageMs = Date.now() - parseInt(match[1], 10)
+      } catch {}
+      logger.app.warn(`State recovered from backup: ${backup} (ageMs=${ageMs})`)
+      applyLoadedState(data)
+      try {
+        const win = BrowserWindow.getAllWindows()[0]
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.STATE_RECOVERED_FROM_BACKUP, { backupFile: backup, ageMs })
+        }
+      } catch {}
       return data
     }
-  } catch (err) {
-    logger.app.error('Failed to load state:', err)
   }
+
   return null
 }
 
@@ -433,7 +511,7 @@ export function updateRoutineStatus(
   logger.app.info(`Routine ${routine.entryNumber} "${routine.routineTitle}": ${oldStatus} → ${status}`)
 
   // Critical transitions get immediate flush
-  if (status === 'recording' || oldStatus === 'recording') {
+  if (status === 'recording' || oldStatus === 'recording' || status === 'uploaded' || status === 'encoded') {
     saveStateImmediate()
   } else {
     saveState()

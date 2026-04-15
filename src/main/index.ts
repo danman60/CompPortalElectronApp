@@ -1,9 +1,13 @@
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell, powerSaveBlocker } from 'electron'
 import path from 'path'
+import fs from 'fs'
+import os from 'os'
+import { execSync } from 'child_process'
 import windowStateKeeper from 'electron-window-state'
 import { logger } from './logger'
 import { registerAllHandlers } from './ipc'
 import { getSettings } from './services/settings'
+import { IPC_CHANNELS } from '../shared/types'
 import * as obs from './services/obs'
 import * as recording from './services/recording'
 import * as overlay from './services/overlay'
@@ -45,6 +49,21 @@ process.on('unhandledRejection', (reason) => {
 })
 
 let mainWindow: BrowserWindow | null = null
+let powerBlockerId: number | null = null
+
+function isElevated(): boolean {
+  if (process.platform !== 'win32') return true
+  try {
+    execSync('net session', { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Fix 5: elevation gate moved into app.whenReady below — calling dialog
+// before whenReady on Windows doesn't render because no message pump exists,
+// so the gate would fire app.exit(1) without showing the reason to the user.
 
 function createWindow(): void {
   logger.app.info('Creating main window')
@@ -146,6 +165,57 @@ app.whenReady().then(async () => {
   logger.app.info('App starting, version:', app.getVersion())
   logger.app.info('User data path:', app.getPath('userData'))
 
+  // Fix 5: elevation gate — runs after whenReady so the message box can render.
+  // Calling dialog.showMessageBoxSync at module load returns silently on Windows
+  // because no message pump exists yet; the user sees the process vanish.
+  if (process.platform === 'win32' && app.isPackaged && !isElevated()) {
+    const gateSettings = (() => {
+      try { return getSettings() } catch { return null }
+    })()
+    if (!gateSettings?.behavior?.allowNonElevated) {
+      dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'CompSync Media',
+        message:
+          'CompSync Media must run as Administrator. OBS hotkeys require elevated privileges (UIPI). Right-click the app and choose "Run as administrator".',
+        buttons: ['Exit'],
+      })
+      logger.app.warn('Exiting: not running as administrator (elevation gate)')
+      app.exit(1)
+      return
+    }
+  }
+
+  // Fix 12 (FIX 7): prevent OBS Safe Mode dialog after a bad exit
+  try {
+    const obsConfigDir = process.platform === 'win32'
+      ? path.join(process.env.APPDATA || '', 'obs-studio')
+      : path.join(os.homedir(), '.config', 'obs-studio')
+    const sentinelPath = path.join(obsConfigDir, 'safe_mode')
+    if (fs.existsSync(sentinelPath)) {
+      try {
+        fs.unlinkSync(sentinelPath)
+        logger.app.info('Cleaned OBS safe_mode sentinel to prevent Safe Mode dialog')
+      } catch (err) {
+        logger.app.debug('Could not remove OBS safe_mode sentinel:', err)
+      }
+    }
+    const legacySentinel = path.join(obsConfigDir, '.sentinel')
+    if (fs.existsSync(legacySentinel)) {
+      try { fs.unlinkSync(legacySentinel) } catch {}
+    }
+  } catch (err) {
+    logger.app.debug('OBS sentinel cleanup failed:', err)
+  }
+
+  // Fix 12 (FIX 7): prevent display sleep while running
+  try {
+    powerBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+    logger.app.info(`Power save blocker started (id=${powerBlockerId})`)
+  } catch (err) {
+    logger.app.warn(`Power save blocker failed: ${err instanceof Error ? err.message : err}`)
+  }
+
   // Initialize persistent job queue (must be before any service that enqueues)
   jobQueue.init()
 
@@ -164,6 +234,9 @@ app.whenReady().then(async () => {
     if (data.outputPath) {
       recording.handleRecordingStopped(data.outputPath, data.timestamp)
     }
+  })
+  obs.setOnReconcile((info) => {
+    recording.handleObsReconcile(info)
   })
 
   // Load persisted state BEFORE creating window (so renderer gets correct data on first IPC)
@@ -225,14 +298,22 @@ app.whenReady().then(async () => {
   if (settings.compsync?.shareCode) {
     schedule.resolveShareCode(settings.compsync.shareCode)
       .then(async () => {
-        // If no competition loaded from persisted state, fetch the full schedule
-        if (!state.getCompetition()) {
+        // Always refetch schedule on startup to pick up server-authoritative
+        // changes (scheduledTime, mediaPackageStatus, mediaUpdatedAt, title
+        // edits, new/removed routines). setCompetition() already merges local
+        // pipeline status (status/encodedFiles/photos/etc.) into the fresh
+        // routines by ID, and then runs the Phase 4 reconcile pass which
+        // demotes locally-'uploaded' routines that the server reports as
+        // having no media_package. Network failure falls back silently to
+        // persisted state so the app still launches offline.
+        try {
           const comp = await schedule.loadFromShareCode(settings.compsync.shareCode)
           state.setCompetition(comp)
           recording.broadcastFullState()
-          logger.app.info(`Auto-loaded competition from share code: ${comp.name} (${comp.routines.length} routines)`)
-        } else {
-          logger.app.info(`Share code resolved — upload credentials ready`)
+          logger.app.info(`Refetched schedule on startup: ${comp.name} (${comp.routines.length} routines)`)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          logger.app.warn(`Startup schedule refetch failed, continuing with persisted state: ${msg}`)
         }
         // Fix orphaned 'uploading' routines (job queue is in-memory, lost on restart)
         const comp = state.getCompetition()
@@ -269,6 +350,47 @@ app.whenReady().then(async () => {
   runStartupChecks().catch((err) => {
     logger.app.warn('Startup checks failed:', err)
   })
+
+  // Fix 3: dev-build warning banner
+  if (!app.isPackaged) {
+    setTimeout(() => {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.DEV_BUILD_WARNING, {
+          message: 'DEV BUILD — uploads go to staging or may fail. Do not use for real events.',
+        })
+      }
+    }, 2000)
+
+    // Fix 15: stale renderer bundle check (dev only)
+    try {
+      const mainJs = path.join(__dirname, 'index.js')
+      const rendererDir = path.join(__dirname, '../renderer/assets')
+      if (fs.existsSync(mainJs) && fs.existsSync(rendererDir)) {
+        const mainMtime = fs.statSync(mainJs).mtimeMs
+        let rendererMtime = 0
+        for (const e of fs.readdirSync(rendererDir)) {
+          if (!e.endsWith('.js')) continue
+          const p = path.join(rendererDir, e)
+          const st = fs.statSync(p)
+          if (st.mtimeMs > rendererMtime) rendererMtime = st.mtimeMs
+        }
+        if (mainMtime > rendererMtime + 60000) {
+          logger.app.warn(`Renderer bundle appears stale (main is ${Math.round((mainMtime - rendererMtime) / 1000)}s newer)`)
+          setTimeout(() => {
+            const win = BrowserWindow.getAllWindows()[0]
+            if (win && !win.isDestroyed()) {
+              win.webContents.send(IPC_CHANNELS.DEV_BUILD_WARNING, {
+                message: 'STALE RENDERER BUNDLE — run the renderer build. UI may not match main process.',
+              })
+            }
+          }, 3000)
+        }
+      }
+    } catch (err) {
+      logger.app.debug('Stale bundle check failed:', err)
+    }
+  }
 })
 
 app.on('window-all-closed', () => {
@@ -278,6 +400,11 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async (event) => {
   logger.app.info('Graceful shutdown starting...')
+
+  if (powerBlockerId !== null) {
+    try { powerSaveBlocker.stop(powerBlockerId) } catch {}
+    powerBlockerId = null
+  }
 
   // Cancel active FFmpeg
   ffmpegService.cancelCurrent()

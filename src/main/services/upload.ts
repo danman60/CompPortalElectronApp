@@ -36,6 +36,44 @@ let isPaused = false
 let currentAbortController: AbortController | null = null
 let currentAbortRoutineId: string | null = null
 
+// Fix 8/9: external pause flags (disk space low / drive lost)
+let pausedByDiskSpace = false
+let pausedByDriveLoss = false
+
+export function pauseForDiskSpace(): void {
+  if (pausedByDiskSpace) return
+  pausedByDiskSpace = true
+  isPaused = true
+  logger.upload.warn('Upload paused: disk space critical')
+}
+
+export function resumeFromDiskSpace(): void {
+  if (!pausedByDiskSpace) return
+  pausedByDiskSpace = false
+  if (!pausedByDriveLoss) {
+    isPaused = false
+    logger.upload.info('Upload resumed after disk space recovery')
+    startUploads()
+  }
+}
+
+export function pauseForDriveLoss(): void {
+  if (pausedByDriveLoss) return
+  pausedByDriveLoss = true
+  isPaused = true
+  logger.upload.warn('Upload paused: drive lost')
+}
+
+export function resumeFromDriveLoss(): void {
+  if (!pausedByDriveLoss) return
+  pausedByDriveLoss = false
+  if (!pausedByDiskSpace) {
+    isPaused = false
+    logger.upload.info('Upload resumed after drive recovery')
+    startUploads()
+  }
+}
+
 // Fix 4: Track uploading routines for O(1) lookup in stopUploads
 const activeUploadRoutineIds = new Set<string>()
 

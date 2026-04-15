@@ -26,6 +26,13 @@ export function setOnAudioLevels(cb: (levels: AudioLevel[]) => void): void {
   onAudioLevelsCb = cb
 }
 
+// Fix 11: reconcile hook invoked after (re)sync so recording.ts can fix up orphan state
+type ReconcileCallback = (info: { outputActive: boolean; recordDirectory: string | null }) => void
+let onReconcileCb: ReconcileCallback | null = null
+export function setOnReconcile(cb: ReconcileCallback): void {
+  onReconcileCb = cb
+}
+
 let reconnectTimer: NodeJS.Timeout | null = null
 let reconnectAttempts = 0
 let lastUrl = ''
@@ -43,6 +50,25 @@ let recordingTimer: NodeJS.Timeout | null = null
 let eventHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = []
 let lastMeterSendTime = 0
 const METER_THROTTLE_MS = 66 // ~15 Hz
+let maxLimitWarned = false
+
+// Signal monitors (Fix 14)
+let silentSince: number | null = null
+let silenceAlertFired = false
+let blackFrameTimer: NodeJS.Timeout | null = null
+let blackFrameCount = 0
+let blackAlertFired = false
+let activeAlertRoutineId: string | null = null
+
+export function setActiveAlertRoutineId(id: string | null): void {
+  activeAlertRoutineId = id
+}
+
+function emitRecordingAlert(level: 'warning' | 'error', message: string): void {
+  sendToRenderer(IPC_CHANNELS.RECORDING_ALERT, { level, message, routineId: activeAlertRoutineId })
+  if (level === 'error') logger.obs.error(message)
+  else logger.obs.warn(message)
+}
 
 function broadcastState(): void {
   sendToRenderer(IPC_CHANNELS.OBS_STATE, state)
@@ -145,9 +171,11 @@ function scheduleReconnect(url: string, password: string): void {
 }
 
 async function syncState(): Promise<void> {
+  let outputActive = false
   try {
     const recordStatus = await obs.call('GetRecordStatus')
-    state.isRecording = recordStatus.outputActive
+    outputActive = recordStatus.outputActive
+    state.isRecording = outputActive
     if (state.isRecording) {
       startRecordingTimer()
     }
@@ -167,6 +195,14 @@ async function syncState(): Promise<void> {
     state.isReplayBufferActive = replayStatus.outputActive
   } catch {
     // Replay buffer may not be configured
+  }
+
+  // Fix 11: reconcile hook — lets recording.ts cleanup orphan active-record state
+  const recordDirectory = await getRecordDirectory()
+  try {
+    onReconcileCb?.({ outputActive, recordDirectory })
+  } catch (err) {
+    logger.obs.warn(`Reconcile callback threw: ${err instanceof Error ? err.message : err}`)
   }
 }
 
@@ -216,12 +252,16 @@ export function waitForRecordStop(timeoutMs = 15000): Promise<void> {
 function startRecordingTimer(): void {
   if (recordingTimer) clearInterval(recordingTimer)
   state.recordTimeSec = 0
+  maxLimitWarned = false
+  startBlackFrameMonitor()
   recordingTimer = setInterval(() => {
     state.recordTimeSec++
     const maxMinutes = getSettings().obs.maxRecordMinutes || 0
-    if (maxMinutes > 0 && state.recordTimeSec >= maxMinutes * 60 && state.isRecording) {
-      logger.obs.warn(`Recording hit ${maxMinutes}min limit — auto-stopping`)
-      stopRecord().catch((err) => logger.obs.error('Auto-stop failed:', err))
+    if (maxMinutes > 0 && state.recordTimeSec >= maxMinutes * 60 && state.isRecording && !maxLimitWarned) {
+      maxLimitWarned = true
+      const msg = `Recording has exceeded ${maxMinutes}min limit — still running`
+      logger.obs.warn(msg)
+      sendToRenderer(IPC_CHANNELS.RECORDING_MAX_WARNING, { maxMinutes, recordTimeSec: state.recordTimeSec })
     }
     broadcastState()
   }, 1000)
@@ -233,6 +273,59 @@ function stopRecordingTimer(): void {
     recordingTimer = null
   }
   state.recordTimeSec = 0
+  maxLimitWarned = false
+  stopSignalMonitors()
+}
+
+function stopSignalMonitors(): void {
+  if (blackFrameTimer) {
+    clearInterval(blackFrameTimer)
+    blackFrameTimer = null
+  }
+  silentSince = null
+  silenceAlertFired = false
+  blackFrameCount = 0
+  blackAlertFired = false
+}
+
+function startBlackFrameMonitor(): void {
+  if (blackFrameTimer) clearInterval(blackFrameTimer)
+  blackFrameCount = 0
+  blackAlertFired = false
+  blackFrameTimer = setInterval(async () => {
+    if (!state.isRecording || state.connectionStatus !== 'connected') return
+    try {
+      const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene')
+      const res = await obs.call('GetSourceScreenshot', {
+        sourceName: currentProgramSceneName,
+        imageFormat: 'jpg',
+        imageCompressionQuality: 10,
+        imageWidth: 64,
+        imageHeight: 36,
+      })
+      const imageData = res.imageData as string
+      const base64 = imageData.includes(',') ? imageData.split(',', 2)[1] : imageData
+      const buf = Buffer.from(base64, 'base64')
+      // Lazy-require sharp to avoid hard dependency at module load
+      const sharp = require('sharp') as typeof import('sharp')
+      const raw = await sharp(buf).raw().toBuffer()
+      let sum = 0
+      for (let i = 0; i < raw.length; i++) sum += raw[i]
+      const mean = raw.length > 0 ? sum / raw.length : 0
+      if (mean < 5) {
+        blackFrameCount++
+        if (blackFrameCount >= 2 && !blackAlertFired) {
+          blackAlertFired = true
+          emitRecordingAlert('warning', `Black frames detected (${blackFrameCount} consecutive). Check camera / scene.`)
+        }
+      } else {
+        blackFrameCount = 0
+        blackAlertFired = false
+      }
+    } catch {
+      // OBS may be busy or scene missing — ignore
+    }
+  }, 10000)
 }
 
 // --- Streaming ---
@@ -268,6 +361,17 @@ export async function setRecordingFormat(format: string): Promise<void> {
   } catch (err) {
     // May fail if OBS is in Advanced mode
     logger.obs.warn(`Failed to set recording format (Advanced mode?): ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+// --- Record directory (used by recovery reconciliation) ---
+
+export async function getRecordDirectory(): Promise<string | null> {
+  try {
+    const result = await obs.call('GetRecordDirectory')
+    return (result as any).recordDirectory ?? null
+  } catch {
+    return null
   }
 }
 
@@ -330,6 +434,28 @@ function registerOBSEvents(): void {
       }))
       sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
       onAudioLevelsCb?.(levels)
+
+      // Fix 14: silent-audio detection during recording
+      if (state.isRecording) {
+        const SILENCE_THRESHOLD = 0.001
+        let anySignal = false
+        for (const lvl of levels) {
+          for (const ch of lvl.levels) {
+            if (ch > SILENCE_THRESHOLD) { anySignal = true; break }
+          }
+          if (anySignal) break
+        }
+        if (!anySignal) {
+          if (silentSince === null) silentSince = now
+          else if (!silenceAlertFired && now - silentSince > 5000) {
+            silenceAlertFired = true
+            emitRecordingAlert('warning', 'Audio signal flat-line for >5s. Check mics.')
+          }
+        } else {
+          silentSince = null
+          silenceAlertFired = false
+        }
+      }
     }],
     ['ConnectionClosed', () => {
       if (state.connectionStatus === 'connected') {
