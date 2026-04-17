@@ -10,6 +10,8 @@ import * as state from './state'
 import { broadcastFullState } from './recording'
 import { getSettings } from './settings'
 import * as uploadService from './upload'
+import * as manifest from './importManifest'
+import type { ManifestEntry } from './importManifest'
 
 interface RecordingWindow {
   routineId: string
@@ -227,6 +229,9 @@ export async function importPhotos(
 ): Promise<ImportResult> {
   logger.photos.info(`Importing photos from: ${folderPath}`)
 
+  const importRunId = new Date().toISOString()
+  const seenHashes = await manifest.getUploadedHashes(outputDir).catch(() => new Set<string>())
+
   // Scan recursively in batches so the main event loop stays responsive during large imports.
   async function scanDir(rootDir: string): Promise<string[]> {
     const results: string[] = []
@@ -262,12 +267,18 @@ export async function importPhotos(
     current: 0,
   })
 
-  // Read EXIF timestamps
-  const photos: { path: string; captureTime: Date }[] = []
+  // Read EXIF timestamps + compute source hash per file, drop ones already uploaded.
+  const photos: { path: string; captureTime: Date; sourceHash: string }[] = []
+  let skippedDupes = 0
   for (let i = 0; i < filePaths.length; i++) {
+    const sourceHash = await manifest.computeSourceHash(filePaths[i]).catch(() => '')
+    if (sourceHash && seenHashes.has(sourceHash)) {
+      skippedDupes++
+      continue
+    }
     const captureTime = await getPhotoCaptureTime(filePaths[i])
     if (captureTime) {
-      photos.push({ path: filePaths[i], captureTime })
+      photos.push({ path: filePaths[i], captureTime, sourceHash })
     }
 
     if (i % 10 === 0) {
@@ -280,7 +291,7 @@ export async function importPhotos(
     }
   }
 
-  logger.photos.info(`${photos.length}/${filePaths.length} photos have EXIF timestamps`)
+  logger.photos.info(`${photos.length}/${filePaths.length} photos have EXIF timestamps (skipped ${skippedDupes} already-uploaded)`)
 
   // Build recording windows from routines
   const windows: RecordingWindow[] = routines
@@ -297,6 +308,16 @@ export async function importPhotos(
 
   // Match photos to routines
   const matches = matchPhotosToRoutines(photos, windows, clockOffsetMs)
+
+  // Attach sourceHash to each match — used downstream for dedup + safe-delete gating.
+  for (let i = 0; i < matches.length; i++) {
+    const src = photos[i]
+    if (!src) continue
+    matches[i].sourceHash = src.sourceHash
+    matches[i].sourcePath = src.path
+  }
+
+  const manifestEntries: ManifestEntry[] = []
 
   // Copy matched photos to routine folders and generate thumbnails
   let copiedCount = 0
@@ -330,7 +351,9 @@ export async function importPhotos(
     }
 
     const destFile = path.join(routineDir, `photo_${String(copiedCount + 1).padStart(3, '0')}.jpg`)
-    await fs.promises.copyFile(match.filePath, destFile)
+    const sourceForCopy = match.filePath
+    await fs.promises.copyFile(sourceForCopy, destFile)
+    match.sourcePath = sourceForCopy
     match.filePath = destFile
 
     // Generate thumbnail
@@ -344,9 +367,89 @@ export async function importPhotos(
       logger.photos.warn(`Thumbnail generation failed for ${destFile}:`, err)
     }
 
+    manifestEntries.push({
+      sourcePath: match.sourcePath,
+      sourceHash: match.sourceHash || '',
+      routineId: routine.id,
+      entryNumber: routine.entryNumber,
+      destPath: destFile,
+      uploaded: false,
+      importedAt: new Date().toISOString(),
+    })
+
     copiedCount++
     if (copiedCount % 10 === 0) {
       await yieldToEventLoop()
+    }
+  }
+
+  // Route unmatched photos into _orphans/<runId>/ with a sidecar describing the nearest window.
+  const orphanDir = path.join(outputDir, '_orphans', importRunId.replace(/[:.]/g, '-'))
+  let orphanCount = 0
+  const sortedWindows = [...windows].sort(
+    (a, b) => a.recordingStarted.getTime() - b.recordingStarted.getTime(),
+  )
+  for (const match of matches) {
+    if (match.confidence !== 'unmatched') continue
+
+    const sourceForCopy = match.filePath
+    const captureMs = new Date(match.captureTime).getTime() + clockOffsetMs
+
+    let nearestWindow: RecordingWindow | null = null
+    let nearestDistMs = Infinity
+    for (const w of sortedWindows) {
+      const distStart = Math.abs(captureMs - w.recordingStarted.getTime())
+      const distStop = Math.abs(captureMs - w.recordingStopped.getTime())
+      const d = Math.min(distStart, distStop)
+      if (d < nearestDistMs) { nearestDistMs = d; nearestWindow = w }
+    }
+
+    if (!fs.existsSync(orphanDir)) {
+      await fs.promises.mkdir(orphanDir, { recursive: true })
+    }
+    const orphanName = `orphan_${String(orphanCount + 1).padStart(4, '0')}.jpg`
+    const orphanDest = path.join(orphanDir, orphanName)
+    await fs.promises.copyFile(sourceForCopy, orphanDest)
+
+    const sidecar = {
+      exifTime: match.captureTime,
+      nearestWindow: nearestWindow
+        ? {
+            routineId: nearestWindow.routineId,
+            entryNumber: nearestWindow.entryNumber,
+            recordingStarted: nearestWindow.recordingStarted.toISOString(),
+            recordingStopped: nearestWindow.recordingStopped.toISOString(),
+            distanceSec: Math.round(nearestDistMs / 1000),
+          }
+        : null,
+      reason: sortedWindows.length === 0 ? 'no-recordings' : 'outside-all-windows',
+    }
+    await fs.promises.writeFile(orphanDest + '.json', JSON.stringify(sidecar, null, 2))
+
+    match.sourcePath = sourceForCopy
+    match.filePath = orphanDest
+
+    manifestEntries.push({
+      sourcePath: sourceForCopy,
+      sourceHash: match.sourceHash || '',
+      routineId: null,
+      entryNumber: null,
+      destPath: orphanDest,
+      uploaded: false,
+      importedAt: new Date().toISOString(),
+    })
+
+    orphanCount++
+    if (orphanCount % 10 === 0) {
+      await yieldToEventLoop()
+    }
+  }
+
+  if (manifestEntries.length > 0) {
+    try {
+      await manifest.appendEntries(outputDir, importRunId, folderPath, manifestEntries)
+    } catch (err) {
+      logger.photos.warn('Manifest append failed (continuing):', err)
     }
   }
 
