@@ -534,6 +534,9 @@ export const IPC_CHANNELS = {
   PHOTOS_BROWSE: 'photos:browse',
   PHOTOS_PROGRESS: 'photos:progress',
   PHOTOS_MATCH_RESULT: 'photos:match-result',
+  PHOTOS_IMPORT_COMPLETE_SUMMARY: 'photos:import:complete:summary',
+  PHOTOS_REASSIGN_ORPHAN: 'photos:reassign-orphan',
+  PHOTOS_DISCARD_ORPHAN: 'photos:discard-orphan',
 
   // Drive Monitor
   DRIVE_DETECTED: 'drive:detected',

@@ -10,7 +10,8 @@ import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
 import DriveAlert from './components/DriveAlert'
-import ChatPanel from './components/ChatPanel'
+import FirstRunSetup from './components/FirstRunSetup'
+import OrphanReview from './components/OrphanReview'
 import './styles/app.css'
 
 function HardeningBanners(): React.ReactElement | null {
@@ -238,10 +239,11 @@ export default function App(): React.ReactElement {
       {photoSorterOpen && <PhotoSorter />}
       {recoveryOpen && <RecoveryPanel />}
       <DriveAlert />
+      <OrphanReview />
       <RecordingOverrunWarning />
       <StartupToast />
       <HardeningBanners />
-      <ChatPanel />
+      <FirstRunSetup />
     </div>
   )
 }

@@ -496,5 +496,105 @@ export async function importPhotos(
   )
 
   sendToRenderer(IPC_CHANNELS.PHOTOS_MATCH_RESULT, result)
+
+  // Completion summary — consumed by renderer toast + OrphanReview drawer.
+  // Shape is stable (see tests/e2e-sd-import.mjs); extend by adding fields,
+  // never rename existing keys.
+  try {
+    sendToRenderer(IPC_CHANNELS.PHOTOS_IMPORT_COMPLETE_SUMMARY, {
+      runId: importRunId,
+      routinesUpdated: photosByRoutine.size,
+      photosUploaded: result.matched, // uploads happen async; this is "photos queued for upload"
+      thumbsUploaded: matches.filter(m => m.confidence !== 'unmatched' && m.thumbnailPath).length,
+      orphaned: result.unmatched,
+    })
+  } catch (err) {
+    logger.photos.warn('import summary broadcast failed:', err instanceof Error ? err.message : err)
+  }
+
   return result
+}
+
+/**
+ * Reassign an orphaned photo to a routine. Moves the file from `_orphans/{runId}/`
+ * into the target routine's photos folder, deletes the sidecar, and adds the
+ * photo to the routine's state. Re-uses the existing auto-upload pipeline.
+ *
+ * Best-effort — if the routine lacks an outputDir or settings haven't loaded, we
+ * log and no-op.
+ */
+export async function reassignOrphan(orphanPath: string, routineId: string): Promise<{ ok: boolean; error?: string; newPath?: string }> {
+  try {
+    const comp = state.getCompetition()
+    if (!comp) return { ok: false, error: 'no-competition' }
+    const routine = comp.routines.find(r => r.id === routineId)
+    if (!routine) return { ok: false, error: 'routine-not-found' }
+    const outputDir = getSettings().fileNaming.outputDirectory
+    const baseDir = routine.outputDir
+      ? routine.outputDir
+      : path.join(outputDir, `${routine.entryNumber}_${routine.routineTitle.replace(/\s+/g, '_')}_${routine.studioCode}`)
+    const photoDir = path.join(baseDir, 'photos')
+    if (!fs.existsSync(photoDir)) await fs.promises.mkdir(photoDir, { recursive: true })
+
+    const existing = routine.photos || []
+    const nextIdx = existing.length + 1
+    const destFile = path.join(photoDir, `photo_${String(nextIdx).padStart(3, '0')}.jpg`)
+    await fs.promises.rename(orphanPath, destFile).catch(async () => {
+      // Cross-device fallback: copy + unlink.
+      await fs.promises.copyFile(orphanPath, destFile)
+      await fs.promises.unlink(orphanPath)
+    })
+    // Remove sidecar (best-effort)
+    await fs.promises.unlink(orphanPath + '.json').catch(() => {})
+
+    // Generate thumb for the reassigned photo to keep /complete parallel arrays consistent.
+    let thumbnailPath: string | undefined
+    try {
+      const thumbDir = path.join(photoDir, 'thumbnails')
+      if (!fs.existsSync(thumbDir)) await fs.promises.mkdir(thumbDir, { recursive: true })
+      thumbnailPath = path.join(thumbDir, `thumb_${String(nextIdx).padStart(3, '0')}.webp`)
+      await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbnailPath)
+    } catch (err) {
+      logger.photos.warn(`Thumbnail generation failed for reassigned ${destFile}:`, err)
+      thumbnailPath = undefined
+    }
+
+    const newPhoto: PhotoMatch = {
+      filePath: destFile,
+      thumbnailPath,
+      captureTime: new Date().toISOString(),
+      confidence: 'gap',
+      uploaded: false,
+      matchedRoutineId: routineId,
+    }
+    const nextPhotos = [...existing, newPhoto]
+    state.updateRoutineStatus(routineId, routine.status, { photos: nextPhotos })
+    broadcastFullState()
+
+    // Queue for upload if auto-upload is on.
+    if (getSettings().behavior.autoUploadAfterEncoding) {
+      const fresh = state.getCompetition()?.routines.find(r => r.id === routineId)
+      if (fresh) {
+        const r = uploadService.enqueueRoutine(fresh)
+        if (r.queuedJobs > 0) uploadService.startUploads()
+      }
+    }
+    return { ok: true, newPath: destFile }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.photos.error(`reassignOrphan failed: ${msg}`)
+    return { ok: false, error: msg }
+  }
+}
+
+/** Delete an orphan photo and its sidecar. */
+export async function discardOrphan(orphanPath: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await fs.promises.unlink(orphanPath).catch(() => {})
+    await fs.promises.unlink(orphanPath + '.json').catch(() => {})
+    return { ok: true }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: msg }
+  }
 }

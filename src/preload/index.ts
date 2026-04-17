@@ -64,6 +64,10 @@ const api = {
   photosBrowse: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_BROWSE),
   photosImport: (folderPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_IMPORT, folderPath),
+  photosReassignOrphan: (orphanPath: string, routineId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, orphanPath, routineId),
+  photosDiscardOrphan: (orphanPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_DISCARD_ORPHAN, orphanPath),
 
   // Lower Third
   ltFire: () => ipcRenderer.invoke(IPC_CHANNELS.LT_FIRE),
@@ -155,6 +159,7 @@ const api = {
   ssGetConfig: () => ipcRenderer.invoke(IPC_CHANNELS.SS_GET_CONFIG),
   ssSetConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.SS_SET_CONFIG, updates),
   ssBrowseFolder: (type: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_BROWSE_FOLDER, type),
+  ssBrowseFile: (type: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_BROWSE_FILE, type),
   ssScanFolder: (path: string, type: string) => ipcRenderer.invoke(IPC_CHANNELS.SS_SCAN_FOLDER, path, type),
   ssGetPresets: () => ipcRenderer.invoke(IPC_CHANNELS.SS_GET_PRESETS),
   ssSavePreset: (preset: any) => ipcRenderer.invoke(IPC_CHANNELS.SS_SAVE_PRESET, preset),
@@ -174,6 +179,15 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_START, config),
   recoveryCancel: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_CANCEL),
   recoveryGetState: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_GET_STATE),
+
+  // Media backup
+  backupBrowseTarget: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_BROWSE_TARGET),
+  backupStart: (targetRoot: string) => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_START, targetRoot),
+  backupCancel: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_CANCEL),
+
+  // Stream Deck plugin
+  streamdeckGetStatus: () => ipcRenderer.invoke(IPC_CHANNELS.STREAMDECK_GET_STATUS),
+  streamdeckInstallPlugin: () => ipcRenderer.invoke(IPC_CHANNELS.STREAMDECK_INSTALL_PLUGIN),
 
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {

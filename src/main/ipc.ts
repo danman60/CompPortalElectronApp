@@ -23,7 +23,14 @@ import * as chatBridge from './services/chatBridge'
 import * as brandScraper from './services/brandScraper'
 import { checkAndRecover } from './services/crashRecovery'
 import * as recovery from './services/recovery'
+import * as backup from './services/backup'
+import * as streamDeckPlugin from './services/streamDeckPlugin'
+import { sendToRenderer } from './ipcUtil'
 import { logger } from './logger'
+
+backup.setProgressListener((p) => {
+  sendToRenderer(IPC_CHANNELS.BACKUP_PROGRESS, p)
+})
 
 function logIPC(channel: string, args?: unknown): void {
   logger.ipc.debug(`${channel}`, args ? JSON.stringify(args).slice(0, 200) : '')
@@ -293,6 +300,44 @@ export function registerAllHandlers(): void {
     return result.filePaths[0]
   })
 
+  // --- Media backup ---
+  safeHandle(IPC_CHANNELS.BACKUP_BROWSE_TARGET, async () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select external backup destination',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (result.canceled) return null
+    return result.filePaths[0]
+  })
+
+  safeHandle(IPC_CHANNELS.BACKUP_START, async (targetRoot: unknown) => {
+    logIPC(IPC_CHANNELS.BACKUP_START, String(targetRoot))
+    if (typeof targetRoot !== 'string' || !targetRoot) return { error: 'No target folder' }
+    if (obs.getState().isRecording) return { error: 'Recording is active — stop recording first' }
+    if (backup.isBackupRunning()) return { error: 'Backup already running' }
+    const result = await backup.startBackup(targetRoot)
+    sendToRenderer(IPC_CHANNELS.BACKUP_DONE, result)
+    return result
+  })
+
+  safeHandle(IPC_CHANNELS.BACKUP_CANCEL, async () => {
+    logIPC(IPC_CHANNELS.BACKUP_CANCEL)
+    backup.cancelBackup()
+    return { ok: true }
+  })
+
+  // --- Stream Deck plugin (bundled) ---
+  safeHandle(IPC_CHANNELS.STREAMDECK_GET_STATUS, async () => {
+    return streamDeckPlugin.getStatus()
+  })
+
+  safeHandle(IPC_CHANNELS.STREAMDECK_INSTALL_PLUGIN, async () => {
+    logIPC(IPC_CHANNELS.STREAMDECK_INSTALL_PLUGIN)
+    return await streamDeckPlugin.installPlugin()
+  })
+
   // --- Upload ---
   safeHandle(IPC_CHANNELS.UPLOAD_START, () => {
     logIPC(IPC_CHANNELS.UPLOAD_START)
@@ -357,6 +402,16 @@ export function registerAllHandlers(): void {
     const s = settings.getSettings()
     if (!comp) return { error: 'No competition loaded' }
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
+  })
+
+  safeHandle(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, async (orphanPath: unknown, routineId: unknown) => {
+    logIPC(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, { orphanPath, routineId })
+    return await photoService.reassignOrphan(orphanPath as string, routineId as string)
+  })
+
+  safeHandle(IPC_CHANNELS.PHOTOS_DISCARD_ORPHAN, async (orphanPath: unknown) => {
+    logIPC(IPC_CHANNELS.PHOTOS_DISCARD_ORPHAN, { orphanPath })
+    return await photoService.discardOrphan(orphanPath as string)
   })
 
   // --- Drive Monitor ---
@@ -476,6 +531,23 @@ export function registerAllHandlers(): void {
     const result = await dialog.showOpenDialog(win, {
       title: type === 'video' ? 'Select Video Folder' : type === 'image' ? 'Select Image Folder' : type === 'sponsor' ? 'Select Sponsor Logos Folder' : 'Select Folder',
       properties: ['openDirectory'],
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  safeHandle(IPC_CHANNELS.SS_BROWSE_FILE, async (type: unknown) => {
+    logIPC(IPC_CHANNELS.SS_BROWSE_FILE, { type })
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const exts = type === 'image'
+      ? ['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif']
+      : type === 'video'
+        ? ['mp4', 'webm', 'mov', 'avi', 'mkv']
+        : ['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif']
+    const result = await dialog.showOpenDialog(win, {
+      title: type === 'image' ? 'Select Image File' : type === 'video' ? 'Select Video File' : 'Select File',
+      filters: [{ name: 'Files', extensions: exts }],
+      properties: ['openFile'],
     })
     return result.canceled ? null : result.filePaths[0]
   })
@@ -640,7 +712,7 @@ export function registerAllHandlers(): void {
 
   // Preview
   safeHandle(IPC_CHANNELS.PREVIEW_START, (fps: unknown) => {
-    obs.startPreview((fps as number) || 5)
+    obs.startPreview((fps as number) || 2)
   })
 
   safeHandle(IPC_CHANNELS.PREVIEW_STOP, () => {

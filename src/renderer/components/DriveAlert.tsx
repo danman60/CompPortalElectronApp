@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent, PhotoMatch } from '../../shared/types'
+import { setOrphansFromResult, openOrphanReview } from './OrphanReview'
 import '../styles/drive-alert.css'
 
 // Module-level progress bridge: DriveAlert stays mounted but the modal can be
@@ -159,6 +160,8 @@ export default function DriveAlert(): React.ReactElement | null {
       if (result && typeof result === 'object' && 'matches' in result) {
         const matches = (result as { matches: PhotoMatch[] }).matches
         const routines = competition.routines
+        // Stash orphans for the drawer.
+        setOrphansFromResult(matches)
         try {
           // Fire-and-forget CLIP verification — don't block UI.
           window.api.clipVerifyImport(matches, routines, { skipExact: true })
@@ -332,6 +335,11 @@ export default function DriveAlert(): React.ReactElement | null {
             </button>
           )}
           {/* WPD/MTP direct watch disabled — use Settings > Photo Tether > Auto-Watch Folder instead */}
+          {progress.stage === 'done' && progress.unmatched > 0 && (
+            <button className="da-btn" onClick={() => openOrphanReview()} title="Reassign or discard unmatched photos">
+              Review Orphans ({progress.unmatched})
+            </button>
+          )}
           {progress.stage === 'done' && (
             <button className="da-btn" onClick={handleDismiss}>Done</button>
           )}
