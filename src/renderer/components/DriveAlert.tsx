@@ -3,6 +3,44 @@ import { useStore } from '../store/useStore'
 import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent, PhotoMatch } from '../../shared/types'
 import '../styles/drive-alert.css'
 
+// Module-level progress bridge: DriveAlert stays mounted but the modal can be
+// minimized while import continues. The Header pill subscribes to the same
+// progress IPC events and reads this snapshot to render "Importing 45/2000".
+// Exported so Header.tsx can wire the re-open click without a parent prop chain.
+type MinimizedImportState = {
+  active: boolean
+  stage: string
+  current: number
+  total: number
+  message: string
+  driveKey: string | null
+}
+let minimizedState: MinimizedImportState = {
+  active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null,
+}
+const minimizedListeners = new Set<(s: MinimizedImportState) => void>()
+function setMinimized(next: Partial<MinimizedImportState>): void {
+  minimizedState = { ...minimizedState, ...next }
+  for (const fn of minimizedListeners) {
+    try { fn(minimizedState) } catch {}
+  }
+}
+export function useImportMinimizedState(): MinimizedImportState {
+  const [s, setS] = useState<MinimizedImportState>(minimizedState)
+  useEffect(() => {
+    const fn = (x: MinimizedImportState): void => setS(x)
+    minimizedListeners.add(fn)
+    return () => { minimizedListeners.delete(fn) }
+  }, [])
+  return s
+}
+export function restoreMinimizedImport(): void {
+  setMinimized({ active: false }) // triggers DriveAlert to re-expand via useEffect below
+  // Broadcast a local DOM event so the DriveAlert instance knows to un-minimize
+  // without needing a store round-trip.
+  window.dispatchEvent(new CustomEvent('drive-alert:restore'))
+}
+
 interface ImportProgress {
   stage: 'idle' | 'scanning' | 'reading-exif' | 'matching' | 'copying' | 'uploading' | 'done' | 'error'
   message: string
@@ -21,6 +59,7 @@ export default function DriveAlert(): React.ReactElement | null {
     stage: 'idle', message: '', current: 0, total: 0, matched: 0, unmatched: 0, copied: 0, uploadQueued: 0,
   })
   const [showResults, setShowResults] = useState(false)
+  const [minimized, setMinimizedLocal] = useState(false)
   const competition = useStore((s) => s.competition)
   const settings = useStore((s) => s.settings)
   const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
@@ -59,7 +98,20 @@ export default function DriveAlert(): React.ReactElement | null {
             ? `Reading EXIF ${p.current}/${p.total}...`
             : prev.message,
       }))
+      // Mirror progress into the module-level snapshot so the Header pill
+      // can render independently of whether the modal is open or minimized.
+      setMinimized({
+        stage: p.stage,
+        current: p.current,
+        total: p.total,
+        message: p.stage === 'scanning'
+          ? `Scanning ${p.total}...`
+          : `${p.current}/${p.total}`,
+      })
     })
+
+    const onRestore = (): void => setMinimizedLocal(false)
+    window.addEventListener('drive-alert:restore', onRestore)
 
     const unsubResult = window.api.on('photos:match-result', (data: unknown) => {
       const result = data as { totalPhotos: number; matched: number; unmatched: number; clockOffsetMs: number }
@@ -75,12 +127,24 @@ export default function DriveAlert(): React.ReactElement | null {
       setShowResults(true)
     })
 
-    return () => { unsubDrive(); unsubWPD(); unsubProgress(); unsubResult() }
+    return () => {
+      unsubDrive(); unsubWPD(); unsubProgress(); unsubResult()
+      window.removeEventListener('drive-alert:restore', onRestore)
+    }
   }, [])
 
   function runImport(photoPath: string): void {
     if (!competition) return
     setProgress((prev) => ({ ...prev, stage: 'scanning', message: `Scanning ${photoPath}...` }))
+    // Import started — enable Header pill until handleDismiss or completion clears it.
+    setMinimized({
+      active: true,
+      stage: 'scanning',
+      current: 0,
+      total: 0,
+      message: `Scanning...`,
+      driveKey: detected ? detected.drivePath : (wpdDevice?.id ?? null),
+    })
 
     window.api.photosImport(photoPath).then((result) => {
       if (result && typeof result === 'object' && 'error' in result) {
@@ -155,9 +219,22 @@ export default function DriveAlert(): React.ReactElement | null {
     setDetected(null)
     setWpdDevice(null)
     setShowResults(false)
+    setMinimizedLocal(false)
+    setMinimized({ active: false })
+  }
+
+  function handleMinimize(): void {
+    // Close the modal UI but leave the import running. Record active state so
+    // Header can show the re-open pill. Dismissing (handleDismiss) clears it.
+    setMinimizedLocal(true)
+    setMinimized({
+      active: true,
+      driveKey: detected ? detected.drivePath : (wpdDevice?.id ?? null),
+    })
   }
 
   if (!detected && !wpdDevice) return null
+  if (minimized) return null
 
   const isWorking = ['scanning', 'reading-exif', 'matching', 'copying', 'uploading'].includes(progress.stage)
   const hasCompetition = !!competition
@@ -179,7 +256,16 @@ export default function DriveAlert(): React.ReactElement | null {
             <div className="da-title">{sourceLabel}</div>
             <div className="da-subtitle">{sourceSubtitle}</div>
           </div>
-          <button className="da-close" onClick={handleDismiss}>{'\u2715'}</button>
+          <div className="da-header-actions">
+            <button
+              className="da-close"
+              onClick={handleMinimize}
+              title="Minimize — import continues in background"
+            >
+              {'\u2013'}
+            </button>
+            <button className="da-close" onClick={handleDismiss} title="Dismiss">{'\u2715'}</button>
+          </div>
         </div>
 
         {!hasCompetition && (

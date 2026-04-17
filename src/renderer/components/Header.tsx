@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { useImportMinimizedState, restoreMinimizedImport } from './DriveAlert'
 
 function useAppVersion(): string {
   const [version, setVersion] = useState('')
@@ -403,14 +404,28 @@ function SystemMonitor(): React.ReactElement | null {
   )
 }
 
+function ImportPill(): React.ReactElement | null {
+  const s = useImportMinimizedState()
+  if (!s.active) return null
+  const label = s.total > 0 ? `${s.current}/${s.total}` : (s.message || '...')
+  return (
+    <button
+      className="import-pill"
+      onClick={() => restoreMinimizedImport()}
+      title="Click to re-open import panel"
+    >
+      <span className="import-pill-dot" />
+      <span>Importing {label}</span>
+    </button>
+  )
+}
+
 export default function Header(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
   const competition = useStore((s) => s.competition)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const compactMode = useStore((s) => s.compactMode)
   const setCompactMode = useStore((s) => s.setCompactMode)
-  const chatVisible = useStore((s) => s.chat.visible)
-  const setChatVisible = useStore((s) => s.setChatVisible)
 
   // Ctrl+Shift+C to toggle compact mode
   useEffect(() => {
@@ -448,6 +463,7 @@ export default function Header(): React.ReactElement {
             {competition.routines.length} routines
           </span>
         )}
+        <ImportPill />
       </div>
 
       <SystemMonitor />
@@ -461,13 +477,6 @@ export default function Header(): React.ReactElement {
           title={compactMode ? 'Switch to full mode (Ctrl+Shift+C)' : 'Switch to production mode (Ctrl+Shift+C)'}
         >
           {compactMode ? 'Full' : 'Compact'}
-        </button>
-        <button
-          className={`settings-btn${chatVisible ? ' active' : ''}`}
-          onClick={() => setChatVisible(!chatVisible)}
-          title="Toggle chat panel"
-        >
-          Chat
         </button>
         <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
           Settings

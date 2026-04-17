@@ -46,16 +46,47 @@
 .da-title { font-weight: 600; font-size: 13px; color: var(--text-primary); }
 .da-subtitle { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 
-.da-close {
+.da-header-actions {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.da-close {
   background: none;
   border: none;
   color: var(--text-muted);
   font-size: 14px;
   cursor: pointer;
-  padding: 2px;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
-.da-close:hover { color: var(--text-primary); }
+.da-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+/* ── Import Pill (Header) ── */
+.import-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin: 0 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.import-pill:hover { border-color: var(--accent); background: var(--bg-hover); }
+.import-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: progressPulse 1.5s ease-in-out infinite;
+}
 
 .da-warning {
   margin: 10px 14px;
