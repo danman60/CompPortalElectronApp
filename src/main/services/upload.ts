@@ -45,6 +45,54 @@ function deriveThumbObjectName(originalObjectName: string): string {
   return `${base}_thumb.webp`
 }
 
+/**
+ * Best-effort existence check on a signed R2 URL via HEAD.
+ * Returns:
+ *   'exists' — HTTP 2xx (object is already in the bucket; skip PUT)
+ *   'missing' — HTTP 404 (object absent; proceed with PUT)
+ *   'unknown' — auth rejection (signed URL method mismatch), network error, or
+ *              any other non-terminal status. Caller should fall through to PUT
+ *              rather than trust the negative.
+ *
+ * Note: CompPortal's /api/plugin/upload-url currently only signs PUT URLs, so
+ * on real R2 the HEAD will typically return 403 SignatureDoesNotMatch and this
+ * check becomes a no-op (falls through to PUT). Tests that mock the signed URL
+ * endpoint to honour HEAD get real dedup. When CompPortal grows a HEAD-signer
+ * this becomes a one-line swap to sign HEAD-specific URLs.
+ */
+function checkR2ObjectExists(signedUrl: string, timeoutMs = 5000): Promise<'exists' | 'missing' | 'unknown'> {
+  return new Promise((resolve) => {
+    let settled = false
+    const settle = (v: 'exists' | 'missing' | 'unknown'): void => {
+      if (settled) return
+      settled = true
+      resolve(v)
+    }
+    try {
+      const url = new URL(signedUrl)
+      const httpModule = url.protocol === 'https:' ? https : http
+      const req = httpModule.request(signedUrl, { method: 'HEAD' }, (res) => {
+        const code = res.statusCode || 0
+        // Drain response so socket can be reused / closed cleanly.
+        res.on('data', () => {})
+        res.on('end', () => {
+          if (code >= 200 && code < 300) settle('exists')
+          else if (code === 404) settle('missing')
+          else settle('unknown')
+        })
+      })
+      req.setTimeout(timeoutMs, () => {
+        req.destroy()
+        settle('unknown')
+      })
+      req.on('error', () => settle('unknown'))
+      req.end()
+    } catch {
+      settle('unknown')
+    }
+  })
+}
+
 let isUploading = false
 let isPaused = false
 let currentAbortController: AbortController | null = null
@@ -354,14 +402,25 @@ async function processLoop(): Promise<void> {
             'image/webp',
             uploadRunId,
           )
-          await uploadFileToSignedUrl(thumbSignedUrl, {
-            ...payload,
-            filePath: payload.thumbnailPath,
-            objectName: thumbObjectName,
-            contentType: 'image/webp',
-          })
-          thumbStoragePath = tsp
-          logger.upload.info(`Uploaded thumb: ${thumbObjectName} for routine ${payload.routineId}`)
+          // HEAD pre-check: if R2 already has this thumb at `tsp`, skip the PUT but
+          // still record `thumbStoragePath` so /complete's parallel array carries the
+          // R2 key for this photo. Safe by construction — `tsp` is the sibling path
+          // CompPortal minted; if the HEAD says it exists there, the original-photo
+          // PUT above just succeeded, so the sibling (same prefix) is the right target.
+          const headStatus = await checkR2ObjectExists(thumbSignedUrl)
+          if (headStatus === 'exists') {
+            thumbStoragePath = tsp
+            logger.upload.info(`Thumb HEAD-hit, skipping PUT: ${thumbObjectName} for routine ${payload.routineId}`)
+          } else {
+            await uploadFileToSignedUrl(thumbSignedUrl, {
+              ...payload,
+              filePath: payload.thumbnailPath,
+              objectName: thumbObjectName,
+              contentType: 'image/webp',
+            })
+            thumbStoragePath = tsp
+            logger.upload.info(`Uploaded thumb: ${thumbObjectName} for routine ${payload.routineId}`)
+          }
         } catch (thumbErr) {
           logger.upload.warn(
             `Thumb upload failed for ${payload.objectName} (non-fatal):`,
