@@ -77,6 +77,7 @@ export interface PhotoMatch {
   clipSuggestion?: ClipSuggestion
   clipVerified?: boolean
   storagePath?: string
+  thumbnailStoragePath?: string // R2 key of uploaded 200×200 WebP thumb (sibling of storagePath)
   sourceHash?: string // sha1 of first 128KB of the source file — used for dedup + safe-delete gating
   sourcePath?: string // original SD path before copy
 }
