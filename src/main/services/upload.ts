@@ -13,6 +13,7 @@ import * as state from './state'
 import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 import { ThrottleStream } from '../utils/throttle'
+import * as importManifest from './importManifest'
 
 interface UploadPayload {
   routineId: string
@@ -377,6 +378,27 @@ async function processLoop(): Promise<void> {
               const sp = photoStoragePaths[i]
               return sp ? { ...p, uploaded: true, storagePath: sp } : p
             })
+
+            // SD-import path: after /complete 2xx, record uploaded=true in the manifest
+            // (fsync first) THEN unlink the local routine-folder copy. Only acts on photos
+            // that carry a sourceHash — proves they flowed through the new SD-import path.
+            // Tether-flow photos (no sourceHash) are NOT deleted, preserving prior behavior.
+            const outDir = getSettings().fileNaming.outputDirectory
+            for (const p of updatedPhotos) {
+              if (!p.uploaded || !p.storagePath || !p.sourceHash) continue
+              try {
+                await importManifest.markUploaded(outDir, p.sourceHash, p.storagePath)
+              } catch (err) {
+                logger.upload.warn(`Manifest markUploaded failed for ${p.filePath}:`, err instanceof Error ? err.message : err)
+                continue
+              }
+              try {
+                await fs.promises.unlink(p.filePath)
+              } catch (err) {
+                logger.upload.warn(`Local photo unlink failed for ${p.filePath}:`, err instanceof Error ? err.message : err)
+              }
+            }
+
             state.updateRoutineStatus(payload.routineId, 'uploaded', {
               encodedFiles: updatedFiles,
               photos: updatedPhotos,
@@ -603,10 +625,14 @@ async function callPluginComplete(info: {
 }): Promise<void> {
   const { apiBase, apiKey } = getConnection()
 
+  const routine = state.getCompetition()?.routines.find(r => r.id === info.routineId)
+
   const body = {
     entryId: info.entryId,
     competitionId: info.competitionId,
     uploadRunId: info.uploadRunId,
+    video_start_timestamp: routine?.recordingStartedAt || undefined,
+    video_end_timestamp: routine?.recordingStoppedAt || undefined,
     files: {
       performance: info.storagePaths['performance'] || undefined,
       judge1: info.storagePaths['judge1'] || undefined,
@@ -712,8 +738,13 @@ export async function retryOrphanedCompletions(): Promise<number> {
   return retried
 }
 
-/** Retry uploading any routines stuck at 'encoded' that were skipped due to missing connection. */
-export function retrySkippedEncoded(): number {
+/**
+ * Retry uploading any routines stuck at 'encoded' that were skipped due to missing connection.
+ * Yields to the event loop every BATCH_SIZE routines to prevent AppHangB1 on startup
+ * when thousands of routines trigger IPC broadcasts on enqueue. Fire-and-forget (callers
+ * can ignore the returned promise).
+ */
+export async function retrySkippedEncoded(): Promise<number> {
   const comp = state.getCompetition()
   if (!comp) return 0
   if (!hasResolvedUploadConnection()) return 0
@@ -721,7 +752,9 @@ export function retrySkippedEncoded(): number {
   const settings = getSettings()
   if (!settings.behavior.autoUploadAfterEncoding) return 0
 
+  const BATCH_SIZE = 25
   let retried = 0
+  let processed = 0
   for (const routine of comp.routines) {
     if (routine.status !== 'encoded') continue
     const existingJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
@@ -732,6 +765,10 @@ export function retrySkippedEncoded(): number {
     if (result.queuedJobs > 0) {
       retried++
       logger.upload.info(`Retrying skipped upload for encoded routine ${routine.entryNumber} "${routine.routineTitle}" (${result.queuedJobs} jobs)`)
+    }
+    processed++
+    if (processed % BATCH_SIZE === 0) {
+      await new Promise(r => setImmediate(r))
     }
   }
 
