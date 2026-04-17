@@ -356,12 +356,12 @@ export async function importPhotos(
     match.sourcePath = sourceForCopy
     match.filePath = destFile
 
-    // Generate thumbnail
+    // Generate thumbnail (WebP — small, fast, served directly by CompPortal Media Portal)
     try {
       const thumbDir = path.join(routineDir, 'thumbnails')
       if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
-      const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.jpg`)
-      await sharp(destFile).resize(200, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(thumbPath)
+      const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.webp`)
+      await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbPath)
       match.thumbnailPath = thumbPath
     } catch (err) {
       logger.photos.warn(`Thumbnail generation failed for ${destFile}:`, err)
