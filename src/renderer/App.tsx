@@ -11,7 +11,7 @@ import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
 import DriveAlert from './components/DriveAlert'
 import FirstRunSetup from './components/FirstRunSetup'
-import OrphanReview from './components/OrphanReview'
+import OrphanReview, { openOrphanReview } from './components/OrphanReview'
 import './styles/app.css'
 
 function HardeningBanners(): React.ReactElement | null {
@@ -124,6 +124,76 @@ function RecordingOverrunWarning(): React.ReactElement | null {
 
   return (
     <div className="overrun-warning" />
+  )
+}
+
+interface ImportSummary {
+  runId: string
+  routinesUpdated: number
+  photosUploaded: number
+  thumbsUploaded: number
+  orphaned: number
+}
+
+function ImportSummaryToast(): React.ReactElement | null {
+  const [summary, setSummary] = useState<ImportSummary | null>(null)
+  const [fading, setFading] = useState(false)
+
+  useEffect(() => {
+    if (!window.api) return
+    const off = window.api.on(IPC_CHANNELS.PHOTOS_IMPORT_COMPLETE_SUMMARY, (data: unknown) => {
+      setSummary(data as ImportSummary)
+      setFading(false)
+    })
+    return () => { try { off() } catch {} }
+  }, [])
+
+  useEffect(() => {
+    if (!summary) return
+    const t = setTimeout(() => {
+      setFading(true)
+      setTimeout(() => setSummary(null), 300)
+    }, 15000)
+    return () => clearTimeout(t)
+  }, [summary])
+
+  if (!summary) return null
+
+  const hasOrphans = summary.orphaned > 0
+  const borderColor = hasOrphans ? 'var(--warning)' : 'var(--success)'
+
+  function onClick(): void {
+    if (hasOrphans) {
+      openOrphanReview()
+    }
+    setFading(true)
+    setTimeout(() => setSummary(null), 300)
+  }
+
+  return (
+    <div
+      className="startup-toast import-summary-toast"
+      style={{
+        borderLeftColor: borderColor,
+        opacity: fading ? 0 : 1,
+        transition: 'opacity 0.3s',
+        bottom: '80px',
+      }}
+      onClick={onClick}
+      title={hasOrphans ? 'Click to review orphans' : 'Click to dismiss'}
+    >
+      <div className="toast-title">Import complete</div>
+      <div className="toast-items">
+        <span>{summary.routinesUpdated} routine{summary.routinesUpdated === 1 ? '' : 's'} updated</span>
+        <span>{summary.photosUploaded} photo{summary.photosUploaded === 1 ? '' : 's'} queued</span>
+        <span>{summary.thumbsUploaded} thumb{summary.thumbsUploaded === 1 ? '' : 's'} generated</span>
+        {hasOrphans && (
+          <span style={{ color: 'var(--warning)' }}>
+            {summary.orphaned} orphan{summary.orphaned === 1 ? '' : 's'} — click to review
+          </span>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -242,6 +312,7 @@ export default function App(): React.ReactElement {
       <OrphanReview />
       <RecordingOverrunWarning />
       <StartupToast />
+      <ImportSummaryToast />
       <HardeningBanners />
       <FirstRunSetup />
     </div>
