@@ -76,6 +76,9 @@ export interface PhotoMatch {
   matchedRoutineId?: string // routine this photo was matched to
   clipSuggestion?: ClipSuggestion
   clipVerified?: boolean
+  storagePath?: string
+  sourceHash?: string // sha1 of first 128KB of the source file — used for dedup + safe-delete gating
+  sourcePath?: string // original SD path before copy
 }
 
 export interface DriveDetectedEvent {
@@ -301,6 +304,28 @@ export interface TimeDateConfig {
 
 export interface CountdownStyleConfig {
   fontSize: number; color: string; fontWeight: number; showLabels: boolean
+  expiredText?: string // shown when countdown hits zero (default: "SOON")
+  prefixText?: string  // optional prefix above/before the timer (e.g. "Doors open in")
+}
+
+export type LogoAnimation = 'none' | 'pulse' | 'float' | 'spin' | 'fade-in-once' | 'breathing' | 'glow'
+
+export interface LogoConfig {
+  source: 'brand' | 'custom' // brand = use settings.branding.brandLogoUrl
+  customUrl: string          // file path when source === 'custom'
+  fit: 'contain' | 'cover' | 'fill'
+  opacity: number            // 0..1
+  animation: LogoAnimation
+  animationSpeed: number     // 1..10 → keyframe duration scaler
+}
+
+export interface SSTickerConfig {
+  enabled: boolean
+  text: string
+  speed: number      // px/s scrolling speed (20-200, like main overlay)
+  color: string
+  bgColor: string    // optional rail background color (e.g. rgba)
+  fontSize: number
 }
 
 export interface EventInfoConfig {
@@ -329,6 +354,8 @@ export interface StartingSoonConfig {
   showCountdown: boolean; countdownTarget: string
   countdownStyle: CountdownStyleConfig
   timeDate: TimeDateConfig
+  logo: LogoConfig
+  ticker: SSTickerConfig
   videoPlaylist: VideoPlaylistConfig
   photoSlideshow: PhotoSlideshowConfig
   socialBar: SocialBarConfig
@@ -337,7 +364,7 @@ export interface StartingSoonConfig {
   eventInfo: EventInfoConfig
   upNext: UpNextConfig
   pinnedChat: PinnedChatConfig
-  tickerEnabled: boolean
+  tickerEnabled: boolean // legacy — kept for backward compat with old saved configs
 }
 
 export interface AnimationConfig {
@@ -409,6 +436,7 @@ export interface AppSettings {
     zoomFactor: number
     compactMode: boolean
     allowNonElevated: boolean
+    autoImportOnDrive: boolean
   }
   nextSequence: {
     stopRecording: boolean
@@ -613,6 +641,7 @@ export const IPC_CHANNELS = {
   SS_GET_CONFIG: 'ss:get-config',
   SS_SET_CONFIG: 'ss:set-config',
   SS_BROWSE_FOLDER: 'ss:browse-folder',
+  SS_BROWSE_FILE: 'ss:browse-file',
   SS_SCAN_FOLDER: 'ss:scan-folder',
   SS_GET_PRESETS: 'ss:get-presets',
   SS_SAVE_PRESET: 'ss:save-preset',
@@ -638,7 +667,44 @@ export const IPC_CHANNELS = {
   DRIVE_LOST: 'drive:lost',
   DRIVE_RECOVERED: 'drive:recovered',
   STATE_RECOVERED_FROM_BACKUP: 'state:recovered-from-backup',
+
+  // Media backup (copy recordings + tether photos to external drive)
+  BACKUP_BROWSE_TARGET: 'backup:browse-target',
+  BACKUP_START: 'backup:start',
+  BACKUP_CANCEL: 'backup:cancel',
+  BACKUP_PROGRESS: 'backup:progress',
+  BACKUP_DONE: 'backup:done',
+
+  // Stream Deck plugin (bundled, optional install)
+  STREAMDECK_GET_STATUS: 'streamdeck:get-status',
+  STREAMDECK_INSTALL_PLUGIN: 'streamdeck:install-plugin',
 } as const
+
+export interface BackupProgress {
+  phase: 'scanning' | 'copying'
+  bytesDone: number
+  filesDone: number
+  totalBytes: number
+  totalFiles: number
+  currentFile: string
+  bytesPerSec: number
+  etaSec: number
+}
+
+export interface BackupFailure {
+  path: string
+  error: string
+}
+
+export interface BackupResult {
+  targetDir: string
+  succeeded: number
+  skipped: number
+  failed: BackupFailure[]
+  totalBytes: number
+  elapsedSec: number
+  cancelled: boolean
+}
 
 // --- FFmpeg ---
 
@@ -910,6 +976,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     zoomFactor: 1.25,
     compactMode: false,
     allowNonElevated: false,
+    autoImportOnDrive: true,
   },
   nextSequence: {
     stopRecording: true,
