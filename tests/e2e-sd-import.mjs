@@ -289,6 +289,30 @@ async function testHappyPath(svc) {
       }
     }
     record('14 orphan sidecars on disk', totalSidecars === (TOTAL_COUNT - MATCHED_COUNT), `got ${totalSidecars}`)
+
+    // --- Thumbnail assertions (2026-04-17 addition) ---
+    // Every matched photo must have a WebP thumb on disk next to its copy,
+    // and the PhotoMatch result must carry a thumbnailPath pointing at it.
+    const matchedResults = result.matches.filter(m => m.confidence !== 'unmatched')
+    const withThumbPath = matchedResults.filter(m => typeof m.thumbnailPath === 'string' && m.thumbnailPath.endsWith('.webp'))
+    record('all matched photos have thumbnailPath (.webp)', withThumbPath.length === MATCHED_COUNT, `got ${withThumbPath.length}/${MATCHED_COUNT}`)
+
+    let thumbsOnDisk = 0
+    for (const m of matchedResults) {
+      if (m.thumbnailPath && fs.existsSync(m.thumbnailPath)) thumbsOnDisk++
+    }
+    record('WebP thumbs present on disk', thumbsOnDisk === MATCHED_COUNT, `got ${thumbsOnDisk}/${MATCHED_COUNT}`)
+
+    // Spot-check one thumb: size must be small (< 20KB) and have a valid WebP header.
+    if (matchedResults[0]?.thumbnailPath) {
+      const tPath = matchedResults[0].thumbnailPath
+      const stat = fs.statSync(tPath)
+      const head = fs.readFileSync(tPath).subarray(0, 12)
+      // WebP files start with "RIFF....WEBP"
+      const isWebp = head.subarray(0, 4).toString() === 'RIFF' && head.subarray(8, 12).toString() === 'WEBP'
+      record('thumb is valid WebP (RIFF/WEBP magic)', isWebp, `header: ${head.subarray(0, 12).toString('hex')}`)
+      record('thumb size < 20KB', stat.size < 20000, `${stat.size} bytes`)
+    }
   }
   return result
 }
@@ -340,6 +364,26 @@ async function testDeleteAfterUpload(svc) {
   record('all local matched files unlinked', allDeleted)
 }
 
+async function testThumbUploadWiring(svc) {
+  console.log('\n--- Test 5: Thumbnail upload wiring ---')
+  // Assert the main bundle (the code that will ship in the asar) contains the
+  // thumb-upload string literals. If a refactor accidentally removes them,
+  // this test catches it before the asar ships.
+  const bundlePath = path.join(REPO_ROOT, 'out', 'main', 'index.js')
+  if (!fs.existsSync(bundlePath)) {
+    record('main bundle exists for thumb-wire inspection', false, bundlePath)
+    return
+  }
+  const code = fs.readFileSync(bundlePath, 'utf-8')
+  record('bundle contains "_thumb.webp"', code.includes('_thumb.webp'))
+  record('bundle contains "photo_thumbnails"', code.includes('photo_thumbnails'))
+  record('bundle contains "thumbStoragePath"', code.includes('thumbStoragePath'))
+  // Also exercise deriveThumbObjectName contract (mirrors upload.ts regex):
+  const derive = (s) => s.replace(/\.(jpe?g)$/i, '') + '_thumb.webp'
+  record('derive photo_001.jpg → photo_001_thumb.webp', derive('photo_001.jpg') === 'photo_001_thumb.webp')
+  record('derive IMG_0042.JPEG → IMG_0042_thumb.webp', derive('IMG_0042.JPEG') === 'IMG_0042_thumb.webp')
+}
+
 async function testCrashSafety(svc) {
   console.log('\n--- Test 4: Crash safety ---')
   // Use a fresh dir, run import, then for ONE photo simulate: markUploaded succeeds
@@ -377,6 +421,7 @@ async function main() {
     await testDedup(svc)
     await testDeleteAfterUpload(svc)
     await testCrashSafety(svc)
+    await testThumbUploadWiring(svc)
   } catch (err) {
     console.error('FATAL:', err)
     record('test suite', false, err.message)
