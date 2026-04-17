@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
-import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent } from '../../shared/types'
+import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent, PhotoMatch } from '../../shared/types'
 import '../styles/drive-alert.css'
 
 interface ImportProgress {
@@ -24,6 +24,8 @@ export default function DriveAlert(): React.ReactElement | null {
   const competition = useStore((s) => s.competition)
   const settings = useStore((s) => s.settings)
   const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
+  const autoImportOnDrive = settings?.behavior?.autoImportOnDrive ?? true
+  const autoImportFiredRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     // WPD/MTP disabled — using folder-watch mode instead
@@ -76,12 +78,11 @@ export default function DriveAlert(): React.ReactElement | null {
     return () => { unsubDrive(); unsubWPD(); unsubProgress(); unsubResult() }
   }, [])
 
-  function handleStartImport(): void {
-    if (!detected || !competition) return
-    setProgress((prev) => ({ ...prev, stage: 'scanning', message: `Scanning ${detected.photoPath}...` }))
+  function runImport(photoPath: string): void {
+    if (!competition) return
+    setProgress((prev) => ({ ...prev, stage: 'scanning', message: `Scanning ${photoPath}...` }))
 
-    // Fire and forget — progress comes via IPC events, don't block the UI
-    window.api.photosImport(detected.photoPath).then((result) => {
+    window.api.photosImport(photoPath).then((result) => {
       if (result && typeof result === 'object' && 'error' in result) {
         setProgress((prev) => ({
           ...prev,
@@ -91,7 +92,16 @@ export default function DriveAlert(): React.ReactElement | null {
         return
       }
 
-      // Don't auto-open sorter — results shown in the modal
+      if (result && typeof result === 'object' && 'matches' in result) {
+        const matches = (result as { matches: PhotoMatch[] }).matches
+        const routines = competition.routines
+        try {
+          // Fire-and-forget CLIP verification — don't block UI.
+          window.api.clipVerifyImport(matches, routines, { skipExact: true })
+        } catch {
+          // ignore
+        }
+      }
 
       if (autoUpload) {
         window.api.uploadAll()
@@ -104,6 +114,23 @@ export default function DriveAlert(): React.ReactElement | null {
       }))
     })
   }
+
+  function handleStartImport(): void {
+    if (!detected || !competition) return
+    runImport(detected.photoPath)
+  }
+
+  useEffect(() => {
+    if (!autoImportOnDrive) return
+    if (!detected || !competition) return
+    if (progress.stage !== 'idle') return
+    const key = `${detected.drivePath}::${detected.photoCount}`
+    if (autoImportFiredRef.current.has(key)) return
+    autoImportFiredRef.current.add(key)
+    runImport(detected.photoPath)
+    // runImport identity changes every render; intentional single-fire guard via ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detected, competition, autoImportOnDrive, progress.stage])
 
   function handleStartTether(): void {
     if (!detected) return
