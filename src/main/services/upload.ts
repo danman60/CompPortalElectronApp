@@ -24,6 +24,7 @@ interface UploadPayload {
   contentType: string
   type: 'videos' | 'photos'
   role?: string // 'performance' | 'judge1' etc for videos
+  thumbnailPath?: string // local path to 200×200 WebP thumb (SD-import photos only)
 }
 
 export interface EnqueueRoutineResult {
@@ -32,6 +33,17 @@ export interface EnqueueRoutineResult {
 }
 
 const API_TIMEOUT_MS = 30000
+
+/**
+ * Derive the thumbnail R2 object name from the original photo's object name.
+ * Example: `photo_001.jpg` → `photo_001_thumb.webp`. Used so the thumb lands
+ * as a sibling of the original under the same R2 prefix.
+ */
+function deriveThumbObjectName(originalObjectName: string): string {
+  // Strip trailing .jpg/.jpeg (case-insensitive) and append `_thumb.webp`.
+  const base = originalObjectName.replace(/\.(jpe?g)$/i, '')
+  return `${base}_thumb.webp`
+}
 
 let isUploading = false
 let isPaused = false
@@ -150,6 +162,10 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
         objectName: photoObjectName,
         contentType: 'image/jpeg',
         type: 'photos',
+        // Carry the local thumb path (if any) so the upload loop can PUT it next
+        // to the original. Only SD-import photos have this; tether-flow photos
+        // skip the thumb upload (thumbnailPath undefined).
+        thumbnailPath: photo.thumbnailPath,
       } satisfies UploadPayload as unknown as Record<string, unknown>)
       jobCount++
     }
@@ -321,8 +337,41 @@ async function processLoop(): Promise<void> {
       // Step 2: Upload file with timeout
       await uploadFileToSignedUrl(signedUrl, payload)
 
-      // Persist storagePath in the job for plugin/complete
-      jobQueue.updateStatus(job.id, 'done', { storagePath })
+      // Step 2b (SD-import photos only): upload the 200×200 WebP thumb as a sibling
+      // of the original. Thumb R2 key mirrors `storagePath` but with the extension
+      // swapped to `_thumb.webp` (e.g. `photos/photo_001.jpg` → `photos/photo_001_thumb.webp`).
+      // If the thumb PUT fails, we log + continue — the original already landed, so the
+      // routine isn't blocked. CompPortal will fall back to on-the-fly serving.
+      let thumbStoragePath: string | undefined
+      if (payload.type === 'photos' && payload.thumbnailPath && fs.existsSync(payload.thumbnailPath)) {
+        try {
+          const thumbObjectName = deriveThumbObjectName(payload.objectName)
+          const { signedUrl: thumbSignedUrl, storagePath: tsp } = await getSignedUploadUrl(
+            payload.entryId,
+            payload.competitionId,
+            payload.type,
+            thumbObjectName,
+            'image/webp',
+            uploadRunId,
+          )
+          await uploadFileToSignedUrl(thumbSignedUrl, {
+            ...payload,
+            filePath: payload.thumbnailPath,
+            objectName: thumbObjectName,
+            contentType: 'image/webp',
+          })
+          thumbStoragePath = tsp
+          logger.upload.info(`Uploaded thumb: ${thumbObjectName} for routine ${payload.routineId}`)
+        } catch (thumbErr) {
+          logger.upload.warn(
+            `Thumb upload failed for ${payload.objectName} (non-fatal):`,
+            thumbErr instanceof Error ? thumbErr.message : thumbErr,
+          )
+        }
+      }
+
+      // Persist storagePath (and thumb path if we got one) in the job for plugin/complete
+      jobQueue.updateStatus(job.id, 'done', { storagePath, thumbStoragePath })
       logger.upload.info(`Uploaded: ${payload.objectName} for routine ${payload.routineId}`)
 
       // Check if all uploads for this routine are done (exclude cancelled jobs from prior recordings)
@@ -334,6 +383,11 @@ async function processLoop(): Promise<void> {
         try {
           const storagePaths: Record<string, string> = {}
           const photoStoragePaths: string[] = []
+          // Parallel array, indexed same as photoStoragePaths. Empty string = no thumb
+          // for that index (tether-flow photo, or thumb PUT failed). CompPortal-3 reads
+          // this as `photoThumbnailStoragePaths[i]` → `media_photos.thumbnail_url` for
+          // `media_photos[i]`. An empty string means "no thumb, fall back to on-the-fly".
+          const photoThumbnailStoragePaths: string[] = []
 
           // Include already-uploaded files from routine state (covers prior session uploads)
           const routineState = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
@@ -342,7 +396,10 @@ async function processLoop(): Promise<void> {
               if (f.uploaded && f.storagePath) storagePaths[f.role] = f.storagePath
             }
             for (const p of routineState.photos || []) {
-              if (p.uploaded && p.storagePath) photoStoragePaths.push(p.storagePath)
+              if (p.uploaded && p.storagePath) {
+                photoStoragePaths.push(p.storagePath)
+                photoThumbnailStoragePaths.push(p.thumbnailStoragePath || '')
+              }
             }
           }
 
@@ -350,9 +407,13 @@ async function processLoop(): Promise<void> {
           for (const doneJob of updatedJobs) {
             const jp = doneJob.payload as unknown as UploadPayload
             const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
+            const tsp = (doneJob.payload as Record<string, unknown>).thumbStoragePath as string | undefined
             if (!sp) continue
             if (jp.type === 'photos') {
-              if (!photoStoragePaths.includes(sp)) photoStoragePaths.push(sp)
+              if (!photoStoragePaths.includes(sp)) {
+                photoStoragePaths.push(sp)
+                photoThumbnailStoragePaths.push(tsp || '')
+              }
             } else if (jp.role) {
               storagePaths[jp.role] = sp
             }
@@ -365,6 +426,7 @@ async function processLoop(): Promise<void> {
             uploadRunId,
             storagePaths,
             photoStoragePaths,
+            photoThumbnailStoragePaths,
           })
 
           // Mark individual files as uploaded with their storage paths
@@ -376,7 +438,14 @@ async function processLoop(): Promise<void> {
             })
             const updatedPhotos = (routine.photos || []).map((p, i) => {
               const sp = photoStoragePaths[i]
-              return sp ? { ...p, uploaded: true, storagePath: sp } : p
+              const tsp = photoThumbnailStoragePaths[i]
+              if (!sp) return p
+              return {
+                ...p,
+                uploaded: true,
+                storagePath: sp,
+                thumbnailStoragePath: tsp && tsp.length > 0 ? tsp : undefined,
+              }
             })
 
             // SD-import path: after /complete 2xx, record uploaded=true in the manifest
@@ -622,11 +691,17 @@ async function callPluginComplete(info: {
   uploadRunId: string
   storagePaths: Record<string, string>
   photoStoragePaths: string[]
+  photoThumbnailStoragePaths?: string[] // parallel array, indexed same as photoStoragePaths
 }): Promise<void> {
   const { apiBase, apiKey } = getConnection()
 
   const routine = state.getCompetition()?.routines.find(r => r.id === info.routineId)
 
+  // CompPortal-3 contract (2026-04-17): `files.photo_thumbnails` is a parallel array
+  // to `files.photos`, indexed identically. `files.photo_thumbnails[i]` is the R2
+  // storage key for the thumbnail of `files.photos[i]`. Empty string or missing
+  // array entry means "no thumb for this photo — CompPortal should fall back to
+  // serving the original". Shape chosen to minimize diff from existing payload.
   const body = {
     entryId: info.entryId,
     competitionId: info.competitionId,
@@ -640,6 +715,10 @@ async function callPluginComplete(info: {
       judge3: info.storagePaths['judge3'] || undefined,
       judge4: info.storagePaths['judge4'] || undefined,
       photos: info.photoStoragePaths.length > 0 ? info.photoStoragePaths : undefined,
+      photo_thumbnails:
+        info.photoThumbnailStoragePaths && info.photoThumbnailStoragePaths.length > 0
+          ? info.photoThumbnailStoragePaths
+          : undefined,
     },
   }
 
@@ -695,12 +774,15 @@ export async function retryOrphanedCompletions(): Promise<number> {
     try {
       const storagePaths: Record<string, string> = {}
       const photoStoragePaths: string[] = []
+      const photoThumbnailStoragePaths: string[] = []
       for (const job of activeJobs) {
         const jp = job.payload as unknown as UploadPayload
         const sp = (job.payload as Record<string, unknown>).storagePath as string | undefined
+        const tsp = (job.payload as Record<string, unknown>).thumbStoragePath as string | undefined
         if (!sp) continue
         if (jp.type === 'photos') {
           photoStoragePaths.push(sp)
+          photoThumbnailStoragePaths.push(tsp || '')
         } else if (jp.role) {
           storagePaths[jp.role] = sp
         }
@@ -724,6 +806,7 @@ export async function retryOrphanedCompletions(): Promise<number> {
         uploadRunId: routine.uploadRunId,
         storagePaths,
         photoStoragePaths,
+        photoThumbnailStoragePaths,
       })
 
       state.updateRoutineStatus(routineId, 'uploaded')

@@ -143,7 +143,7 @@ export function enqueue(
 export function updateStatus(
   jobId: string,
   status: JobStatus,
-  extra?: { error?: string; progress?: number; storagePath?: string },
+  extra?: { error?: string; progress?: number; storagePath?: string; thumbStoragePath?: string },
 ): void {
   const job = jobs.find(j => j.id === jobId)
   if (!job) {
@@ -167,6 +167,9 @@ export function updateStatus(
   }
   if (extra?.storagePath !== undefined) {
     ;(job.payload as Record<string, unknown>).storagePath = extra.storagePath
+  }
+  if (extra?.thumbStoragePath !== undefined) {
+    ;(job.payload as Record<string, unknown>).thumbStoragePath = extra.thumbStoragePath
   }
 
   // Failed but retryable — reset to pending
