@@ -27,17 +27,36 @@ export interface AppState {
 
 type StateCallback = (state: AppState) => void
 
+export interface AudioLevels {
+  // role → peak (0..1). Roles match settings.audioInputMapping keys:
+  // performance, judge1, judge2, judge3, judge4
+  [role: string]: number
+}
+
+type AudioLevelsCallback = (levels: AudioLevels) => void
+
 const WS_URL = 'ws://localhost:9877'
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectDelay = 1000
 const stateCallbacks: StateCallback[] = []
+const audioCallbacks: AudioLevelsCallback[] = []
 let currentState: AppState | null = null
+let currentAudioLevels: AudioLevels = {}
 let connected = false
 
 export function onState(cb: StateCallback): void {
   stateCallbacks.push(cb)
   if (currentState) cb(currentState)
+}
+
+export function onAudioLevels(cb: AudioLevelsCallback): void {
+  audioCallbacks.push(cb)
+  if (Object.keys(currentAudioLevels).length > 0) cb(currentAudioLevels)
+}
+
+export function getAudioLevels(): AudioLevels {
+  return currentAudioLevels
 }
 
 export function isConnected(): boolean {
@@ -77,6 +96,15 @@ export function connect(): void {
       if (msg.type === 'state') {
         currentState = msg as AppState
         for (const cb of stateCallbacks) cb(currentState)
+      } else if (msg.type === 'audioLevels' && Array.isArray(msg.levels)) {
+        const levels: AudioLevels = {}
+        for (const item of msg.levels) {
+          if (item && typeof item.role === 'string' && typeof item.peak === 'number') {
+            levels[item.role] = item.peak
+          }
+        }
+        currentAudioLevels = levels
+        for (const cb of audioCallbacks) cb(levels)
       }
     } catch { /* ignore parse errors */ }
   })

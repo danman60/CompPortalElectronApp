@@ -1,14 +1,14 @@
 .table-scroll {
   flex: 1;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 .upload-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 11px;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .upload-table th {
@@ -36,11 +36,22 @@
 .upload-table tbody tr.current-row:hover td { background: rgba(99,102,241,0.12); }
 
 .entry-num { font-weight: 700; color: var(--accent); font-size: 11px; }
-.entry-time { font-weight: 600; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.th-time { width: 44px; }
-.td-time { white-space: nowrap; }
-.r-name { font-weight: 500; color: var(--text-primary); font-size: 11px; }
-.r-sub { font-size: 9px; color: var(--text-muted); }
+.entry-time { font-weight: 600; color: #b5b5d0; font-size: 10px; font-variant-numeric: tabular-nums; }
+.th-num { width: 34px; min-width: 34px; white-space: nowrap; }
+.td-num { width: 34px; min-width: 34px; white-space: nowrap; overflow: hidden; }
+.th-time { width: 52px; white-space: nowrap; }
+.td-time { white-space: nowrap; overflow: hidden; }
+.upload-table { min-width: 460px; }
+.r-name {
+  font-weight: 600;
+  color: #ffffff;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.r-sub { font-size: 9px; color: #b5b5d0; }
 
 .live-indicator {
   display: inline-block;

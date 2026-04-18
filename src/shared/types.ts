@@ -552,6 +552,7 @@ export const IPC_CHANNELS = {
 
   // Photos
   PHOTOS_IMPORT: 'photos:import',
+  PHOTOS_CANCEL: 'photos:cancel',
   PHOTOS_BROWSE: 'photos:browse',
   PHOTOS_PROGRESS: 'photos:progress',
   PHOTOS_MATCH_RESULT: 'photos:match-result',
@@ -704,7 +705,53 @@ export const IPC_CHANNELS = {
   // Stream Deck plugin (bundled, optional install)
   STREAMDECK_GET_STATUS: 'streamdeck:get-status',
   STREAMDECK_INSTALL_PLUGIN: 'streamdeck:install-plugin',
+
+  // Overlay Mode (floating always-on-top panels over OBS)
+  OVERLAY_MODE_OPEN: 'overlay-mode:open',
+  OVERLAY_MODE_CLOSE: 'overlay-mode:close',
+  OVERLAY_MODE_TOGGLE: 'overlay-mode:toggle',
+
+  // Day checklist modals (start-of-day / end-of-day)
+  DAY_CHECKLIST_GET: 'day-checklist:get',
+  DAY_CHECKLIST_SET_ITEM: 'day-checklist:set-item',
+  DAY_CHECKLIST_DISMISS: 'day-checklist:dismiss',
+  DAY_CHECKLIST_REOPEN: 'day-checklist:reopen',
+  DAY_CHECKLIST_SHOW: 'day-checklist:show',
 } as const
+
+// --- Day Checklist (Start-of-Day / End-of-Day) ---
+
+export type DayChecklistKind = 'start' | 'end'
+export type DayChecklistItemState = 'open' | 'checked' | 'skipped' | 'na'
+
+/** Per-kind, per-item state for a specific day key (local YYYY-MM-DD). */
+export interface DayChecklistDayState {
+  /** local-date YYYY-MM-DD for the day this state applies to */
+  date: string
+  /** scheduledDay of the routine(s) that triggered this kind on this date (informational) */
+  scheduledDay: string | null
+  /** item state keyed by item id — missing items default to 'open' */
+  items: Record<string, DayChecklistItemState>
+  /** true once operator explicitly dismissed the auto-triggered modal for this day+kind */
+  autoDismissed: boolean
+  /** ms timestamp when modal was auto-fired for this day+kind (0 = never) */
+  autoShownAt: number
+  /** ms timestamp of last edit to items */
+  lastUpdatedAt: number
+}
+
+export interface DayChecklistPersistedState {
+  /** Map<"date|kind", DayChecklistDayState> */
+  days: Record<string, DayChecklistDayState>
+}
+
+export interface DayChecklistShowEvent {
+  kind: DayChecklistKind
+  date: string
+  scheduledDay: string | null
+  /** 'auto' = main process fired automatically; 'manual' = operator clicked Re-open */
+  source: 'auto' | 'manual'
+}
 
 export interface BackupProgress {
   phase: 'scanning' | 'copying'

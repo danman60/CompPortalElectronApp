@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import type { AppSettings, MonitorInfo } from '../../shared/types'
+import BackupMedia from './BackupMedia'
+import StreamDeckPluginSection from './StreamDeckPluginSection'
 import '../styles/settings.css'
 
 // --- Hotkey Capture Component ---
@@ -180,6 +182,36 @@ export default function Settings(): React.ReactElement {
               </select>
               <span className="hint">Controls audio tracks, meters, and FFmpeg outputs</span>
             </div>
+          </div>
+        </div>
+
+        {/* Day Checklists — re-open buttons */}
+        <div className="settings-section">
+          <div className="settings-section-title">Day Checklists</div>
+          <p className="section-desc">
+            Re-open the start- or end-of-day checklist. Item states persist per day — re-opening shows your saved progress.
+          </p>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button
+              className="back-btn"
+              onClick={() => {
+                (window.api as unknown as { dayChecklistReopen?: (kind: 'start' | 'end') => Promise<unknown> })
+                  .dayChecklistReopen?.('start')
+                  .catch(() => {})
+              }}
+            >
+              Show Start-of-Day Checklist
+            </button>
+            <button
+              className="back-btn"
+              onClick={() => {
+                (window.api as unknown as { dayChecklistReopen?: (kind: 'start' | 'end') => Promise<unknown> })
+                  .dayChecklistReopen?.('end')
+                  .catch(() => {})
+              }}
+            >
+              Show End-of-Day Checklist
+            </button>
           </div>
         </div>
 
@@ -896,6 +928,9 @@ export default function Settings(): React.ReactElement {
             </div>
           ))}
         </div>
+
+        <BackupMedia />
+        <StreamDeckPluginSection />
       </div>
 
       <div className="settings-footer">

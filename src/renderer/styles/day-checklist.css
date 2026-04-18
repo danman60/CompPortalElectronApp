@@ -1,0 +1,250 @@
+/* Day-checklist modals (Start-of-Day / End-of-Day) — matches
+   clock-sync-reminder visual language: amber accent, big, obvious,
+   dismissable. Shares z-index stacking with ClockSyncReminder. */
+
+.daychk-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 9000; /* same tier as clock-sync-reminder */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: daychkFadeIn 180ms ease-out;
+}
+
+@keyframes daychkFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.daychk-modal {
+  background: linear-gradient(180deg, #1a2337 0%, #0f1724 100%);
+  border: 2px solid #f5b301;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7), 0 0 0 4px rgba(245, 179, 1, 0.18);
+  padding: 28px 36px;
+  min-width: 560px;
+  max-width: 720px;
+  max-height: 88vh;
+  overflow-y: auto;
+  color: #f5f7fb;
+}
+
+.daychk-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.daychk-icon {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.daychk-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #f5b301;
+}
+
+.daychk-subtitle {
+  text-align: center;
+  font-size: 14px;
+  color: #a8b4c8;
+  margin-bottom: 18px;
+}
+
+.daychk-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #a8b4c8;
+  margin: 18px 4px 8px 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(245, 179, 1, 0.18);
+}
+
+.daychk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.daychk-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  background: rgba(5, 9, 15, 0.55);
+  border: 1px solid rgba(245, 179, 1, 0.18);
+  border-radius: 6px;
+  padding: 10px 14px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.daychk-item-label {
+  font-size: 15px;
+  color: #e6ecf5;
+  line-height: 1.35;
+}
+
+.daychk-item-deadline {
+  font-size: 11px;
+  color: #a8b4c8;
+  margin-top: 2px;
+  letter-spacing: 0.3px;
+}
+
+.daychk-item.checked {
+  background: rgba(34, 110, 56, 0.22);
+  border-color: rgba(95, 202, 120, 0.55);
+}
+
+.daychk-item.checked .daychk-item-label {
+  color: #bfead0;
+  text-decoration: line-through;
+  text-decoration-color: rgba(95, 202, 120, 0.65);
+}
+
+.daychk-item.skipped {
+  background: rgba(90, 90, 90, 0.18);
+  border-color: rgba(140, 140, 140, 0.4);
+}
+
+.daychk-item.skipped .daychk-item-label {
+  color: #9aa3b3;
+  font-style: italic;
+}
+
+.daychk-item.na {
+  background: rgba(90, 90, 90, 0.08);
+  border-color: rgba(90, 90, 90, 0.3);
+}
+
+.daychk-item.na .daychk-item-label {
+  color: #808a9b;
+}
+
+/* SD deadline escalation — past 10:15pm and not checked. */
+.daychk-item.deadline-late {
+  background: rgba(139, 0, 0, 0.35);
+  border-color: #ff4040;
+  box-shadow: 0 0 0 2px rgba(255, 64, 64, 0.35);
+  animation: daychkPulse 1.8s ease-in-out infinite;
+}
+
+.daychk-item.deadline-late .daychk-item-label {
+  color: #ffdada;
+  font-weight: 700;
+}
+
+.daychk-item.deadline-late .daychk-item-deadline {
+  color: #ff9e9e;
+  font-weight: 700;
+}
+
+@keyframes daychkPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(255, 64, 64, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 64, 64, 0.6); }
+}
+
+.daychk-state-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.daychk-state-btn {
+  min-width: 40px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #243148;
+  color: #cdd6e4;
+  cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease, border-color 120ms ease;
+}
+
+.daychk-state-btn:hover {
+  background: #2f3f5c;
+}
+
+.daychk-state-btn.active.checked {
+  background: #3ea060;
+  border-color: #4fc474;
+  color: #07170d;
+}
+
+.daychk-state-btn.active.skipped {
+  background: #6a6a6a;
+  border-color: #888;
+  color: #fff;
+}
+
+.daychk-state-btn.active.na {
+  background: #4a5470;
+  border-color: #5e6a88;
+  color: #fff;
+}
+
+.daychk-progress {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  font-size: 12px;
+  color: #a8b4c8;
+  margin: 12px 0 6px 0;
+  letter-spacing: 0.3px;
+}
+
+.daychk-progress span strong {
+  color: #e6ecf5;
+  font-weight: 700;
+}
+
+.daychk-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.daychk-btn {
+  padding: 11px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #243148;
+  color: #f5f7fb;
+  cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease;
+}
+
+.daychk-btn:hover {
+  background: #2f3f5c;
+}
+
+.daychk-btn:active {
+  transform: translateY(1px);
+}
+
+.daychk-btn.primary {
+  background: #f5b301;
+  color: #1a1a1a;
+  border-color: #f5b301;
+}
+
+.daychk-btn.primary:hover {
+  background: #ffc81d;
+}

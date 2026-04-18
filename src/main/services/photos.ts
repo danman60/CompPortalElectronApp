@@ -26,10 +26,203 @@ interface ImportResult {
   unmatched: number
   clockOffsetMs: number
   matches: PhotoMatch[]
+  cancelled?: boolean
 }
 
 async function yieldToEventLoop(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
+function cancelledResult(): ImportResult {
+  return {
+    totalPhotos: 0,
+    matched: 0,
+    unmatched: 0,
+    clockOffsetMs: 0,
+    matches: [],
+    cancelled: true,
+  }
+}
+
+/** Local YYYY-MM-DD comparison — uses the same interpretation as getPhotoCaptureTime. */
+function isSameLocalDate(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+function fmtLocalDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * Bug F mitigation: sample up to 20 EXIF DateTimeOriginal stamps from the
+ * import set, compare to today (local). If majority do NOT match today, ask
+ * the operator to confirm/skip/cancel before the matcher pollutes today's
+ * routine folders with yesterday's photos. Saturday 2026-04-18 incident:
+ * Friday's 21k SD imported on Saturday matched Saturday routines purely by
+ * time-of-day overlap.
+ *
+ * Uses the existing EXIF interpretation — no timezone change.
+ */
+async function checkSourceDateMatchesToday(
+  paths: string[],
+): Promise<{ action: 'continue' | 'skip-mismatched' | 'cancel'; todayDate: string; dominantDate: string }> {
+  const today = new Date()
+  const todayDate = fmtLocalDate(today)
+
+  if (paths.length === 0) {
+    return { action: 'continue', todayDate, dominantDate: todayDate }
+  }
+
+  // Sample up to 20 photos evenly spaced through the partitionedPaths list.
+  const sampleCount = Math.min(20, paths.length)
+  const step = Math.max(1, Math.floor(paths.length / sampleCount))
+  const samples: string[] = []
+  for (let i = 0; i < paths.length && samples.length < sampleCount; i += step) {
+    samples.push(paths[i])
+  }
+
+  const dateCounts = new Map<string, number>()
+  let sampledOk = 0
+  let todayCount = 0
+  for (const fp of samples) {
+    const d = await getPhotoCaptureTime(fp).catch(() => null)
+    if (!d) continue
+    sampledOk++
+    const iso = fmtLocalDate(d)
+    dateCounts.set(iso, (dateCounts.get(iso) || 0) + 1)
+    if (iso === todayDate) todayCount++
+  }
+
+  if (sampledOk === 0) {
+    // No EXIF reads succeeded — let the import continue, downstream logic
+    // already handles "no captureTime" by dropping the photo.
+    return { action: 'continue', todayDate, dominantDate: todayDate }
+  }
+
+  // If majority match today, no prompt needed.
+  if (todayCount * 2 >= sampledOk) {
+    return { action: 'continue', todayDate, dominantDate: todayDate }
+  }
+
+  // Pick dominant non-today date for the prompt.
+  let dominantDate = todayDate
+  let dominantCount = -1
+  for (const [iso, count] of dateCounts) {
+    if (count > dominantCount) {
+      dominantCount = count
+      dominantDate = iso
+    }
+  }
+
+  logger.photos.warn(
+    `Import date mismatch: ${sampledOk - todayCount}/${sampledOk} sampled photos NOT from today. ` +
+    `Dominant date=${dominantDate}, today=${todayDate}. Asking operator.`,
+  )
+
+  // Show a blocking confirm dialog. Lazy-import dialog/BrowserWindow so this
+  // module stays unit-testable.
+  try {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) {
+      // No window — default to continue (legacy behavior). Logged above.
+      return { action: 'continue', todayDate, dominantDate }
+    }
+    const summaryDates = [...dateCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([d, c]) => `  ${d}: ${c}`)
+      .join('\n')
+    const result = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'SD Card Date Mismatch',
+      message: `This SD has photos from ${dominantDate}, but today is ${todayDate}.`,
+      detail:
+        `${sampledOk - todayCount}/${sampledOk} sampled photos do NOT match today's date.\n\n` +
+        `Sampled date breakdown:\n${summaryDates}\n\n` +
+        `Importing yesterday's photos onto today's routines will pollute the routine folders ` +
+        `(Saturday 2026-04-18 incident).`,
+      buttons: [
+        'Cancel import',
+        'Skip mismatched dates',
+        'Import anyway',
+      ],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+    if (result.response === 0) return { action: 'cancel', todayDate, dominantDate }
+    if (result.response === 1) return { action: 'skip-mismatched', todayDate, dominantDate }
+    return { action: 'continue', todayDate, dominantDate }
+  } catch (err) {
+    logger.photos.warn(
+      'Date-mismatch dialog failed — defaulting to continue:',
+      err instanceof Error ? err.message : err,
+    )
+    return { action: 'continue', todayDate, dominantDate }
+  }
+}
+
+/**
+ * Bug E mitigation: pre-flight check before feeding a file to sharp. The
+ * libvips backend throws "TypeError: A boolean was expected" on certain
+ * malformed/zero-byte/in-progress JPEGs. Validate file size + minimal JPEG
+ * magic before calling sharp() so the failure mode is a clean log line
+ * instead of a flood of cryptic stack traces.
+ */
+async function isThumbnailSafe(filePath: string): Promise<boolean> {
+  try {
+    const st = await fs.promises.stat(filePath)
+    if (!st.isFile() || st.size < 256) return false
+    // JPEG starts with 0xFFD8FFE0/E1/E8 — read first 4 bytes.
+    const fh = await fs.promises.open(filePath, 'r')
+    const buf = Buffer.alloc(4)
+    await fh.read(buf, 0, 4, 0)
+    await fh.close()
+    return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff
+  } catch {
+    return false
+  }
+}
+
+// ── Single-flight import lock + cancel (Saturday 2026-04-18 incident) ──
+// The Photos button accepted parallel imports, causing two 21k-photo scans
+// to race each other (EBUSY collisions, double thumbnails, runaway state).
+// Reject the second invocation with an explicit error and expose a cancel
+// IPC so the operator can stop a runaway without killing the app.
+type CurrentImport = {
+  abortController: AbortController
+  folderPath: string
+  startedAt: number
+}
+let currentImport: CurrentImport | null = null
+
+export function isImportRunning(): boolean {
+  return currentImport !== null
+}
+
+export function getCurrentImportInfo(): { folderPath: string; startedAt: number } | null {
+  return currentImport
+    ? { folderPath: currentImport.folderPath, startedAt: currentImport.startedAt }
+    : null
+}
+
+export function cancelCurrentImport(): { ok: boolean; cancelled?: string; error?: string } {
+  if (!currentImport) return { ok: false, error: 'No import in progress' }
+  const folder = currentImport.folderPath
+  try {
+    currentImport.abortController.abort()
+    logger.photos.warn(`Import cancellation requested for ${folder}`)
+    return { ok: true, cancelled: folder }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 export async function browseForFolder(): Promise<string | null> {
@@ -226,6 +419,33 @@ export async function importPhotos(
   folderPath: string,
   routines: Routine[],
   outputDir: string,
+): Promise<ImportResult | { error: string }> {
+  // ── Single-flight guard (Bug C) ──
+  // Reject parallel imports — double-clicking Photos used to race two 21k-photo
+  // imports against each other and corrupt routine folders.
+  if (currentImport) {
+    const elapsedSec = Math.round((Date.now() - currentImport.startedAt) / 1000)
+    const msg = `Already importing ${currentImport.folderPath} (running ${elapsedSec}s). Cancel the running import before starting a new one.`
+    logger.photos.warn(`Rejected concurrent import attempt for ${folderPath}: ${msg}`)
+    return { error: msg }
+  }
+
+  const abortController = new AbortController()
+  const signal = abortController.signal
+  currentImport = { abortController, folderPath, startedAt: Date.now() }
+
+  try {
+    return await runImport(folderPath, routines, outputDir, signal)
+  } finally {
+    currentImport = null
+  }
+}
+
+async function runImport(
+  folderPath: string,
+  routines: Routine[],
+  outputDir: string,
+  signal: AbortSignal,
 ): Promise<ImportResult> {
   logger.photos.info(`Importing photos from: ${folderPath}`)
 
@@ -304,11 +524,38 @@ export async function importPhotos(
     current: 0,
   })
 
+  if (signal.aborted) {
+    logger.photos.warn(`Import cancelled before EXIF read (${folderPath})`)
+    return cancelledResult()
+  }
+
+  // ── Bug F: cross-day pollution check (Saturday 2026-04-18 incident) ──
+  // Sample 20 photos' EXIF dates against today's local date BEFORE matching.
+  // Friday's 21k SD photos were matched to Saturday routines by time-of-day
+  // overlap because the matcher ignored the date portion of the EXIF stamp.
+  // Surface a confirm dialog so the operator sees the wrong-day SD before
+  // the matcher pollutes today's routine folders.
+  // Uses the same EXIF interpretation as the rest of the code (no timezone
+  // changes — see getPhotoCaptureTime).
+  const dateGuard = await checkSourceDateMatchesToday(partitionedPaths)
+  if (dateGuard.action === 'cancel') {
+    logger.photos.warn(
+      `Import cancelled by operator after wrong-date detection: dominant=${dateGuard.dominantDate}, today=${dateGuard.todayDate}`,
+    )
+    return cancelledResult()
+  }
+  const skipMismatchedDates = dateGuard.action === 'skip-mismatched'
+
   // Read EXIF timestamps + compute source hash per file, drop ones already uploaded.
   // Iterate partitionedPaths so multi-drive scans process drive-by-drive (see above).
   const photos: { path: string; captureTime: Date; sourceHash: string }[] = []
   let skippedDupes = 0
+  let skippedWrongDate = 0
   for (let i = 0; i < partitionedPaths.length; i++) {
+    if (signal.aborted) {
+      logger.photos.warn(`Import cancelled during EXIF read at ${i}/${partitionedPaths.length}`)
+      return cancelledResult()
+    }
     const sourceHash = await manifest.computeSourceHash(partitionedPaths[i]).catch(() => '')
     if (sourceHash && seenHashes.has(sourceHash)) {
       skippedDupes++
@@ -316,10 +563,18 @@ export async function importPhotos(
     }
     const captureTime = await getPhotoCaptureTime(partitionedPaths[i])
     if (captureTime) {
-      photos.push({ path: partitionedPaths[i], captureTime, sourceHash })
+      // Bug F skip-mismatched mode: drop photos whose EXIF date != today.
+      if (skipMismatchedDates && !isSameLocalDate(captureTime, new Date())) {
+        skippedWrongDate++
+      } else {
+        photos.push({ path: partitionedPaths[i], captureTime, sourceHash })
+      }
     }
 
-    if (i % 10 === 0) {
+    // Yield more frequently for large imports so progress is visible and the
+    // UI stays responsive (Bug B2: every-10 was fine for 500-photo imports
+    // but causes ~500ms stalls at 21k).
+    if (partitionedPaths.length >= 5000 || i % 10 === 0) {
       sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
         stage: 'reading-exif',
         total: partitionedPaths.length,
@@ -327,6 +582,9 @@ export async function importPhotos(
       })
       await yieldToEventLoop()
     }
+  }
+  if (skippedWrongDate > 0) {
+    logger.photos.info(`Skipped ${skippedWrongDate} photos with non-today EXIF dates`)
   }
 
   logger.photos.info(`${photos.length}/${partitionedPaths.length} photos have EXIF timestamps (skipped ${skippedDupes} already-uploaded)`)
@@ -360,6 +618,10 @@ export async function importPhotos(
   // Copy matched photos to routine folders and generate thumbnails
   let copiedCount = 0
   for (const match of matches) {
+    if (signal.aborted) {
+      logger.photos.warn(`Import cancelled during copy at ${copiedCount}/${matches.length}`)
+      return cancelledResult()
+    }
     if (match.confidence === 'unmatched') continue
 
     // Find which routine this photo matched
@@ -395,12 +657,20 @@ export async function importPhotos(
     match.filePath = destFile
 
     // Generate thumbnail (WebP — small, fast, served directly by CompPortal Media Portal)
+    // Bug E mitigation: validate the JPEG before feeding sharp. libvips throws
+    // "TypeError: A boolean was expected" on zero-byte / partial / non-JPEG
+    // inputs. Pre-flight check turns those into a single info-line skip
+    // instead of a stack-trace flood.
     try {
       const thumbDir = path.join(routineDir, 'thumbnails')
       if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
       const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.webp`)
-      await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbPath)
-      match.thumbnailPath = thumbPath
+      if (await isThumbnailSafe(destFile)) {
+        await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbPath)
+        match.thumbnailPath = thumbPath
+      } else {
+        logger.photos.info(`Thumbnail skipped (not a valid JPEG): ${destFile}`)
+      }
     } catch (err) {
       logger.photos.warn(`Thumbnail generation failed for ${destFile}:`, err)
     }
@@ -428,6 +698,10 @@ export async function importPhotos(
     (a, b) => a.recordingStarted.getTime() - b.recordingStarted.getTime(),
   )
   for (const match of matches) {
+    if (signal.aborted) {
+      logger.photos.warn(`Import cancelled during orphan handling at ${orphanCount}`)
+      return cancelledResult()
+    }
     if (match.confidence !== 'unmatched') continue
 
     const sourceForCopy = match.filePath
@@ -586,12 +860,18 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
     await fs.promises.unlink(orphanPath + '.json').catch(() => {})
 
     // Generate thumb for the reassigned photo to keep /complete parallel arrays consistent.
+    // Bug E mitigation: pre-flight JPEG validity check (see isThumbnailSafe).
     let thumbnailPath: string | undefined
     try {
       const thumbDir = path.join(photoDir, 'thumbnails')
       if (!fs.existsSync(thumbDir)) await fs.promises.mkdir(thumbDir, { recursive: true })
       thumbnailPath = path.join(thumbDir, `thumb_${String(nextIdx).padStart(3, '0')}.webp`)
-      await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbnailPath)
+      if (await isThumbnailSafe(destFile)) {
+        await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbnailPath)
+      } else {
+        logger.photos.info(`Thumbnail skipped (not a valid JPEG): ${destFile}`)
+        thumbnailPath = undefined
+      }
     } catch (err) {
       logger.photos.warn(`Thumbnail generation failed for reassigned ${destFile}:`, err)
       thumbnailPath = undefined

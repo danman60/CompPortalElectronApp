@@ -202,6 +202,50 @@
   margin-top: 4px;
 }
 
+/* ── Font Pairings Grid ── */
+.sse-font-pairing-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.sse-font-pairing {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid rgba(102, 126, 234, 0.15);
+  background: rgba(30, 30, 46, 0.55);
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+
+.sse-font-pairing:hover {
+  border-color: rgba(102, 126, 234, 0.55);
+  background: rgba(30, 30, 46, 0.85);
+  transform: translateY(-1px);
+}
+
+.sse-font-pairing.selected {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.15);
+  box-shadow: 0 0 0 1px #667eea;
+}
+
+.sse-font-pairing-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #e0e0f0;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+}
+
+.sse-font-pairing-sub {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(200, 200, 220, 0.7);
+  line-height: 1.3;
+  margin-top: 3px;
+}
+
 /* ── Gradient Presets Grid ── */
 .sse-gradient-grid {
   display: grid;
@@ -566,15 +610,19 @@
 }
 .sse-handle-label {
   position: absolute;
-  top: 2px;
-  left: 4px;
-  font-size: 9px;
-  color: #667eea;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px;
+  color: #ffffff;
   font-weight: 600;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 1px 4px;
-  border-radius: 2px;
+  background: rgba(102, 126, 234, 0.85);
+  padding: 2px 6px;
+  border-radius: 3px;
   pointer-events: none;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 /* ── Resize handles (only shown when selected) ── */
@@ -605,4 +653,26 @@
   height: 10px;
   cursor: nwse-resize;
   border-radius: 2px;
+}
+
+.sse-aspect-row {
+  display: flex;
+  gap: 6px;
+}
+.sse-aspect-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #c0c0e0;
+  background: rgba(102, 126, 234, 0.15);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sse-aspect-btn:hover {
+  background: rgba(102, 126, 234, 0.3);
+  border-color: #667eea;
+  color: #ffffff;
 }

@@ -280,9 +280,39 @@ export function startMonitoring(): void {
     return
   }
 
-  // Seed known drives so we don't alert on already-mounted drives at startup
-  knownDrives = new Set(getWindowsDrives())
-  logger.photos.info(`Drive monitor started — ${knownDrives.size} drives already mounted`)
+  // Fire a synthetic DRIVE_DETECTED for any camera-looking drive already mounted
+  // at startup. Previously these were silently added to knownDrives, so an
+  // operator who booted the app with SD cards already plugged in never saw the
+  // auto-import popup. (Incident: 2026-04-18 mid-show, F:/H: mounted at 07:21
+  // were invisible until eject+reinsert.)
+  const initialDrives = getWindowsDrives()
+  logger.photos.info(`Drive monitor started — scanning ${initialDrives.length} mounted drive(s)`)
+  for (const drive of initialDrives) {
+    try {
+      const camera = isCameraDrive(drive)
+      if (camera.photoCount > 0) {
+        const label = getDriveLabel(drive)
+        logger.photos.info(
+          `Startup-mounted camera drive: ${drive} (${label}) — ${camera.photoCount} photos in ${camera.isDcim ? 'DCIM' : 'root'}`,
+        )
+        sendToRenderer(IPC_CHANNELS.DRIVE_DETECTED, {
+          drivePath: drive,
+          photoPath: camera.photoPath,
+          photoCount: camera.photoCount,
+          isDcim: camera.isDcim,
+          label,
+        })
+        // Background EXIF sample to catch wrong-day cameras (UDC London Cam 2
+        // disaster: 15 days off). Fire-and-forget so the popup isn't blocked.
+        sampleAndReportCameraClock(drive, camera.photoPath, label).catch(() => {})
+      }
+    } catch (err) {
+      logger.photos.warn(`startup-scan failed for ${drive}:`, err)
+    }
+  }
+  // Seed knownDrives AFTER firing so the poll loop treats these as "already seen"
+  // and does not duplicate-fire on the first tick.
+  knownDrives = new Set(initialDrives)
 
   pollTimer = setInterval(poll, POLL_INTERVAL_MS)
 }

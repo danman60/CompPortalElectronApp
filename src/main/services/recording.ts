@@ -11,6 +11,7 @@ import * as tether from './tether'
 import * as jobQueue from './jobQueue'
 import { getSettings } from './settings'
 import * as schedule from './schedule'
+import { postNowPlaying } from './compPortal'
 import { dialog, BrowserWindow } from 'electron'
 import { IPC_CHANNELS, Routine } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
@@ -124,6 +125,8 @@ async function reconcileOrphanedRecording(): Promise<void> {
   state.updateRoutineStatus(routineId, 'recording_interrupted', {
     error: 'Recording interrupted (OBS disconnected or stopped silently). No output file recovered.',
   })
+  // Venue TV "now playing" sync — clear on interrupt
+  postNowPlaying(null).catch(() => {})
   activeRecordingRoutineId = null
   stopRecordingWatchdog()
   obs.setActiveAlertRoutineId(null)
@@ -401,6 +404,9 @@ export async function handleRecordingStopped(
       outputPath,
     })
 
+    // Venue TV "now playing" sync — clear on stop
+    postNowPlaying(null).catch(() => {})
+
     const stopTime = new Date(timestamp)
     const stopStr = stopTime.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
     const startTime = routine.recordingStartedAt ? new Date(routine.recordingStartedAt) : null
@@ -529,6 +535,9 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,
   })
+
+  // Venue TV "now playing" sync (fire-and-forget, semantic B / recording-driven)
+  postNowPlaying(routine.id).catch(() => {})
 
   const now = new Date(timestamp)
   const timeStr = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Judge Meter Settings</title>
+  <link rel="stylesheet" href="https://sdpi-components.dev/releases/v3/sdpi-components.css">
+  <script src="https://sdpi-components.dev/releases/v3/sdpi-components.js"></script>
+</head>
+<body>
+  <sdpi-item label="Audio source">
+    <sdpi-select setting="role" default="performance">
+      <option value="performance">Performance (P)</option>
+      <option value="judge1">Judge 1 (J1)</option>
+      <option value="judge2">Judge 2 (J2)</option>
+      <option value="judge3">Judge 3 (J3)</option>
+      <option value="judge4">Judge 4 (J4)</option>
+    </sdpi-select>
+  </sdpi-item>
+  <sdpi-item>
+    <small>Maps to the audio inputs configured in CompSync Settings → Audio. The button shows live VU bars at ~10 fps with peak hold.</small>
+  </sdpi-item>
+</body>
+</html>

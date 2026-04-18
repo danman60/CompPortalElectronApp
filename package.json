@@ -68,6 +68,15 @@
     ],
     "extraResources": [
       {
+        "from": "resources/defaults",
+        "to": "defaults"
+      },
+      {
+        "from": "streamdeck-plugin/com.compsync.streamdeck.sdPlugin",
+        "to": "streamdeck-plugin",
+        "filter": ["**/*", "!node_modules/**", "!package-lock.json", "!**/*.map"]
+      },
+      {
         "from": "resources/ffmpeg/ffmpeg.exe",
         "to": "ffmpeg.exe"
       },

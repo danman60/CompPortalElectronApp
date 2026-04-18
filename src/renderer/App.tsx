@@ -13,6 +13,8 @@ import DriveAlert from './components/DriveAlert'
 import FirstRunSetup from './components/FirstRunSetup'
 import OrphanReview, { openOrphanReview } from './components/OrphanReview'
 import ClockSyncReminder from './components/ClockSyncReminder'
+import StartOfDayModal from './components/StartOfDayModal'
+import EndOfDayModal from './components/EndOfDayModal'
 import './styles/app.css'
 
 function HardeningBanners(): React.ReactElement | null {
@@ -317,6 +319,8 @@ export default function App(): React.ReactElement {
       <HardeningBanners />
       <FirstRunSetup />
       <ClockSyncReminder />
+      <StartOfDayModal />
+      <EndOfDayModal />
     </div>
   )
 }

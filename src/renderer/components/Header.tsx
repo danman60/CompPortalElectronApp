@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useImportMinimizedState, restoreMinimizedImport } from './DriveAlert'
+import { useImportMinimizedState, restoreMinimizedImport, setImportPillActiveFromHeader } from './DriveAlert'
 
 function useAppVersion(): string {
   const [version, setVersion] = useState('')
@@ -88,19 +88,32 @@ function ActionBar(): React.ReactElement {
   async function handleImportPhotos(): Promise<void> {
     const folder = await window.api.photosBrowse()
     if (!folder) return
-    const result = await window.api.photosImport(folder) as { matched?: number; unmatched?: number; total?: number; clockOffsetMs?: number; error?: string } | undefined
-    if (!result) return
-    if (result.error) {
-      alert(`Photo import error: ${result.error}`)
-      return
+    // Bug B: activate the import pill so the operator sees progress. Without
+    // this the Header import was silent until completion (Saturday 2026-04-18:
+    // 21k-photo scan looked frozen → operator clicked again → parallel run).
+    setImportPillActiveFromHeader(folder)
+    try {
+      const result = await window.api.photosImport(folder) as { matched?: number; unmatched?: number; total?: number; clockOffsetMs?: number; error?: string; cancelled?: boolean } | undefined
+      if (!result) return
+      if (result.cancelled) {
+        alert('Photo import cancelled.')
+        return
+      }
+      if (result.error) {
+        alert(`Photo import error: ${result.error}`)
+        return
+      }
+      const total = (result.matched ?? 0) + (result.unmatched ?? 0)
+      if (total === 0) {
+        alert(`No JPEG photos found in the selected folder or its subfolders.`)
+        return
+      }
+      const offset = result.clockOffsetMs ? ` (clock offset: ${Math.round(result.clockOffsetMs / 1000)}s)` : ''
+      alert(`Photo import complete:\n\n${result.matched ?? 0} matched to routines\n${result.unmatched ?? 0} unmatched${offset}`)
+    } finally {
+      // Always clear the pill — even on error/cancel — so it doesn't get stuck.
+      setImportPillActiveFromHeader(null)
     }
-    const total = (result.matched ?? 0) + (result.unmatched ?? 0)
-    if (total === 0) {
-      alert(`No JPEG photos found in the selected folder or its subfolders.`)
-      return
-    }
-    const offset = result.clockOffsetMs ? ` (clock offset: ${Math.round(result.clockOffsetMs / 1000)}s)` : ''
-    alert(`Photo import complete:\n\n${result.matched ?? 0} matched to routines\n${result.unmatched ?? 0} unmatched${offset}`)
   }
 
   async function handleTabletToggle(): Promise<void> {
@@ -408,15 +421,60 @@ function ImportPill(): React.ReactElement | null {
   const s = useImportMinimizedState()
   if (!s.active) return null
   const label = s.total > 0 ? `${s.current}/${s.total}` : (s.message || '...')
+  const pct = s.total > 0 ? Math.min(100, Math.round((s.current / s.total) * 100)) : 0
+
+  async function handleCancel(e: React.MouseEvent): Promise<void> {
+    e.stopPropagation()
+    if (!confirm(`Cancel photo import?\n\n${label}`)) return
+    try {
+      await window.api.photosCancel()
+    } catch (err) {
+      console.error('photos:cancel failed', err)
+    }
+  }
+
   return (
-    <button
-      className="import-pill"
-      onClick={() => restoreMinimizedImport()}
-      title="Click to re-open import panel"
-    >
-      <span className="import-pill-dot" />
-      <span>Importing {label}</span>
-    </button>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+      <button
+        className="import-pill"
+        onClick={() => restoreMinimizedImport()}
+        title="Click to re-open import panel"
+        style={{ position: 'relative' }}
+      >
+        <span className="import-pill-dot" />
+        <span>Importing {label}{s.total > 0 ? ` (${pct}%)` : ''}</span>
+        {s.total > 0 && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: 0,
+              bottom: 0,
+              height: '2px',
+              width: `${pct}%`,
+              background: 'var(--success, #2da855)',
+              transition: 'width 0.2s linear',
+            }}
+          />
+        )}
+      </button>
+      <button
+        onClick={handleCancel}
+        title="Cancel running import"
+        style={{
+          background: 'transparent',
+          border: '1px solid var(--text-muted, #888)',
+          color: 'var(--text-muted, #888)',
+          borderRadius: '4px',
+          padding: '2px 8px',
+          cursor: 'pointer',
+          fontSize: '11px',
+          lineHeight: 1.4,
+        }}
+      >
+        Cancel
+      </button>
+    </span>
   )
 }
 
@@ -424,20 +482,10 @@ export default function Header(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
   const competition = useStore((s) => s.competition)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
-  const compactMode = useStore((s) => s.compactMode)
-  const setCompactMode = useStore((s) => s.setCompactMode)
 
-  // Ctrl+Shift+C to toggle compact mode
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent): void {
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault()
-        setCompactMode(!useStore.getState().compactMode)
-      }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [setCompactMode])
+  async function handleOverlayMode(): Promise<void> {
+    try { await window.api.overlayModeOpen() } catch { /* handled server-side */ }
+  }
 
   const appVersion = useAppVersion()
   const obsColor =
@@ -450,7 +498,7 @@ export default function Header(): React.ReactElement {
   return (
     <div className="app-header">
       <div className="app-logo">
-        {compactMode ? 'CS' : 'CompSync Media'}
+        CompSync Media
         {appVersion && <span style={{ fontSize: '9px', color: 'var(--text-muted)', opacity: 0.5, marginLeft: '6px' }}>v{appVersion}</span>}
       </div>
 
@@ -468,15 +516,15 @@ export default function Header(): React.ReactElement {
 
       <SystemMonitor />
 
-      {!compactMode && <ActionBar />}
+      <ActionBar />
 
       <div className="header-right">
         <button
-          className={`compact-toggle-btn${compactMode ? ' active' : ''}`}
-          onClick={() => setCompactMode(!compactMode)}
-          title={compactMode ? 'Switch to full mode (Ctrl+Shift+C)' : 'Switch to production mode (Ctrl+Shift+C)'}
+          className="compact-toggle-btn"
+          onClick={handleOverlayMode}
+          title="Hide main window and show floating always-on-top panels over OBS"
         >
-          {compactMode ? 'Full' : 'Compact'}
+          Overlay
         </button>
         <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
           Settings

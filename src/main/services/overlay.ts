@@ -37,7 +37,7 @@ let overlayState: OverlayState = {
     text: '',
     speed: 60,
     backgroundColor: '#1e1e2e',
-    textColor: '#e0e0f0',
+    textColor: '#ffffff',
   },
   startingSoon: {
     visible: false,
@@ -66,50 +66,74 @@ let overlayLayout: OverlayLayout = { ...DEFAULT_LAYOUT }
 
 // --- Starting Soon Config State ---
 const defaultSSConfig: StartingSoonConfig = {
+  // "Magazine cover" default layout — asymmetric, intentional, looks good
+  // out of the box without operator tweaking. Title-block on the left,
+  // countdown hero on the right, logo top-left, time bottom-left.
+  // Aurora gradient + Bebas Neue / Inter pairing for a calm broadcast feel.
   gradient: {
-    preset: 'midnight-pulse',
-    speed: 5,
-    angle: 45,
+    preset: 'aurora',
+    speed: 4,
+    angle: 135,
   },
   layout: {
-    logo: { x: 85, y: 5, width: 10, height: 8, visible: true },
-    title: { x: 50, y: 30, width: 40, height: 10, visible: true },
-    subtitle: { x: 50, y: 42, width: 40, height: 8, visible: true },
-    countdown: { x: 50, y: 55, width: 20, height: 15, visible: true },
-    timeDate: { x: 95, y: 2, width: 5, height: 5, visible: true },
-    videoPlaylist: { x: 5, y: 55, width: 30, height: 30, visible: false },
-    photoSlideshow: { x: 40, y: 55, width: 30, height: 30, visible: false },
-    ticker: { x: 50, y: 95, width: 40, height: 3, visible: false },
-    socialBar: { x: 50, y: 85, width: 40, height: 5, visible: false },
-    sponsorCarousel: { x: 50, y: 2, width: 40, height: 4, visible: false },
-    visualizer: { x: 10, y: 70, width: 20, height: 20, visible: false },
-    eventCard: { x: 5, y: 5, width: 20, height: 20, visible: false },
-    upNext: { x: 5, y: 30, width: 30, height: 50, visible: false },
-    pinnedChat: { x: 65, y: 30, width: 30, height: 40, visible: false },
+    logo:           { x:  5, y:  5, width: 14, height: 10, visible: true  },
+    title:          { x:  6, y: 30, width: 50, height: 16, visible: true  },
+    subtitle:       { x:  6, y: 47, width: 48, height:  7, visible: true  },
+    countdown:      { x: 56, y: 32, width: 38, height: 30, visible: true  },
+    timeDate:       { x:  5, y: 92, width: 22, height:  5, visible: true  },
+    videoPlaylist:  { x:  5, y: 64, width: 30, height: 26, visible: false },
+    photoSlideshow: { x: 38, y: 64, width: 28, height: 26, visible: false },
+    // Ticker layout is visible by default so user can position it; whether the
+    // rail actually renders is controlled by ssCfg.ticker.enabled in the panel.
+    ticker:         { x:  0, y: 95, width:100, height:  5, visible: true  },
+    socialBar:      { x: 76, y: 92, width: 22, height:  6, visible: false },
+    sponsorCarousel:{ x: 35, y: 92, width: 30, height:  5, visible: false },
+    visualizer:     { x: 70, y: 68, width: 25, height: 22, visible: false },
+    eventCard:      { x:  5, y: 62, width: 32, height: 26, visible: false },
+    upNext:         { x:  5, y: 58, width: 38, height: 34, visible: false },
+    pinnedChat:     { x: 60, y: 64, width: 36, height: 26, visible: false },
   },
   title: 'Starting Soon',
-  titleFontSize: 72,
+  titleFontSize: 112,
   titleColor: '#ffffff',
-  titleFont: '',
-  subtitle: '',
-  subtitleFontSize: 36,
-  subtitleColor: '#cccccc',
-  subtitleFont: '',
+  titleFont: 'Bebas Neue',
+  subtitle: 'The show begins shortly',
+  subtitleFontSize: 32,
+  subtitleColor: '#a5b4fc',
+  subtitleFont: 'Inter',
   showCountdown: true,
   countdownTarget: '',
   countdownStyle: {
-    fontSize: 64,
-    color: '#ff4444',
-    fontWeight: 700,
-    showLabels: true,
+    fontSize: 96,
+    color: '#ffffff',
+    fontWeight: 900,
+    showLabels: false,
+    expiredText: 'SOON',
+    prefixText: '',
   },
   timeDate: {
     enabled: true,
     format: '12h',
     showDate: false,
     showSeconds: true,
-    fontSize: 24,
+    fontSize: 28,
     color: '#ffffff',
+  },
+  logo: {
+    source: 'brand',
+    customUrl: '',
+    fit: 'contain',
+    opacity: 1,
+    animation: 'pulse',
+    animationSpeed: 5,
+  },
+  ticker: {
+    enabled: false,
+    text: 'Welcome to the show — please find your seats — competition starts shortly',
+    speed: 60,
+    color: '#ffffff',
+    bgColor: 'rgba(0,0,0,0.55)',
+    fontSize: 22,
   },
   videoPlaylist: {
     enabled: false,
@@ -208,8 +232,28 @@ function loadSSConfig(): void {
     const configPath = getSSConfigPath()
     if (fs.existsSync(configPath)) {
       const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-      startingSoonConfig = { ...defaultSSConfig, ...data }
-      logger.app.info('Starting soon config loaded from disk')
+      // Deep-merge with defaults so nested objects added in newer versions
+      // (new layout elements, new gradient fields, etc.) don't disappear when
+      // loading an older saved config. Shallow spread would drop missing keys.
+      startingSoonConfig = {
+        ...defaultSSConfig,
+        ...data,
+        layout: { ...defaultSSConfig.layout, ...(data.layout || {}) },
+        gradient: { ...defaultSSConfig.gradient, ...(data.gradient || {}) },
+        countdownStyle: { ...defaultSSConfig.countdownStyle, ...(data.countdownStyle || {}) },
+        timeDate: { ...defaultSSConfig.timeDate, ...(data.timeDate || {}) },
+        logo: { ...defaultSSConfig.logo, ...(data.logo || {}) },
+        ticker: { ...defaultSSConfig.ticker, ...(data.ticker || {}) },
+        socialBar: { ...defaultSSConfig.socialBar, ...(data.socialBar || {}) },
+        eventInfo: { ...defaultSSConfig.eventInfo, ...(data.eventInfo || {}) },
+        videoPlaylist: { ...defaultSSConfig.videoPlaylist, ...(data.videoPlaylist || {}) },
+        photoSlideshow: { ...defaultSSConfig.photoSlideshow, ...(data.photoSlideshow || {}) },
+        sponsorCarousel: { ...defaultSSConfig.sponsorCarousel, ...(data.sponsorCarousel || {}) },
+        visualizer: { ...defaultSSConfig.visualizer, ...(data.visualizer || {}) },
+        upNext: { ...defaultSSConfig.upNext, ...(data.upNext || {}) },
+        pinnedChat: { ...defaultSSConfig.pinnedChat, ...(data.pinnedChat || {}) },
+      }
+      logger.app.info('Starting soon config loaded from disk (deep-merged with defaults)')
     } else {
       // Create default config file on first load
       saveSSConfig()
@@ -245,6 +289,8 @@ function seedDefaultPresets(): void {
     gradient: { ...defaultSSConfig.gradient, ...(overrides.gradient || {}) },
     countdownStyle: { ...defaultSSConfig.countdownStyle, ...(overrides.countdownStyle || {}) },
     timeDate: { ...defaultSSConfig.timeDate, ...(overrides.timeDate || {}) },
+    logo: { ...defaultSSConfig.logo, ...(overrides.logo || {}) },
+    ticker: { ...defaultSSConfig.ticker, ...(overrides.ticker || {}) },
     socialBar: { ...defaultSSConfig.socialBar, ...(overrides.socialBar || {}) },
     sponsorCarousel: { ...defaultSSConfig.sponsorCarousel, ...(overrides.sponsorCarousel || {}) },
     visualizer: { ...defaultSSConfig.visualizer, ...(overrides.visualizer || {}) },
@@ -717,6 +763,36 @@ export function startServer(): void {
     res.send(buildOverlayHTML())
   })
 
+  // Brand logo HTTP route — Chromium blocks file:// URLs from http origin.
+  // The iframe loads from http://localhost:9876/overlay so any <img src> must
+  // also be http(s) or data:. Serve the configured logo file as a binary HTTP
+  // response. Source priority: brand logo → legacy overlay logo url.
+  app.get('/brand-logo', (_req, res) => {
+    try {
+      const settings = getSettings()
+      const brandLogo = settings?.branding?.brandLogoUrl || ''
+      const overlayLogo = settings?.overlay?.logoUrl || overlayState.logo.url || ''
+      const filePath = brandLogo || overlayLogo
+      if (!filePath || !fs.existsSync(filePath)) {
+        res.status(404).send('No logo configured')
+        return
+      }
+      const ext = path.extname(filePath).toLowerCase().slice(1)
+      const mime = ext === 'png' ? 'image/png'
+        : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+        : ext === 'svg' ? 'image/svg+xml'
+        : ext === 'webp' ? 'image/webp'
+        : ext === 'gif' ? 'image/gif'
+        : 'application/octet-stream'
+      res.setHeader('Content-Type', mime)
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+      fs.createReadStream(filePath).pipe(res)
+    } catch (err) {
+      logger.app.warn('Failed to serve brand logo: ' + (err instanceof Error ? err.message : String(err)))
+      res.status(500).send('Logo serve error')
+    }
+  })
+
   // Starting Soon media routes (video/photo serving)
   setupMediaRoutes(app)
 
@@ -762,7 +838,7 @@ function buildOverlayHTML(): string {
 <meta charset="UTF-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Poppins:wght@400;700&family=Montserrat:wght@400;700&family=Playfair+Display:wght@400;700&family=Bebas+Neue&family=Oswald:wght@400;700&family=Lato:wght@400;700&family=Open+Sans:wght@400;700&family=Raleway:wght@400;700&family=Anton&family=Archivo+Black&family=Space+Grotesk:wght@400;700&family=DM+Sans:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Anton&family=Archivo+Black&family=Barlow:wght@400;700&family=Bebas+Neue&family=Caveat:wght@400;700&family=Cormorant+Garamond:wght@400;700&family=Dancing+Script:wght@400;700&family=DM+Sans:wght@400;700&family=EB+Garamond:wght@400;700&family=Fira+Sans:wght@400;700&family=Fjalla+One&family=IBM+Plex+Sans:wght@400;700&family=Inter:wght@400;700&family=JetBrains+Mono:wght@400;700&family=Lato:wght@400;700&family=Lora:wght@400;700&family=Manrope:wght@400;700&family=Merriweather:wght@400;700&family=Montserrat:wght@400;700&family=Nunito:wght@400;700&family=Open+Sans:wght@400;700&family=Oswald:wght@400;700&family=Outfit:wght@400;700&family=Pacifico&family=Playfair+Display:wght@400;700&family=Plus+Jakarta+Sans:wght@400;700&family=Poppins:wght@400;700&family=Raleway:wght@400;700&family=Righteous&family=Roboto:wght@400;700&family=Rubik:wght@400;700&family=Russo+One&family=Space+Grotesk:wght@400;700&family=Space+Mono:wght@400;700&family=Work+Sans:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --anim-dur: 0.5s;
@@ -788,10 +864,10 @@ function buildOverlayHTML(): string {
     text-align: center; min-width: 120px;
   }
   .counter-number {
-    font-size: 48px; font-weight: 800; color: #e0e0f0; line-height: 1;
+    font-size: 48px; font-weight: 800; color: #ffffff; line-height: 1;
   }
   .counter-number::before { content: '#'; opacity: 0.4; font-size: 28px; }
-  .counter-label { font-size: 13px; color: #9090b0; margin-top: 4px; letter-spacing: 0.5px; }
+  .counter-label { font-size: 13px; color: #e8e8f5; margin-top: 4px; letter-spacing: 0.5px; }
   .counter.advance .counter-number { animation: counterPop 0.5s ease; }
   @keyframes counterPop {
     0% { transform: scale(1); }
@@ -799,11 +875,19 @@ function buildOverlayHTML(): string {
     100% { transform: scale(1); }
   }
   .logo {
-    position: absolute; left: ${overlayLayout.logo.x}%; top: ${overlayLayout.logo.y}%;
+    position: absolute;
+    left: ${overlayLayout.logo.x}%; top: ${overlayLayout.logo.y}%;
+    width: ${overlayLayout.logo.width}%; height: ${overlayLayout.logo.height}%;
     opacity: 0; transition: opacity 0.4s ease;
   }
   .logo.visible { opacity: 1; }
-  .logo img { max-height: 60px; max-width: 200px; border-radius: 6px; }
+  .logo img {
+    width: 100%; height: 100%;
+    object-fit: contain;
+    object-position: left top;
+    opacity: 0.6;
+    border-radius: 6px;
+  }
   .clock {
     position: absolute; left: ${overlayLayout.clock.x}%; top: ${overlayLayout.clock.y}%;
     opacity: 0; transition: opacity 0.4s ease;
@@ -817,11 +901,11 @@ function buildOverlayHTML(): string {
     text-align: center; min-width: 120px;
   }
   .clock-time {
-    font-size: 20px; font-weight: 600; color: #c0c0e0;
+    font-size: 20px; font-weight: 600; color: #ffffff;
     font-variant-numeric: tabular-nums;
   }
   .clock-date {
-    font-size: 11px; color: #9090b0; margin-top: 2px;
+    font-size: 11px; color: #e8e8f5; margin-top: 2px;
   }
   .lower-third {
     position: absolute; left: ${overlayLayout.lowerThird.x}%; top: ${overlayLayout.lowerThird.y}%;
@@ -901,9 +985,9 @@ function buildOverlayHTML(): string {
     padding: 6px 16px; border-radius: 8px; flex-shrink: 0;
   }
   .lt-number::before { content: '#'; opacity: 0.6; font-size: 22px; }
-  .lt-title { font-size: 33px; font-weight: 700; color: #e0e0f0; }
+  .lt-title { font-size: 33px; font-weight: 700; color: #ffffff; }
   .lt-dancers { font-size: 21px; color: #a5b4fc; margin-top: 4px; }
-  .lt-meta { font-size: 18px; color: #9090b0; margin-top: 8px; }
+  .lt-meta { font-size: 18px; color: #e8e8f5; margin-top: 8px; }
 
   /* ── Starting Soon Scene ── */
   .starting-soon {
@@ -919,7 +1003,7 @@ function buildOverlayHTML(): string {
     position: absolute;
     display: none;
     font-weight: 700;
-    color: #e0e0f0;
+    color: #ffffff;
     letter-spacing: 2px;
     text-align: center;
     white-space: nowrap;
@@ -929,7 +1013,7 @@ function buildOverlayHTML(): string {
     position: absolute;
     display: none;
     font-weight: 400;
-    color: #e0e0f0;
+    color: #ffffff;
     opacity: 0.8;
     text-align: center;
     white-space: nowrap;
@@ -958,6 +1042,69 @@ function buildOverlayHTML(): string {
     height: 100%;
     object-fit: contain;
   }
+  /* Logo animations — applied as classes from applyStartingSoon */
+  .ss-logo.anim-pulse img {
+    animation: ss-logo-pulse var(--ss-logo-anim-dur, 2s) ease-in-out infinite;
+  }
+  .ss-logo.anim-float img {
+    animation: ss-logo-float var(--ss-logo-anim-dur, 4s) ease-in-out infinite;
+  }
+  .ss-logo.anim-spin img {
+    animation: ss-logo-spin var(--ss-logo-anim-dur, 12s) linear infinite;
+  }
+  .ss-logo.anim-fade-in-once img {
+    animation: ss-logo-fade-in-once var(--ss-logo-anim-dur, 1.2s) ease-out 1 both;
+  }
+  .ss-logo.anim-breathing img {
+    animation: ss-logo-breathing var(--ss-logo-anim-dur, 5s) ease-in-out infinite;
+  }
+  .ss-logo.anim-glow img {
+    animation: ss-logo-glow var(--ss-logo-anim-dur, 3s) ease-in-out infinite;
+    filter: drop-shadow(0 0 8px rgba(255,255,255,0.6));
+  }
+  @keyframes ss-logo-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
+  @keyframes ss-logo-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+  @keyframes ss-logo-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @keyframes ss-logo-fade-in-once {
+    from { opacity: 0; transform: translateY(-12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes ss-logo-breathing {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50%      { transform: scale(1.04); opacity: 1; }
+  }
+  @keyframes ss-logo-glow {
+    0%, 100% { filter: drop-shadow(0 0 4px rgba(255,255,255,0.3)); }
+    50%      { filter: drop-shadow(0 0 14px rgba(255,255,255,0.85)); }
+  }
+  /* Independent SSE ticker rail (not the main overlay ticker) */
+  .ss-ticker-rail {
+    position: absolute;
+    overflow: hidden;
+    display: none;
+    align-items: center;
+    z-index: 2;
+  }
+  .ss-ticker-rail.visible { display: flex; }
+  .ss-ticker-rail-inner {
+    display: inline-block;
+    white-space: nowrap;
+    padding-left: 100%;
+    animation: ss-ticker-scroll var(--ss-ticker-dur, 30s) linear infinite;
+  }
+  @keyframes ss-ticker-scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
   .ss-time-date {
     position: absolute;
     display: none;
@@ -978,7 +1125,7 @@ function buildOverlayHTML(): string {
     50% { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
   }
-  .starting-soon > *:not(.ss-gradient-bg) { position: relative; z-index: 1; }
+  .starting-soon > *:not(.ss-gradient-bg) { z-index: 1; }
 
   /* ── Video Playlist Window ── */
   .ss-video-window {
@@ -998,7 +1145,7 @@ function buildOverlayHTML(): string {
   .ss-placeholder-label {
     font-size: 16px;
     font-weight: 500;
-    color: rgba(200, 210, 255, 0.7);
+    color: rgba(230, 235, 255, 0.95);
     letter-spacing: 0.5px;
     text-align: center;
     pointer-events: none;
@@ -1107,7 +1254,7 @@ function buildOverlayHTML(): string {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.92);
     margin-bottom: 2px;
   }
   .ss-event-value {
@@ -1153,7 +1300,7 @@ function buildOverlayHTML(): string {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 2px;
-    color: rgba(255,255,255,0.6);
+    color: rgba(255,255,255,0.92);
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px solid rgba(255,255,255,0.15);
@@ -1171,7 +1318,7 @@ function buildOverlayHTML(): string {
   .ss-up-next-num {
     font-size: 13px;
     font-weight: 700;
-    color: rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.92);
     min-width: 28px;
     text-align: right;
   }
@@ -1186,7 +1333,7 @@ function buildOverlayHTML(): string {
   }
   .ss-up-next-detail {
     font-size: 12px;
-    color: rgba(255,255,255,0.55);
+    color: rgba(255,255,255,0.95);
     margin-top: 2px;
     white-space: nowrap;
     overflow: hidden;
@@ -1246,13 +1393,13 @@ function buildOverlayHTML(): string {
   }
   .ss-chat-text {
     font-size: 15px;
-    color: #e0e0f0;
+    color: #ffffff;
     line-height: 1.4;
     word-wrap: break-word;
   }
   .ss-chat-time {
     font-size: 10px;
-    color: #7070a0;
+    color: #d5d5e8;
     margin-top: 4px;
   }
 
@@ -1315,7 +1462,7 @@ function buildOverlayHTML(): string {
   .cf-text {
     font-size: 26px;
     font-weight: 600;
-    color: #e0e0f0;
+    color: #ffffff;
     line-height: 1.35;
     word-wrap: break-word;
   }
@@ -1377,6 +1524,7 @@ function buildOverlayHTML(): string {
   <div class="ss-up-next" id="ss-up-next"></div>
   <div class="ss-visualizer" id="ss-visualizer" style="display:none"></div>
   <div class="ss-pinned-chat" id="ss-pinned-chat"></div>
+  <div class="ss-ticker-rail" id="ss-ticker-rail"><div class="ss-ticker-rail-inner" id="ss-ticker-rail-inner"></div></div>
 </div>
 
 <!-- Chat fire (commit 6) — transient LT-style broadcast when operator pins a chat message -->
@@ -1439,6 +1587,8 @@ function buildOverlayHTML(): string {
       ce.style.left = L.counter.x + '%'; ce.style.top = L.counter.y + '%'; ce.style.right = 'auto';
       var le = document.getElementById('logo');
       le.style.left = L.logo.x + '%'; le.style.top = L.logo.y + '%';
+      if (typeof L.logo.width === 'number') le.style.width = L.logo.width + '%';
+      if (typeof L.logo.height === 'number') le.style.height = L.logo.height + '%';
       var ke = document.getElementById('clock');
       ke.style.left = L.clock.x + '%'; ke.style.top = L.clock.y + '%'; ke.style.right = 'auto';
       var te = document.getElementById('lt');
@@ -1464,7 +1614,11 @@ function buildOverlayHTML(): string {
     const logoImg = document.getElementById('logoImg');
     if (o.logo.visible && o.logo.url) {
       logoEl.classList.add('visible');
-      logoImg.src = o.logo.url;
+      // Chromium blocks file:// from http:// origin inside iframe preview. Serve
+      // the logo via /brand-logo HTTP route (same pattern as ss-logo in r19 fix).
+      var logoBust = 0;
+      for (var i = 0; i < o.logo.url.length; i++) { logoBust = ((logoBust << 5) - logoBust) + o.logo.url.charCodeAt(i); logoBust |= 0; }
+      logoImg.src = '/brand-logo?v=' + Math.abs(logoBust);
     } else {
       logoEl.classList.remove('visible');
     }
@@ -1572,7 +1726,7 @@ function buildOverlayHTML(): string {
       var tickerText = document.getElementById('ticker-text');
       tickerText.textContent = o.ticker.text || '';
       tickerEl.style.background = o.ticker.backgroundColor || '#1e1e2e';
-      tickerText.style.color = o.ticker.textColor || '#e0e0f0';
+      tickerText.style.color = o.ticker.textColor || '#ffffff';
       var speed = o.ticker.speed || 60;
       var duration = Math.max(10, 1920 / speed * 2);
       tickerText.style.animationDuration = duration + 's';
@@ -1657,7 +1811,11 @@ function buildOverlayHTML(): string {
       ssCountEl.style.display = 'none';
     }
 
-    if (ss.visible) {
+    // Preview mode (scene editor iframe): force visible regardless of ss.visible.
+    // Without this, the wrap at applyState race-loses and the scene fades to black
+    // ~0.8s after the first state broadcast arrives. Guard at source, not after.
+    var ssForcePreview = (typeof isPreview !== 'undefined') && isPreview && sceneParam === 'startingsoon';
+    if (ss.visible || ssForcePreview) {
       ssEl.classList.add('visible');
     } else {
       ssEl.classList.remove('visible');
@@ -1694,6 +1852,20 @@ function buildOverlayHTML(): string {
     }
 
     // --- Logo ---
+    // The iframe is loaded over http://, so file:// URLs (or bare Windows paths
+    // that Chromium auto-rewrites to file://) are blocked as cross-origin. We
+    // serve the logo via the same overlay HTTP server at /brand-logo. The route
+    // resolves the file from settings.branding.brandLogoUrl → settings.overlay.logoUrl
+    // and pipes the bytes. Cache-buster query param ensures fresh load when path changes.
+    var logoCfg = (ssCfg && ssCfg.logo) || {};
+    var brandLogo = (state && state.branding && state.branding.brandLogoUrl) ? state.branding.brandLogoUrl : '';
+    // Hash a stable string so img.src changes when the underlying file path changes
+    var hashSrc = (brandLogo || logoUrl || '');
+    var bust = 0;
+    for (var hi = 0; hi < hashSrc.length; hi++) bust = ((bust << 5) - bust + hashSrc.charCodeAt(hi)) | 0;
+    var resolvedLogo = hashSrc ? '/brand-logo?v=' + Math.abs(bust) : '';
+    var LOGO_ANIMS = ['anim-pulse','anim-float','anim-spin','anim-fade-in-once','anim-breathing','anim-glow'];
+    LOGO_ANIMS.forEach(function(c) { ssLogoEl.classList.remove(c); });
     if (ssCfg && ssCfg.layout && ssCfg.layout.logo && ssCfg.layout.logo.visible) {
       var logoLayout = ssCfg.layout.logo;
       ssLogoEl.style.display = 'block';
@@ -1701,9 +1873,23 @@ function buildOverlayHTML(): string {
       ssLogoEl.style.top = logoLayout.y + '%';
       ssLogoEl.style.width = logoLayout.width + '%';
       ssLogoEl.style.height = logoLayout.height + '%';
-      // Use the same logo URL as the main overlay logo
-      if (logoUrl) {
-        ssLogoImg.src = logoUrl;
+      ssLogoEl.style.opacity = (logoCfg.opacity != null ? logoCfg.opacity : 1);
+      if (ssLogoImg) {
+        ssLogoImg.style.objectFit = logoCfg.fit || 'contain';
+      }
+      var anim = logoCfg.animation || 'none';
+      if (anim && anim !== 'none') {
+        ssLogoEl.classList.add('anim-' + anim);
+        // animation speed 1..10 → duration scale: 1 = slowest (3x base), 10 = fastest (0.4x base)
+        var sp = logoCfg.animationSpeed || 5;
+        var scale = 3 - (sp - 1) * (2.6 / 9); // 1→3.0, 5→1.84, 10→0.4
+        // Pulse base 2s, float 4s, spin 12s, fade 1.2s, breathing 5s, glow 3s
+        var bases = { pulse: 2, float: 4, spin: 12, 'fade-in-once': 1.2, breathing: 5, glow: 3 };
+        var base = bases[anim] || 2;
+        ssLogoEl.style.setProperty('--ss-logo-anim-dur', (base * scale).toFixed(2) + 's');
+      }
+      if (resolvedLogo) {
+        ssLogoImg.src = resolvedLogo;
       } else {
         ssLogoEl.style.display = 'none';
       }
@@ -1723,31 +1909,35 @@ function buildOverlayHTML(): string {
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
     if (ss.showCountdown && ss.countdownTarget) {
       var showLabels = (ssCfg && ssCfg.countdownStyle) ? ssCfg.countdownStyle.showLabels : false;
+      var expiredText = (ssCfg && ssCfg.countdownStyle && ssCfg.countdownStyle.expiredText) ? ssCfg.countdownStyle.expiredText : 'SOON';
+      var prefixText = (ssCfg && ssCfg.countdownStyle && ssCfg.countdownStyle.prefixText) ? ssCfg.countdownStyle.prefixText : '';
       function updateCountdown() {
         var target = new Date(ss.countdownTarget).getTime();
         var now = Date.now();
         var diff = Math.max(0, target - now);
         if (diff <= 0) {
-          ssCountEl.textContent = showLabels ? '0h 00m 00s' : '00:00';
+          ssCountEl.textContent = expiredText;
           if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
           return;
         }
         var h = Math.floor(diff / 3600000);
         var m = Math.floor((diff % 3600000) / 60000);
         var s = Math.floor((diff % 60000) / 1000);
+        var body = '';
         if (showLabels) {
           if (h > 0) {
-            ssCountEl.textContent = h + 'h ' + String(m).padStart(2, '0') + 'm ' + String(s).padStart(2, '0') + 's';
+            body = h + 'h ' + String(m).padStart(2, '0') + 'm ' + String(s).padStart(2, '0') + 's';
           } else {
-            ssCountEl.textContent = m + 'm ' + String(s).padStart(2, '0') + 's';
+            body = m + 'm ' + String(s).padStart(2, '0') + 's';
           }
         } else {
           if (h > 0) {
-            ssCountEl.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            body = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
           } else {
-            ssCountEl.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            body = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
           }
         }
+        ssCountEl.textContent = prefixText ? (prefixText + ' ' + body) : body;
       }
       updateCountdown();
       countdownInterval = setInterval(updateCountdown, 1000);
@@ -1807,6 +1997,17 @@ function buildOverlayHTML(): string {
 
     // --- Social Media Bar ---
     var ssSocialEl = document.getElementById('ss-social');
+    // Diagnostic
+    if (!window._ssSocialLogged) {
+      window._ssSocialLogged = true;
+      var sbCfgD = ssCfg && ssCfg.socialBar;
+      var sbLayoutD = ssCfg && ssCfg.layout && ssCfg.layout.socialBar;
+      console.error('[SSE-social-diag] el=' + !!ssSocialEl +
+        ' enabled=' + (sbCfgD && sbCfgD.enabled) +
+        ' layoutVisible=' + (sbLayoutD && sbLayoutD.visible) +
+        ' handleCount=' + (sbCfgD && sbCfgD.handles ? sbCfgD.handles.length : 'NULL') +
+        ' brandingIG=' + (state && state.branding ? state.branding.instagram : 'NO'));
+    }
     if (ssSocialEl && ssCfg && ssCfg.socialBar && ssCfg.socialBar.enabled && ssCfg.layout && ssCfg.layout.socialBar && ssCfg.layout.socialBar.visible) {
       var sbLayout = ssCfg.layout.socialBar;
       var sbCfg = ssCfg.socialBar;
@@ -1815,7 +2016,18 @@ function buildOverlayHTML(): string {
       ssSocialEl.style.top = sbLayout.y + '%';
       ssSocialEl.style.width = sbLayout.width + '%';
       ssSocialEl.style.height = sbLayout.height + '%';
+      // Force display in case CSS .ss-social-bar has display:none and the
+      // .visible class doesn't override it.
+      ssSocialEl.style.display = 'flex';
+      ssSocialEl.style.alignItems = 'center';
+      ssSocialEl.style.justifyContent = 'center';
+      ssSocialEl.style.gap = '14px';
       var isVertical = sbCfg.position === 'left' || sbCfg.position === 'right';
+      if (isVertical) {
+        ssSocialEl.style.flexDirection = 'column';
+      } else {
+        ssSocialEl.style.flexDirection = 'row';
+      }
       ssSocialEl.classList.toggle('vertical', isVertical);
       var html = '';
       var icons = {
@@ -1828,20 +2040,35 @@ function buildOverlayHTML(): string {
       };
       var showIcon = sbCfg.style !== 'text-only';
       var showText = sbCfg.style !== 'icons-only';
-      var handles = sbCfg.handles && sbCfg.handles.length > 0 ? sbCfg.handles : [];
-      if (handles.length === 0 && state && state.branding) {
+      // Drop handles where the actual handle string is empty — saved configs can
+      // contain stub entries from the editor "+ Add Handle" button before user
+      // typed anything, and rendering them produces blank icons/text.
+      var rawHandles = (sbCfg.handles || []).filter(function(h) {
+        return h && typeof h.handle === 'string' && h.handle.trim().length > 0;
+      });
+      var handles = rawHandles.slice();
+      // Always merge in branding-derived handles for any platforms not already
+      // explicitly listed. This way: empty-handle config → all branding handles;
+      // partial config → fills the gaps with branding.
+      if (state && state.branding) {
         var b = state.branding;
         var platformMap = [
           ['instagram', b.instagram], ['facebook', b.facebook], ['tiktok', b.tiktok],
           ['youtube', b.youtube], ['twitter', b.twitter], ['website', b.website]
         ];
         platformMap.forEach(function(pair) {
-          if (pair[1]) handles.push({ platform: pair[0], handle: pair[1] });
+          var alreadyHas = handles.some(function(h) { return h.platform === pair[0]; });
+          if (!alreadyHas && pair[1] && String(pair[1]).trim()) {
+            handles.push({ platform: pair[0], handle: pair[1] });
+          }
         });
       }
       handles.forEach(function(h) {
         var icon = showIcon ? (icons[h.platform] || '') : '';
-        var text = showText ? '<span>' + h.handle + '</span>' : '';
+        // Strip leading @ if present so we don't double it; add @ for handle-style platforms only
+        var raw = String(h.handle || '').replace(/^@/, '');
+        var displayed = (h.platform === 'website') ? raw : ('@' + raw);
+        var text = showText ? '<span>' + displayed + '</span>' : '';
         html += '<div class="ss-social-item">' + icon + text + '</div>';
       });
       ssSocialEl.innerHTML = html;
@@ -2210,10 +2437,48 @@ function buildOverlayHTML(): string {
       window._ssChatHash = null;
     }
 
-    // --- Ticker on Starting Soon ---
-    var tickerEl = document.getElementById('ticker');
-    if (tickerEl && ss.visible && ssCfg && ssCfg.tickerEnabled) {
-      tickerEl.classList.add('visible');
+    // --- Independent SSE Ticker Rail ---
+    // (Replaces the legacy "share the main overlay ticker" hack. The SSE ticker
+    // is its own DOM element with its own text/speed/color/bg, and lives inside
+    // #starting-soon so it only shows when the SSE scene is up.)
+    var ssTickerRail = document.getElementById('ss-ticker-rail');
+    var ssTickerInner = document.getElementById('ss-ticker-rail-inner');
+    var ticker = (ssCfg && ssCfg.ticker) || null;
+    var tickerLayoutVisible = !!(ssCfg && ssCfg.layout && ssCfg.layout.ticker && ssCfg.layout.ticker.visible);
+    // Diagnostic — use console.error since main.log only forwards error level.
+    if (!window._ssTickerLogged) {
+      window._ssTickerLogged = true;
+      console.error('[SSE-ticker-diag] rail=' + !!ssTickerRail + ' inner=' + !!ssTickerInner +
+        ' tickerEnabled=' + (ticker && ticker.enabled) +
+        ' tickerText=' + (ticker && ticker.text ? '"' + String(ticker.text).slice(0,40) + '"' : 'NONE') +
+        ' layoutVisible=' + tickerLayoutVisible +
+        ' ssCfgKeys=' + (ssCfg ? Object.keys(ssCfg).join(',') : 'NULL'));
+    }
+    if (ssTickerRail && ssTickerInner && ticker && ticker.enabled && tickerLayoutVisible && ticker.text) {
+      var tLayout = ssCfg.layout.ticker;
+      ssTickerRail.classList.add('visible');
+      ssTickerRail.style.left = tLayout.x + '%';
+      ssTickerRail.style.top = tLayout.y + '%';
+      ssTickerRail.style.width = tLayout.width + '%';
+      ssTickerRail.style.height = tLayout.height + '%';
+      ssTickerRail.style.background = ticker.bgColor || 'rgba(0,0,0,0.55)';
+      ssTickerInner.style.color = ticker.color || '#ffffff';
+      ssTickerInner.style.fontSize = (ticker.fontSize || 22) + 'px';
+      ssTickerInner.style.fontWeight = '600';
+      ssTickerInner.textContent = ticker.text;
+      // speed (px/s) → keyframe duration: estimate text width via 1920px reference frame
+      var speed = Math.max(20, ticker.speed || 60);
+      var dur = Math.max(8, Math.round(2400 / speed));
+      ssTickerRail.style.setProperty('--ss-ticker-dur', dur + 's');
+    } else if (ssTickerRail) {
+      ssTickerRail.classList.remove('visible');
+    }
+    // Backward-compat: also turn OFF the legacy main-overlay ticker hijack.
+    var legacyTickerEl = document.getElementById('ticker');
+    if (legacyTickerEl && ss.visible && ssCfg && ssCfg.tickerEnabled && !(ticker && ticker.enabled)) {
+      // Old config without the new ticker shape — fall back to old behavior so
+      // existing saved configs don't visually break.
+      legacyTickerEl.classList.add('visible');
     }
 
     // --- Chat Fire (commit 6) ---

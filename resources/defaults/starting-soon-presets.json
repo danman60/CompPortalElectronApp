@@ -1,0 +1,575 @@
+[
+  {
+    "id": "default-dark-elegant",
+    "name": "Dark Elegant",
+    "createdAt": "2026-04-12T11:24:12.326Z",
+    "config": {
+      "gradient": {
+        "preset": "midnight-pulse",
+        "speed": 3,
+        "angle": 45
+      },
+      "layout": {
+        "logo": {
+          "x": 85,
+          "y": 5,
+          "width": 10,
+          "height": 8,
+          "visible": true
+        },
+        "title": {
+          "x": 50,
+          "y": 30,
+          "width": 40,
+          "height": 10,
+          "visible": true
+        },
+        "subtitle": {
+          "x": 50,
+          "y": 42,
+          "width": 40,
+          "height": 8,
+          "visible": false
+        },
+        "countdown": {
+          "x": 50,
+          "y": 55,
+          "width": 20,
+          "height": 15,
+          "visible": true
+        },
+        "timeDate": {
+          "x": 95,
+          "y": 2,
+          "width": 5,
+          "height": 5,
+          "visible": false
+        },
+        "videoPlaylist": {
+          "x": 5,
+          "y": 55,
+          "width": 30,
+          "height": 30,
+          "visible": false
+        },
+        "photoSlideshow": {
+          "x": 40,
+          "y": 55,
+          "width": 30,
+          "height": 30,
+          "visible": false
+        },
+        "ticker": {
+          "x": 50,
+          "y": 95,
+          "width": 40,
+          "height": 3,
+          "visible": false
+        },
+        "socialBar": {
+          "x": 50,
+          "y": 85,
+          "width": 40,
+          "height": 5,
+          "visible": false
+        },
+        "sponsorCarousel": {
+          "x": 50,
+          "y": 2,
+          "width": 40,
+          "height": 4,
+          "visible": false
+        },
+        "visualizer": {
+          "x": 10,
+          "y": 70,
+          "width": 20,
+          "height": 20,
+          "visible": false
+        },
+        "eventCard": {
+          "x": 5,
+          "y": 5,
+          "width": 20,
+          "height": 20,
+          "visible": false
+        },
+        "upNext": {
+          "x": 5,
+          "y": 30,
+          "width": 30,
+          "height": 50,
+          "visible": false
+        },
+        "pinnedChat": {
+          "x": 65,
+          "y": 30,
+          "width": 30,
+          "height": 40,
+          "visible": false
+        }
+      },
+      "title": "Starting Soon",
+      "titleFontSize": 72,
+      "titleColor": "#ffffff",
+      "subtitle": "",
+      "subtitleFontSize": 24,
+      "subtitleColor": "#cccccc",
+      "showCountdown": true,
+      "countdownTarget": "",
+      "countdownStyle": {
+        "fontSize": 96,
+        "color": "#ffffff",
+        "fontWeight": 700,
+        "showLabels": true
+      },
+      "timeDate": {
+        "enabled": true,
+        "format": "12h",
+        "showDate": false,
+        "showSeconds": true,
+        "fontSize": 24,
+        "color": "#ffffff"
+      },
+      "videoPlaylist": {
+        "enabled": false,
+        "folderPath": "",
+        "fileList": [],
+        "loop": true,
+        "muted": false,
+        "shuffled": false
+      },
+      "photoSlideshow": {
+        "enabled": false,
+        "folderPath": "",
+        "fileList": [],
+        "intervalSeconds": 5,
+        "transitionType": "crossfade",
+        "transitionDuration": 1000
+      },
+      "socialBar": {
+        "enabled": false,
+        "handles": [],
+        "position": "bottom",
+        "style": "icons-and-text"
+      },
+      "sponsorCarousel": {
+        "enabled": false,
+        "folderPath": "",
+        "logoFiles": [],
+        "intervalSeconds": 3,
+        "transitionType": "fade"
+      },
+      "visualizer": {
+        "enabled": false,
+        "barCount": 32,
+        "colorStart": "#ff4444",
+        "colorEnd": "#ffaa00",
+        "style": "bars"
+      },
+      "eventInfo": {
+        "enabled": false,
+        "showCompetitionName": true,
+        "showVenue": true,
+        "showDate": true,
+        "customFields": []
+      },
+      "upNext": {
+        "enabled": false,
+        "count": 5,
+        "showDancers": true,
+        "showStudio": true,
+        "showCategory": false
+      },
+      "pinnedChat": {
+        "enabled": false,
+        "maxVisible": 3,
+        "rotateIntervalSec": 8,
+        "showTimestamps": false
+      },
+      "tickerEnabled": false
+    }
+  },
+  {
+    "id": "default-bright-fun",
+    "name": "Bright & Fun",
+    "createdAt": "2026-04-12T11:24:12.327Z",
+    "config": {
+      "gradient": {
+        "preset": "sunset-drift",
+        "speed": 5,
+        "angle": 135
+      },
+      "layout": {
+        "logo": {
+          "x": 85,
+          "y": 5,
+          "width": 10,
+          "height": 8,
+          "visible": true
+        },
+        "title": {
+          "x": 50,
+          "y": 30,
+          "width": 40,
+          "height": 10,
+          "visible": true
+        },
+        "subtitle": {
+          "x": 50,
+          "y": 42,
+          "width": 40,
+          "height": 8,
+          "visible": true
+        },
+        "countdown": {
+          "x": 50,
+          "y": 55,
+          "width": 20,
+          "height": 15,
+          "visible": true
+        },
+        "timeDate": {
+          "x": 95,
+          "y": 2,
+          "width": 5,
+          "height": 5,
+          "visible": true
+        },
+        "videoPlaylist": {
+          "x": 5,
+          "y": 55,
+          "width": 30,
+          "height": 30,
+          "visible": false
+        },
+        "photoSlideshow": {
+          "x": 40,
+          "y": 55,
+          "width": 30,
+          "height": 30,
+          "visible": false
+        },
+        "ticker": {
+          "x": 50,
+          "y": 95,
+          "width": 40,
+          "height": 3,
+          "visible": true
+        },
+        "socialBar": {
+          "x": 50,
+          "y": 85,
+          "width": 40,
+          "height": 5,
+          "visible": true
+        },
+        "sponsorCarousel": {
+          "x": 50,
+          "y": 2,
+          "width": 40,
+          "height": 4,
+          "visible": false
+        },
+        "visualizer": {
+          "x": 10,
+          "y": 70,
+          "width": 20,
+          "height": 20,
+          "visible": false
+        },
+        "eventCard": {
+          "x": 5,
+          "y": 5,
+          "width": 20,
+          "height": 20,
+          "visible": false
+        },
+        "upNext": {
+          "x": 5,
+          "y": 30,
+          "width": 30,
+          "height": 50,
+          "visible": false
+        },
+        "pinnedChat": {
+          "x": 65,
+          "y": 30,
+          "width": 30,
+          "height": 40,
+          "visible": false
+        }
+      },
+      "title": "Starting Soon!",
+      "titleFontSize": 84,
+      "titleColor": "#ffffff",
+      "subtitle": "Get ready for the show",
+      "subtitleFontSize": 36,
+      "subtitleColor": "#ffffff",
+      "showCountdown": true,
+      "countdownTarget": "",
+      "countdownStyle": {
+        "fontSize": 72,
+        "color": "#ffffff",
+        "fontWeight": 700,
+        "showLabels": true
+      },
+      "timeDate": {
+        "enabled": true,
+        "format": "12h",
+        "showDate": true,
+        "showSeconds": false,
+        "fontSize": 24,
+        "color": "#ffffff"
+      },
+      "videoPlaylist": {
+        "enabled": false,
+        "folderPath": "",
+        "fileList": [],
+        "loop": true,
+        "muted": false,
+        "shuffled": false
+      },
+      "photoSlideshow": {
+        "enabled": false,
+        "folderPath": "",
+        "fileList": [],
+        "intervalSeconds": 5,
+        "transitionType": "crossfade",
+        "transitionDuration": 1000
+      },
+      "socialBar": {
+        "enabled": true,
+        "handles": [],
+        "position": "bottom",
+        "style": "icons-and-text"
+      },
+      "sponsorCarousel": {
+        "enabled": false,
+        "folderPath": "",
+        "logoFiles": [],
+        "intervalSeconds": 3,
+        "transitionType": "fade"
+      },
+      "visualizer": {
+        "enabled": false,
+        "barCount": 32,
+        "colorStart": "#ff4444",
+        "colorEnd": "#ffaa00",
+        "style": "bars"
+      },
+      "eventInfo": {
+        "enabled": false,
+        "showCompetitionName": true,
+        "showVenue": true,
+        "showDate": true,
+        "customFields": []
+      },
+      "upNext": {
+        "enabled": false,
+        "count": 5,
+        "showDancers": true,
+        "showStudio": true,
+        "showCategory": false
+      },
+      "pinnedChat": {
+        "enabled": false,
+        "maxVisible": 3,
+        "rotateIntervalSec": 8,
+        "showTimestamps": false
+      },
+      "tickerEnabled": true
+    }
+  },
+  {
+    "id": "default-minimal",
+    "name": "Minimal",
+    "createdAt": "2026-04-12T11:24:12.327Z",
+    "config": {
+      "gradient": {
+        "preset": "monochrome-shift",
+        "speed": 2,
+        "angle": 45
+      },
+      "layout": {
+        "logo": {
+          "x": 85,
+          "y": 5,
+          "width": 10,
+          "height": 8,
+          "visible": false
+        },
+        "title": {
+          "x": 50,
+          "y": 30,
+          "width": 40,
+          "height": 10,
+          "visible": true
+        },
+        "subtitle": {
+          "x": 50,
+          "y": 42,
+          "width": 40,
+          "height": 8,
+          "visible": false
+        },
+        "countdown": {
+          "x": 50,
+          "y": 55,
+          "width": 20,
+          "height": 15,
+          "visible": true
+        },
+        "timeDate": {
+          "x": 95,
+          "y": 2,
+          "width": 5,
+          "height": 5,
+          "visible": false
+        },
+        "videoPlaylist": {
+          "x": 5,
+          "y": 55,
+          "width": 30,
+          "height": 30,
+          "visible": false
+        },
+        "photoSlideshow": {
+          "x": 40,
+          "y": 55,
+          "width": 30,
+          "height": 30,
+          "visible": false
+        },
+        "ticker": {
+          "x": 50,
+          "y": 95,
+          "width": 40,
+          "height": 3,
+          "visible": false
+        },
+        "socialBar": {
+          "x": 50,
+          "y": 85,
+          "width": 40,
+          "height": 5,
+          "visible": false
+        },
+        "sponsorCarousel": {
+          "x": 50,
+          "y": 2,
+          "width": 40,
+          "height": 4,
+          "visible": false
+        },
+        "visualizer": {
+          "x": 10,
+          "y": 70,
+          "width": 20,
+          "height": 20,
+          "visible": false
+        },
+        "eventCard": {
+          "x": 5,
+          "y": 5,
+          "width": 20,
+          "height": 20,
+          "visible": false
+        },
+        "upNext": {
+          "x": 5,
+          "y": 30,
+          "width": 30,
+          "height": 50,
+          "visible": false
+        },
+        "pinnedChat": {
+          "x": 65,
+          "y": 30,
+          "width": 30,
+          "height": 40,
+          "visible": false
+        }
+      },
+      "title": "Starting Soon",
+      "titleFontSize": 48,
+      "titleColor": "#ffffff",
+      "subtitle": "",
+      "subtitleFontSize": 24,
+      "subtitleColor": "#cccccc",
+      "showCountdown": true,
+      "countdownTarget": "",
+      "countdownStyle": {
+        "fontSize": 64,
+        "color": "#ffffff",
+        "fontWeight": 300,
+        "showLabels": false
+      },
+      "timeDate": {
+        "enabled": true,
+        "format": "12h",
+        "showDate": false,
+        "showSeconds": true,
+        "fontSize": 24,
+        "color": "#ffffff"
+      },
+      "videoPlaylist": {
+        "enabled": false,
+        "folderPath": "",
+        "fileList": [],
+        "loop": true,
+        "muted": false,
+        "shuffled": false
+      },
+      "photoSlideshow": {
+        "enabled": false,
+        "folderPath": "",
+        "fileList": [],
+        "intervalSeconds": 5,
+        "transitionType": "crossfade",
+        "transitionDuration": 1000
+      },
+      "socialBar": {
+        "enabled": false,
+        "handles": [],
+        "position": "bottom",
+        "style": "icons-and-text"
+      },
+      "sponsorCarousel": {
+        "enabled": false,
+        "folderPath": "",
+        "logoFiles": [],
+        "intervalSeconds": 3,
+        "transitionType": "fade"
+      },
+      "visualizer": {
+        "enabled": false,
+        "barCount": 32,
+        "colorStart": "#ff4444",
+        "colorEnd": "#ffaa00",
+        "style": "bars"
+      },
+      "eventInfo": {
+        "enabled": false,
+        "showCompetitionName": true,
+        "showVenue": true,
+        "showDate": true,
+        "customFields": []
+      },
+      "upNext": {
+        "enabled": false,
+        "count": 5,
+        "showDancers": true,
+        "showStudio": true,
+        "showCategory": false
+      },
+      "pinnedChat": {
+        "enabled": false,
+        "maxVisible": 3,
+        "rotateIntervalSec": 8,
+        "showTimestamps": false
+      },
+      "tickerEnabled": false
+    }
+  }
+]

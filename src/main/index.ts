@@ -19,11 +19,13 @@ import * as uploadService from './services/upload'
 import * as state from './services/state'
 import * as systemMonitor from './services/systemMonitor'
 import * as driveMonitor from './services/driveMonitor'
+import * as perf from './services/perfLogger'
 import * as schedule from './services/schedule'
 import * as wpdBridge from './services/wpdBridge'
 import * as tether from './services/tether'
 import * as wifiDisplay from './services/wifiDisplay'
 import * as chatBridge from './services/chatBridge'
+import * as dayChecklist from './services/dayChecklist'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
 
@@ -150,6 +152,14 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Pause OBS preview polling while the window is hidden/minimized — saves
+  // a GetSourceScreenshot round-trip to OBS every 500ms when the operator
+  // alt-tabs away. Resumed automatically when the window is visible again.
+  mainWindow.on('hide', () => obs.setPreviewPaused(true))
+  mainWindow.on('minimize', () => obs.setPreviewPaused(true))
+  mainWindow.on('show', () => obs.setPreviewPaused(false))
+  mainWindow.on('restore', () => obs.setPreviewPaused(false))
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -215,6 +225,9 @@ app.whenReady().then(async () => {
   } catch (err) {
     logger.app.warn(`Power save blocker failed: ${err instanceof Error ? err.message : err}`)
   }
+
+  // Start perf telemetry (writes perf.log one JSONL row per minute)
+  perf.start()
 
   // Initialize persistent job queue (must be before any service that enqueues)
   jobQueue.init()
@@ -324,6 +337,11 @@ app.whenReady().then(async () => {
           state.setCompetition(comp)
           recording.broadcastFullState()
           logger.app.info(`Refetched schedule on startup: ${comp.name} (${comp.routines.length} routines)`)
+          // Chat bridge: retry start now that we have a resolved connection.
+          // The first call at app.whenReady() bailed out because the share-code
+          // resolve happens asynchronously after the bridge init.
+          chatBridge.stopChatBridge()
+          chatBridge.startChatBridge()
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           logger.app.warn(`Startup schedule refetch failed, continuing with persisted state: ${msg}`)
@@ -347,16 +365,37 @@ app.whenReady().then(async () => {
         uploadService.retryOrphanedCompletions().then(count => {
           if (count > 0) logger.app.info(`Recovered ${count} orphaned upload completions`)
         }).catch(() => {})
-        // Retry encoded routines that were skipped due to missing connection at encode time
-        const skippedRetried = uploadService.retrySkippedEncoded()
-        if (skippedRetried > 0) logger.app.info(`Retried ${skippedRetried} encoded routines that were skipped earlier`)
+        // Retry encoded routines that were skipped due to missing connection at encode time.
+        // Fire-and-forget: batches with setImmediate to prevent AppHangB1 on startup.
+        uploadService.retrySkippedEncoded().then(count => {
+          if (count > 0) logger.app.info(`Retried ${count} encoded routines that were skipped earlier`)
+        }).catch(err => {
+          logger.app.warn(`retrySkippedEncoded failed: ${err instanceof Error ? err.message : err}`)
+        })
         // Retry incomplete photo uploads for routines already marked 'uploaded'
         const photoRetried = uploadService.retryIncompletePhotoUploads()
         if (photoRetried > 0) logger.app.info(`Retrying incomplete photo uploads for ${photoRetried} routines`)
+
+        // Start-of-day checklist: fire after the fresh schedule is loaded and
+        // reconcile has finished. Wait a moment for the renderer to mount so
+        // the IPC listener is registered.
+        setTimeout(() => {
+          try { dayChecklist.maybeFireStartOfDay() } catch (err) {
+            logger.app.warn(`dayChecklist start-of-day fire failed: ${err instanceof Error ? err.message : err}`)
+          }
+        }, 3000)
       })
       .catch((err) => {
         logger.app.warn(`Share code resolve failed: ${err instanceof Error ? err.message : err}`)
       })
+  } else {
+    // Offline / no share code configured — still fire start-of-day against any
+    // persisted competition. Delay gives renderer time to mount.
+    setTimeout(() => {
+      try { dayChecklist.maybeFireStartOfDay() } catch (err) {
+        logger.app.warn(`dayChecklist start-of-day fire failed: ${err instanceof Error ? err.message : err}`)
+      }
+    }, 4000)
   }
 
   // Run startup validation (after window is ready so we can send report to renderer)
@@ -431,6 +470,7 @@ app.on('before-quit', async (event) => {
 
   // Stop servers + hotkeys + monitors
   hotkeys.unregister()
+  perf.stop()
   systemMonitor.stopMonitoring()
   driveMonitor.stopMonitoring()
   chatBridge.stopChatBridge()

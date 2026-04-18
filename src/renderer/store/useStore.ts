@@ -385,10 +385,15 @@ export function initIPCListeners(): () => void {
   })
 
   // Audio levels → AudioMeterData
+  let _audioDiagCount = 0
   window.api.on(IPC_CHANNELS.OBS_AUDIO_LEVELS, (data: unknown) => {
     const levels = data as AudioLevel[]
     const settings = store().settings
     const mapping = settings?.audioInputMapping
+    _audioDiagCount++
+    if (_audioDiagCount <= 3 || _audioDiagCount % 100 === 0) {
+      console.error(`[METER-DIAG #${_audioDiagCount}] levels=${levels?.length ?? 'null'} mapping=${JSON.stringify(mapping)} sample=${JSON.stringify(levels?.slice(0, 2) ?? null)}`)
+    }
     if (!mapping) return
 
     const findDB = (role: string): number => {
@@ -401,12 +406,14 @@ export function initIPCListeners(): () => void {
     }
 
     const judgeCount = settings?.competition.judgeCount ?? 3
-    useStore.setState({
-      audioMeters: {
-        performance: findDB('performance'),
-        judges: Array.from({ length: judgeCount }, (_, i) => findDB(`judge${i + 1}`)),
-      },
-    })
+    const newMeters = {
+      performance: findDB('performance'),
+      judges: Array.from({ length: judgeCount }, (_, i) => findDB(`judge${i + 1}`)),
+    }
+    if (_audioDiagCount <= 3 || _audioDiagCount % 100 === 0) {
+      console.error(`[METER-DIAG #${_audioDiagCount}] computed=${JSON.stringify(newMeters)}`)
+    }
+    useStore.setState({ audioMeters: newMeters })
   })
 
   // Job queue progress

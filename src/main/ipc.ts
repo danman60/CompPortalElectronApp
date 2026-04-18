@@ -21,10 +21,12 @@ import * as tether from './services/tether'
 import * as wifiDisplay from './services/wifiDisplay'
 import * as chatBridge from './services/chatBridge'
 import * as brandScraper from './services/brandScraper'
+import * as dayChecklist from './services/dayChecklist'
 import { checkAndRecover } from './services/crashRecovery'
 import * as recovery from './services/recovery'
 import * as backup from './services/backup'
 import * as streamDeckPlugin from './services/streamDeckPlugin'
+import * as overlayPanels from './services/overlayPanels'
 import { sendToRenderer } from './ipcUtil'
 import { logger } from './logger'
 
@@ -338,6 +340,54 @@ export function registerAllHandlers(): void {
     return await streamDeckPlugin.installPlugin()
   })
 
+  // --- Overlay Mode (floating panels over OBS) ---
+  // Click-only: no auto-restore on startup, no keyboard shortcut. Uses
+  // ipcMain.handle directly because we need event.sender to find the main
+  // window (the caller) on open.
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_MODE_OPEN, (event) => {
+    logIPC(IPC_CHANNELS.OVERLAY_MODE_OPEN)
+    const caller = BrowserWindow.fromWebContents(event.sender)
+    if (!caller) return { error: 'No caller window' }
+    try {
+      overlayPanels.openAll(caller)
+      return { ok: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.ipc.error(`overlay-mode:open failed: ${msg}`)
+      return { error: msg }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_MODE_CLOSE, () => {
+    logIPC(IPC_CHANNELS.OVERLAY_MODE_CLOSE)
+    try {
+      overlayPanels.closeAll()
+      return { ok: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.ipc.error(`overlay-mode:close failed: ${msg}`)
+      return { error: msg }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_MODE_TOGGLE, (event) => {
+    logIPC(IPC_CHANNELS.OVERLAY_MODE_TOGGLE)
+    try {
+      if (overlayPanels.isOpen()) {
+        overlayPanels.closeAll()
+      } else {
+        const caller = BrowserWindow.fromWebContents(event.sender)
+        if (!caller) return { error: 'No caller window' }
+        overlayPanels.openAll(caller)
+      }
+      return { ok: true, open: overlayPanels.isOpen() }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.ipc.error(`overlay-mode:toggle failed: ${msg}`)
+      return { error: msg }
+    }
+  })
+
   // --- Upload ---
   safeHandle(IPC_CHANNELS.UPLOAD_START, () => {
     logIPC(IPC_CHANNELS.UPLOAD_START)
@@ -402,6 +452,13 @@ export function registerAllHandlers(): void {
     const s = settings.getSettings()
     if (!comp) return { error: 'No competition loaded' }
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
+  })
+
+  // Bug C: cancel an in-flight import. Aborts mid-loop so the runaway 21k-
+  // photo scan from Saturday 2026-04-18 doesn't repeat.
+  safeHandle(IPC_CHANNELS.PHOTOS_CANCEL, async () => {
+    logIPC(IPC_CHANNELS.PHOTOS_CANCEL)
+    return photoService.cancelCurrentImport()
   })
 
   safeHandle(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, async (orphanPath: unknown, routineId: unknown) => {
@@ -964,6 +1021,33 @@ export function registerAllHandlers(): void {
       overlay.fireChatMessage(msg as any)
     }
     return { ok: true }
+  })
+
+  // --- Day Checklist (Start-of-Day / End-of-Day modals) ---
+  safeHandle(IPC_CHANNELS.DAY_CHECKLIST_GET, (date: unknown, kind: unknown) => {
+    return dayChecklist.getDayState(date as string, kind as 'start' | 'end')
+  })
+
+  safeHandle(IPC_CHANNELS.DAY_CHECKLIST_SET_ITEM, (
+    date: unknown,
+    kind: unknown,
+    itemId: unknown,
+    value: unknown,
+  ) => {
+    return dayChecklist.setItemState(
+      date as string,
+      kind as 'start' | 'end',
+      itemId as string,
+      value as 'open' | 'checked' | 'skipped' | 'na',
+    )
+  })
+
+  safeHandle(IPC_CHANNELS.DAY_CHECKLIST_DISMISS, (date: unknown, kind: unknown) => {
+    return dayChecklist.markDismissed(date as string, kind as 'start' | 'end')
+  })
+
+  safeHandle(IPC_CHANNELS.DAY_CHECKLIST_REOPEN, (kind: unknown) => {
+    return dayChecklist.manualReopen(kind as 'start' | 'end')
   })
 
   // Start system monitor

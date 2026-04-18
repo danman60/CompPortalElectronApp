@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import type { StartingSoonConfig, StartingSoonPreset, GradientPreset, GradientConfig, StartingSoonLayout, SSElementPosition, SocialHandle, SocialBarConfig, EventInfoConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SponsorCarouselConfig, VisualizerConfig, UpNextConfig, PinnedChatConfig } from '../../shared/types'
+import type { StartingSoonConfig, StartingSoonPreset, GradientPreset, GradientConfig, StartingSoonLayout, SSElementPosition, SocialHandle, SocialBarConfig, EventInfoConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SponsorCarouselConfig, VisualizerConfig, UpNextConfig, PinnedChatConfig, LogoConfig, LogoAnimation, SSTickerConfig, TimeDateConfig, CountdownStyleConfig } from '../../shared/types'
 import { useStore } from '../store/useStore'
 import '../styles/startingSoonEditor.css'
 
@@ -7,20 +7,47 @@ type SSElementKey = keyof StartingSoonLayout
 
 const FONT_OPTIONS = [
   { value: '', label: 'System Default' },
+  // Sans-serif
   { value: 'Inter', label: 'Inter' },
   { value: 'Roboto', label: 'Roboto' },
   { value: 'Poppins', label: 'Poppins' },
   { value: 'Montserrat', label: 'Montserrat' },
-  { value: 'Playfair Display', label: 'Playfair Display (serif)' },
-  { value: 'Bebas Neue', label: 'Bebas Neue (display)' },
-  { value: 'Oswald', label: 'Oswald (condensed)' },
   { value: 'Lato', label: 'Lato' },
   { value: 'Open Sans', label: 'Open Sans' },
   { value: 'Raleway', label: 'Raleway' },
-  { value: 'Anton', label: 'Anton (display)' },
-  { value: 'Archivo Black', label: 'Archivo Black' },
   { value: 'Space Grotesk', label: 'Space Grotesk' },
   { value: 'DM Sans', label: 'DM Sans' },
+  { value: 'Outfit', label: 'Outfit' },
+  { value: 'Plus Jakarta Sans', label: 'Plus Jakarta Sans' },
+  { value: 'Manrope', label: 'Manrope' },
+  { value: 'Work Sans', label: 'Work Sans' },
+  { value: 'Rubik', label: 'Rubik' },
+  { value: 'Nunito', label: 'Nunito' },
+  { value: 'Fira Sans', label: 'Fira Sans' },
+  { value: 'Barlow', label: 'Barlow' },
+  { value: 'IBM Plex Sans', label: 'IBM Plex Sans' },
+  // Display / condensed
+  { value: 'Bebas Neue', label: 'Bebas Neue (display)' },
+  { value: 'Oswald', label: 'Oswald (condensed)' },
+  { value: 'Anton', label: 'Anton (display)' },
+  { value: 'Archivo Black', label: 'Archivo Black' },
+  { value: 'Abril Fatface', label: 'Abril Fatface (display)' },
+  { value: 'Righteous', label: 'Righteous (display)' },
+  { value: 'Fjalla One', label: 'Fjalla One (condensed)' },
+  { value: 'Russo One', label: 'Russo One (display)' },
+  // Serif
+  { value: 'Playfair Display', label: 'Playfair Display (serif)' },
+  { value: 'Merriweather', label: 'Merriweather (serif)' },
+  { value: 'Lora', label: 'Lora (serif)' },
+  { value: 'EB Garamond', label: 'EB Garamond (serif)' },
+  { value: 'Cormorant Garamond', label: 'Cormorant Garamond (serif)' },
+  // Script / handwritten
+  { value: 'Pacifico', label: 'Pacifico (script)' },
+  { value: 'Caveat', label: 'Caveat (handwritten)' },
+  { value: 'Dancing Script', label: 'Dancing Script (script)' },
+  // Mono
+  { value: 'JetBrains Mono', label: 'JetBrains Mono (mono)' },
+  { value: 'Space Mono', label: 'Space Mono (mono)' },
 ]
 
 interface SSDragState {
@@ -76,6 +103,29 @@ function getGradientCSS(colors: string[], angle: number): string {
   return `linear-gradient(${angle}deg, ${colors.join(', ')})`
 }
 
+interface FontPairing {
+  id: string
+  name: string
+  vibe: string
+  title: string
+  subtitle: string
+}
+
+const FONT_PAIRINGS: FontPairing[] = [
+  { id: 'modern-sans',       name: 'Modern Sans',      vibe: 'Clean, minimal',        title: 'Inter',              subtitle: 'Inter' },
+  { id: 'bold-minimal',      name: 'Bold Minimal',     vibe: 'Punchy header + clean', title: 'Bebas Neue',         subtitle: 'Inter' },
+  { id: 'classic-editorial', name: 'Classic Editorial',vibe: 'Magazine feel',         title: 'Playfair Display',   subtitle: 'Lato' },
+  { id: 'modern-editorial',  name: 'Modern Editorial', vibe: 'Refined & readable',    title: 'EB Garamond',        subtitle: 'Work Sans' },
+  { id: 'bold-impact',       name: 'Bold Impact',      vibe: 'Sharp & loud',          title: 'Anton',              subtitle: 'Nunito' },
+  { id: 'luxury',            name: 'Luxury',           vibe: 'High-end, airy',        title: 'Cormorant Garamond', subtitle: 'Montserrat' },
+  { id: 'retro-charm',       name: 'Retro Charm',      vibe: 'Vintage poster',        title: 'Abril Fatface',      subtitle: 'Poppins' },
+  { id: 'playful',           name: 'Playful',          vibe: 'Fun, casual',           title: 'Pacifico',           subtitle: 'Open Sans' },
+  { id: 'tech',              name: 'Tech',             vibe: 'Modern, geometric',     title: 'Space Grotesk',      subtitle: 'DM Sans' },
+  { id: 'editorial-bold',    name: 'Editorial Bold',   vibe: 'Newspaper hit',         title: 'Archivo Black',      subtitle: 'Inter' },
+  { id: 'condensed-sharp',   name: 'Condensed Sharp',  vibe: 'Sporty, compressed',    title: 'Oswald',             subtitle: 'Lato' },
+  { id: 'friendly-round',    name: 'Friendly Round',   vibe: 'Warm & rounded',        title: 'Fjalla One',         subtitle: 'Manrope' },
+]
+
 const SOCIAL_PLATFORMS: { value: SocialHandle['platform']; label: string }[] = [
   { value: 'instagram', label: 'Instagram' },
   { value: 'facebook', label: 'Facebook' },
@@ -106,11 +156,19 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
   const initialConfig = useRef<StartingSoonConfig | null>(null)
   const [selected, setSelected] = useState<SSElementKey | 'background' | null>('background')
   const canvasRef = useRef<HTMLDivElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const [iframeScale, setIframeScale] = useState(0.5)
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [presets, setPresets] = useState<StartingSoonPreset[]>([])
   const [selectedPresetId, setSelectedPresetId] = useState<string>('')
   const [drag, setDrag] = useState<SSDragState | null>(null)
+
+  // Focus the overlay ONCE on mount so Esc-to-close works, but never re-focus
+  // on subsequent renders — that would steal focus from any active text input
+  // on every keystroke (the original `ref={(el) => el?.focus()}` did exactly that).
+  useEffect(() => {
+    overlayRef.current?.focus()
+  }, [])
 
   // Load config and presets on mount
   useEffect(() => {
@@ -341,6 +399,24 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
     updatePhotoSlideshow({ folderPath, fileList: files })
   }, [updatePhotoSlideshow])
 
+  const setAspectRatio = useCallback((element: SSElementKey, ratio: '16:9' | '9:16') => {
+    if (!config) return
+    const cur = config.layout[element]
+    const cx = cur.x + cur.width / 2
+    const cy = cur.y + cur.height / 2
+    let w: number, h: number
+    if (ratio === '16:9') {
+      h = Math.max(cur.height, 12)
+      w = h
+    } else {
+      h = Math.max(cur.height, 40)
+      w = h * 81 / 256
+    }
+    const x = Math.max(0, Math.min(100 - w, cx - w / 2))
+    const y = Math.max(0, Math.min(100 - h, cy - h / 2))
+    updateLayoutPosition(element, { x, y, width: w, height: h })
+  }, [config, updateLayoutPosition])
+
   const updateSponsorCarousel = useCallback((updates: Partial<SponsorCarouselConfig>) => {
     setConfig(prev => {
       if (!prev) return prev
@@ -376,6 +452,54 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
       return next
     })
   }, [pushConfig])
+
+  const updateLogo = useCallback((updates: Partial<LogoConfig>) => {
+    setConfig(prev => {
+      if (!prev) return prev
+      const next = { ...prev, logo: { ...prev.logo, ...updates } }
+      pushConfig(next)
+      return next
+    })
+  }, [pushConfig])
+
+  const updateSSTicker = useCallback((updates: Partial<SSTickerConfig>) => {
+    setConfig(prev => {
+      if (!prev) return prev
+      const next = { ...prev, ticker: { ...prev.ticker, ...updates } }
+      pushConfig(next)
+      return next
+    })
+  }, [pushConfig])
+
+  const updateTimeDate = useCallback((updates: Partial<TimeDateConfig>) => {
+    setConfig(prev => {
+      if (!prev) return prev
+      const next = { ...prev, timeDate: { ...prev.timeDate, ...updates } }
+      pushConfig(next)
+      return next
+    })
+  }, [pushConfig])
+
+  const updateCountdownStyle = useCallback((updates: Partial<CountdownStyleConfig>) => {
+    setConfig(prev => {
+      if (!prev) return prev
+      const next = { ...prev, countdownStyle: { ...prev.countdownStyle, ...updates } }
+      pushConfig(next)
+      return next
+    })
+  }, [pushConfig])
+
+  // Set countdownTarget to now + N minutes (and ensure showCountdown is on).
+  // Pushed via overlaySetStartingSoon since countdownTarget lives on the
+  // overlay state, not the SSE config.
+  const setCountdownMinutes = useCallback((mins: number) => {
+    const target = new Date(Date.now() + mins * 60 * 1000).toISOString()
+    window.api.overlaySetStartingSoon({ showCountdown: true, countdownTarget: target })
+  }, [])
+
+  const clearCountdown = useCallback(() => {
+    window.api.overlaySetStartingSoon({ showCountdown: false, countdownTarget: '' })
+  }, [])
 
   const browseSponsorFolder = useCallback(async () => {
     const folderPath = await window.api.ssBrowseFolder('sponsor')
@@ -457,7 +581,7 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       tabIndex={0}
-      ref={(el) => el?.focus()}
+      ref={overlayRef}
     >
       <div className="sse-header">
         <span className="sse-title">Starting Soon Scene Editor</span>
@@ -687,13 +811,38 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
+              {/* Typography Pairings */}
+              <div className="sse-props-section">
+                <div className="sse-section-label">Typography Pairings</div>
+                <div className="sse-font-pairing-grid">
+                  {FONT_PAIRINGS.map(p => {
+                    const isActive = config.titleFont === p.title && config.subtitleFont === p.subtitle
+                    return (
+                      <div
+                        key={p.id}
+                        className={`sse-font-pairing${isActive ? ' selected' : ''}`}
+                        onClick={() => updateConfig({ titleFont: p.title, subtitleFont: p.subtitle })}
+                        title={`${p.name} — ${p.vibe}\nTitle: ${p.title}\nSubtitle: ${p.subtitle}`}
+                      >
+                        <div className="sse-font-pairing-title" style={{ fontFamily: `"${p.title}", sans-serif` }}>
+                          {p.name}
+                        </div>
+                        <div className="sse-font-pairing-sub" style={{ fontFamily: `"${p.subtitle}", sans-serif` }}>
+                          {p.vibe}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
               <p className="sse-props-hint">
-                Select a gradient preset or create custom colors. Speed controls animation rate.
+                Gradient sets scene-wide background. Typography pairings set Title + Subtitle fonts together — override per element in their individual panels.
               </p>
             </>
           )}
 
-          {/* Ticker properties */}
+          {/* Ticker properties — independent of main overlay ticker */}
           {selected === 'ticker' && (
             <>
               <div className="sse-props-title">Ticker</div>
@@ -702,16 +851,314 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
                   <label>
                     <input
                       type="checkbox"
-                      checked={config.tickerEnabled}
-                      onChange={() => updateConfig({ tickerEnabled: !config.tickerEnabled })}
+                      checked={config.ticker?.enabled ?? false}
+                      onChange={() => updateSSTicker({ enabled: !(config.ticker?.enabled ?? false) })}
                     />
-                    Show ticker on Starting Soon
+                    Enabled
                   </label>
                 </div>
-                <p className="sse-props-hint">
-                  Ticker text and speed are configured in the main Overlay Controls panel.
-                  This toggle only controls whether the ticker appears during the Starting Soon scene.
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Text</div>
+                <input
+                  type="text"
+                  value={config.ticker?.text ?? ''}
+                  placeholder="Ticker message..."
+                  onChange={(e) => updateSSTicker({ text: e.target.value })}
+                  style={{ width: '100%', padding: '5px 8px', fontSize: 12, background: 'rgba(30,30,46,0.8)', border: '1px solid rgba(102,126,234,0.2)', borderRadius: 6, color: '#e0e0f0' }}
+                />
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Speed</div>
+                <div className="sse-field">
+                  <input
+                    type="range"
+                    min="20"
+                    max="200"
+                    value={config.ticker?.speed ?? 60}
+                    onChange={(e) => updateSSTicker({ speed: parseInt(e.target.value) })}
+                  />
+                  <span>{config.ticker?.speed ?? 60} px/s</span>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Style</div>
+                <div className="sse-field">
+                  <label>Text color</label>
+                  <input
+                    type="color"
+                    className="sse-color-input"
+                    value={config.ticker?.color ?? '#ffffff'}
+                    onChange={(e) => updateSSTicker({ color: e.target.value })}
+                  />
+                </div>
+                <div className="sse-field">
+                  <label>BG color</label>
+                  <input
+                    type="text"
+                    value={config.ticker?.bgColor ?? 'rgba(0,0,0,0.55)'}
+                    onChange={(e) => updateSSTicker({ bgColor: e.target.value })}
+                    style={{ flex: 1, padding: '4px 6px', fontSize: 11, background: 'rgba(30,30,46,0.8)', border: '1px solid rgba(102,126,234,0.2)', borderRadius: 4, color: '#e0e0f0' }}
+                  />
+                </div>
+                <div className="sse-field">
+                  <label>Font size</label>
+                  <input
+                    type="range"
+                    min="14"
+                    max="48"
+                    value={config.ticker?.fontSize ?? 22}
+                    onChange={(e) => updateSSTicker({ fontSize: parseInt(e.target.value) })}
+                  />
+                  <span>{config.ticker?.fontSize ?? 22}px</span>
+                </div>
+              </div>
+
+              <p className="sse-props-hint">
+                Independent from the main overlay ticker. This rail only appears on the Starting Soon scene.
+              </p>
+            </>
+          )}
+
+          {/* Logo properties */}
+          {selected === 'logo' && (
+            <>
+              <div className="sse-props-title">Logo</div>
+              <p className="sse-props-hint" style={{ marginTop: 0 }}>
+                Source: brand logo from Settings → Branding. Change it there.
+              </p>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Display</div>
+                <div className="sse-field">
+                  <label>Fit</label>
+                  <select
+                    value={config.logo?.fit ?? 'contain'}
+                    onChange={(e) => updateLogo({ fit: e.target.value as LogoConfig['fit'] })}
+                  >
+                    <option value="contain">Contain</option>
+                    <option value="cover">Cover</option>
+                    <option value="fill">Fill</option>
+                  </select>
+                </div>
+                <div className="sse-field">
+                  <label>Opacity</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={Math.round((config.logo?.opacity ?? 1) * 100)}
+                    onChange={(e) => updateLogo({ opacity: parseInt(e.target.value) / 100 })}
+                  />
+                  <span>{Math.round((config.logo?.opacity ?? 1) * 100)}%</span>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Animation</div>
+                <div className="sse-field">
+                  <select
+                    value={config.logo?.animation ?? 'none'}
+                    onChange={(e) => updateLogo({ animation: e.target.value as LogoAnimation })}
+                  >
+                    <option value="none">None</option>
+                    <option value="pulse">Pulse</option>
+                    <option value="float">Float</option>
+                    <option value="spin">Spin</option>
+                    <option value="fade-in-once">Fade in (once)</option>
+                    <option value="breathing">Breathing</option>
+                    <option value="glow">Glow</option>
+                  </select>
+                </div>
+                {(config.logo?.animation ?? 'none') !== 'none' && (
+                  <div className="sse-field">
+                    <label>Speed</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={config.logo?.animationSpeed ?? 5}
+                      onChange={(e) => updateLogo({ animationSpeed: parseInt(e.target.value) })}
+                    />
+                    <span>{config.logo?.animationSpeed ?? 5}</span>
+                  </div>
+                )}
+              </div>
+
+            </>
+          )}
+
+          {/* Countdown properties */}
+          {selected === 'countdown' && (
+            <>
+              <div className="sse-props-title">Countdown Timer</div>
+              <div className="sse-props-section">
+                <div className="sse-section-label">Quick start</div>
+                <div className="sse-field" style={{ gap: 4 }}>
+                  <button className="sse-browse-btn" style={{ flex: 1 }} onClick={() => setCountdownMinutes(5)}>5 min</button>
+                  <button className="sse-browse-btn" style={{ flex: 1 }} onClick={() => setCountdownMinutes(10)}>10 min</button>
+                  <button className="sse-browse-btn" style={{ flex: 1 }} onClick={() => setCountdownMinutes(15)}>15 min</button>
+                </div>
+                <div className="sse-field" style={{ marginTop: 4 }}>
+                  <button className="sse-browse-btn" style={{ flex: 1 }} onClick={clearCountdown}>Stop / clear</button>
+                </div>
+                <p className="sse-props-hint" style={{ marginTop: 4 }}>
+                  Countdown ends with "{config.countdownStyle?.expiredText || 'SOON'}" displayed.
                 </p>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Style</div>
+                <div className="sse-field">
+                  <label>Font size</label>
+                  <input
+                    type="range"
+                    min="32"
+                    max="240"
+                    value={config.countdownStyle?.fontSize ?? 96}
+                    onChange={(e) => updateCountdownStyle({ fontSize: parseInt(e.target.value) })}
+                  />
+                  <span>{config.countdownStyle?.fontSize ?? 96}px</span>
+                </div>
+                <div className="sse-field">
+                  <label>Color</label>
+                  <input
+                    type="color"
+                    className="sse-color-input"
+                    value={config.countdownStyle?.color ?? '#ffffff'}
+                    onChange={(e) => updateCountdownStyle({ color: e.target.value })}
+                  />
+                </div>
+                <div className="sse-field">
+                  <label>Weight</label>
+                  <select
+                    value={String(config.countdownStyle?.fontWeight ?? 900)}
+                    onChange={(e) => updateCountdownStyle({ fontWeight: parseInt(e.target.value) })}
+                  >
+                    <option value="300">Light</option>
+                    <option value="400">Regular</option>
+                    <option value="700">Bold</option>
+                    <option value="900">Black</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Format</div>
+                <div className="sse-field">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.countdownStyle?.showLabels ?? false}
+                      onChange={() => updateCountdownStyle({ showLabels: !(config.countdownStyle?.showLabels ?? false) })}
+                    />
+                    Show labels (5m 32s) instead of clock (05:32)
+                  </label>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Text</div>
+                <div className="sse-field">
+                  <label>Prefix</label>
+                  <input
+                    type="text"
+                    value={config.countdownStyle?.prefixText ?? ''}
+                    placeholder="(e.g. Doors open in)"
+                    onChange={(e) => updateCountdownStyle({ prefixText: e.target.value })}
+                    style={{ flex: 1, padding: '4px 6px', fontSize: 11, background: 'rgba(30,30,46,0.8)', border: '1px solid rgba(102,126,234,0.2)', borderRadius: 4, color: '#e0e0f0' }}
+                  />
+                </div>
+                <div className="sse-field">
+                  <label>On expire</label>
+                  <input
+                    type="text"
+                    value={config.countdownStyle?.expiredText ?? 'SOON'}
+                    placeholder="SOON"
+                    onChange={(e) => updateCountdownStyle({ expiredText: e.target.value })}
+                    style={{ flex: 1, padding: '4px 6px', fontSize: 11, background: 'rgba(30,30,46,0.8)', border: '1px solid rgba(102,126,234,0.2)', borderRadius: 4, color: '#e0e0f0' }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Time / Date properties */}
+          {selected === 'timeDate' && (
+            <>
+              <div className="sse-props-title">Time / Date</div>
+              <div className="sse-props-section">
+                <div className="sse-field">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.timeDate?.enabled ?? true}
+                      onChange={() => updateTimeDate({ enabled: !(config.timeDate?.enabled ?? true) })}
+                    />
+                    Enabled
+                  </label>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Format</div>
+                <div className="sse-field">
+                  <label>Clock</label>
+                  <select
+                    value={config.timeDate?.format ?? '12h'}
+                    onChange={(e) => updateTimeDate({ format: e.target.value as TimeDateConfig['format'] })}
+                  >
+                    <option value="12h">12-hour</option>
+                    <option value="24h">24-hour</option>
+                  </select>
+                </div>
+                <div className="sse-field">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.timeDate?.showSeconds ?? true}
+                      onChange={() => updateTimeDate({ showSeconds: !(config.timeDate?.showSeconds ?? true) })}
+                    />
+                    Show seconds
+                  </label>
+                </div>
+                <div className="sse-field">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.timeDate?.showDate ?? false}
+                      onChange={() => updateTimeDate({ showDate: !(config.timeDate?.showDate ?? false) })}
+                    />
+                    Show date
+                  </label>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Style</div>
+                <div className="sse-field">
+                  <label>Font size</label>
+                  <input
+                    type="range"
+                    min="14"
+                    max="96"
+                    value={config.timeDate?.fontSize ?? 28}
+                    onChange={(e) => updateTimeDate({ fontSize: parseInt(e.target.value) })}
+                  />
+                  <span>{config.timeDate?.fontSize ?? 28}px</span>
+                </div>
+                <div className="sse-field">
+                  <label>Color</label>
+                  <input
+                    type="color"
+                    className="sse-color-input"
+                    value={config.timeDate?.color ?? '#ffffff'}
+                    onChange={(e) => updateTimeDate({ color: e.target.value })}
+                  />
+                </div>
               </div>
             </>
           )}
@@ -921,6 +1368,14 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
               </div>
 
               <div className="sse-props-section">
+                <div className="sse-section-label">Aspect Ratio (center-crop)</div>
+                <div className="sse-aspect-row">
+                  <button className="sse-aspect-btn" onClick={() => setAspectRatio('videoPlaylist', '16:9')}>16:9</button>
+                  <button className="sse-aspect-btn" onClick={() => setAspectRatio('videoPlaylist', '9:16')}>9:16</button>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
                 <div className="sse-section-label">Video Folder</div>
                 <div className="sse-field sse-folder-field">
                   <input
@@ -995,6 +1450,14 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
                     />
                     Enabled
                   </label>
+                </div>
+              </div>
+
+              <div className="sse-props-section">
+                <div className="sse-section-label">Aspect Ratio (center-crop)</div>
+                <div className="sse-aspect-row">
+                  <button className="sse-aspect-btn" onClick={() => setAspectRatio('photoSlideshow', '16:9')}>16:9</button>
+                  <button className="sse-aspect-btn" onClick={() => setAspectRatio('photoSlideshow', '9:16')}>9:16</button>
                 </div>
               </div>
 
@@ -1452,12 +1915,12 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
             </>
           )}
 
-          {/* Generic fallback for elements without custom panels */}
-          {selected && selected !== 'background' && selected !== 'title' && selected !== 'subtitle' && selected !== 'ticker' && selected !== 'socialBar' && selected !== 'eventCard' && selected !== 'videoPlaylist' && selected !== 'photoSlideshow' && selected !== 'sponsorCarousel' && selected !== 'visualizer' && selected !== 'upNext' && selected !== 'pinnedChat' && (
+          {/* Generic fallback (should be empty now — all 14 elements have panels) */}
+          {selected && selected !== 'background' && selected !== 'title' && selected !== 'subtitle' && selected !== 'ticker' && selected !== 'socialBar' && selected !== 'eventCard' && selected !== 'videoPlaylist' && selected !== 'photoSlideshow' && selected !== 'sponsorCarousel' && selected !== 'visualizer' && selected !== 'upNext' && selected !== 'pinnedChat' && selected !== 'logo' && selected !== 'countdown' && selected !== 'timeDate' && (
             <>
               <div className="sse-props-title">{ELEMENT_LABELS[selected]}</div>
               <p className="sse-props-hint">
-                Element properties will be available in a future update. Toggle visibility using the checkbox in the left panel.
+                No properties registered for this element.
               </p>
             </>
           )}

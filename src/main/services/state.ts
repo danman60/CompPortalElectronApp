@@ -53,6 +53,7 @@ interface PersistedState {
 let currentCompetition: Competition | null = null
 let currentRoutineId: string | null = null
 let saveTimer: NodeJS.Timeout | null = null
+let savePending = false
 
 // Fix 8: Cached counts for WS broadcasts — updated incrementally
 let cachedSkippedCount = 0
@@ -66,12 +67,24 @@ function getStatePath(): string {
 
 // --- Persistence (debounced + atomic) ---
 
-/** Debounced save — 500ms. For critical moments use saveStateImmediate(). */
+/**
+ * Leading-edge + trailing-edge debounced save (500ms window).
+ * - First call saves immediately.
+ * - Calls within 500ms are coalesced: a single trailing save runs when the timer fires.
+ * This caps writes at ~2/sec max during photo-match bursts instead of dropping them.
+ */
 export function saveState(): void {
-  if (saveTimer) return
+  if (saveTimer) {
+    savePending = true
+    return
+  }
+  doSave()
   saveTimer = setTimeout(() => {
     saveTimer = null
-    doSave()
+    if (savePending) {
+      savePending = false
+      doSave()
+    }
   }, 500)
 }
 
@@ -81,6 +94,7 @@ export function saveStateImmediate(): void {
     clearTimeout(saveTimer)
     saveTimer = null
   }
+  savePending = false
   doSave()
 }
 
@@ -227,6 +241,11 @@ export function getActiveCount(): number {
 // --- Public API ---
 
 export function setCompetition(comp: Competition): void {
+  // Venue TV "now playing" — clear stale entry on schedule reload (fire-and-forget,
+  // before swapping currentCompetition so the post still has the old conn context).
+  // Lazy import to avoid circular dep: state ↔ compPortal ↔ schedule ↔ state.
+  void import('./compPortal').then(m => m.postNowPlaying(null).catch(() => {})).catch(() => {})
+
   currentCompetition = comp
   currentRoutineId = null
 
@@ -515,6 +534,19 @@ export function updateRoutineStatus(
     saveStateImmediate()
   } else {
     saveState()
+  }
+
+  // End-of-day checklist trigger. Fires on the pending → recorded transition
+  // only (not on re-records). Lazy-required to avoid any chance of a circular
+  // import between state.ts and dayChecklist.ts at module load.
+  if (oldStatus !== 'recorded' && status === 'recorded') {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const dc = require('./dayChecklist') as typeof import('./dayChecklist')
+      dc.maybeFireEndOfDay(routine)
+    } catch (err) {
+      logger.app.warn(`dayChecklist end-of-day trigger failed: ${err instanceof Error ? err.message : err}`)
+    }
   }
 
   return routine

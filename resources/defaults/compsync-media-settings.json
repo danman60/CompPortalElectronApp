@@ -1,0 +1,109 @@
+{
+	"obs": {
+		"url": "ws://localhost:4455",
+		"password": "123456",
+		"recordingFormat": "mkv",
+		"password_encrypted": "djEw1hMfdzMdSzuDO+2amWBM5AOLQx5VJTmeb5UvzfGTVSmZQQ==",
+		"maxRecordMinutes": 15
+	},
+	"compsync": {
+		"shareCode": "TEST2026"
+	},
+	"competition": {
+		"judgeCount": 3,
+		"dayFilter": ""
+	},
+	"audioTrackMapping": {
+		"track1": "performance",
+		"track2": "judge1",
+		"track3": "judge2",
+		"track4": "judge3"
+	},
+	"audioInputMapping": {
+		"performance": "Mic/Aux",
+		"judge1": "Judge1",
+		"judge2": "Judge2",
+		"judge3": "Judge3",
+		"judge4": ""
+	},
+	"fileNaming": {
+		"pattern": "{entry_number}_{routine_title}_{studio_code}",
+		"outputDirectory": ""
+	},
+	"ffmpeg": {
+		"path": "(bundled)",
+		"processingMode": "smart",
+		"cpuPriority": "below-normal",
+		"judgeResolution": "480p",
+		"useHardwareEncoding": true,
+		"threadCount": 0
+	},
+	"upload": {
+		"bandwidthCapBytesPerSec": 0
+	},
+	"hotkeys": {
+		"toggleRecording": "Shift+F5",
+		"nextRoutine": "Shift+F6",
+		"fireLowerThird": "Shift+F9",
+		"saveReplay": "Shift+F10"
+	},
+	"overlay": {
+		"autoHideSeconds": 8,
+		"overlayUrl": "http://localhost:9876/overlay",
+		"logoUrl": "",
+		"defaultCounter": true,
+		"defaultClock": true,
+		"defaultLogo": true,
+		"animation": "random",
+		"showEntryNumber": true,
+		"showRoutineTitle": true,
+		"showDancers": true,
+		"showStudioName": true,
+		"showCategory": true
+	},
+	"behavior": {
+		"autoRecordOnNext": true,
+		"autoUploadAfterEncoding": true,
+		"autoEncodeRecordings": true,
+		"syncLowerThird": true,
+		"confirmBeforeOverwrite": true,
+		"alwaysOnTop": false,
+		"zoomFactor": 1.15,
+		"compactMode": false,
+		"allowNonElevated": false
+	},
+	"nextSequence": {
+		"stopRecording": true,
+		"startRecording": true,
+		"fireLowerThird": true,
+		"pauseAfterStopMs": 2000,
+		"pauseBeforeRecordMs": 2000,
+		"pauseBeforeLowerThirdMs": 2000
+	},
+	"tether": {
+		"autoWatchFolder": "",
+		"matchBufferMs": 1000
+	},
+	"wifiDisplay": {
+		"binaryPath": null,
+		"monitorIndex": 1,
+		"bitrate": 3000,
+		"fps": 30,
+		"clientIp": null,
+		"videoPort": 5000,
+		"touchPort": 5001,
+		"autoStart": true
+	},
+	"branding": {
+		"organizationName": "Ultimate Dance Connection",
+		"website": "www.ultimatedanceconnection.ca",
+		"instagram": "@ultimatedanceconnection",
+		"facebook": "@ultimatedanceconnection",
+		"tiktok": "",
+		"youtube": "",
+		"twitter": "",
+		"brandColors": [],
+		"brandFont": "",
+		"brandLogoUrl": ""
+	}
+}

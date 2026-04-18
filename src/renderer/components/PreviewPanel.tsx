@@ -13,13 +13,11 @@ export default function PreviewPanel(): React.ReactElement {
   const isConnected = obsState.connectionStatus === 'connected'
 
   useEffect(() => {
-    if (visible && isConnected && !previewActive) {
-      window.api?.previewStart(5)
-      setPreviewActive(true)
-    } else if ((!visible || !isConnected) && previewActive) {
-      window.api?.previewStop()
-      setPreviewActive(false)
-    }
+    // Preview polling disabled — GetSourceScreenshot was averaging 800-2000ms
+    // per call under production load, starving OBS of encoder time. Re-enable
+    // post-show if needed by removing this early return.
+    if (previewActive) { window.api?.previewStop(); setPreviewActive(false) }
+    return
   }, [isConnected, visible, previewActive, setPreviewActive])
 
   useEffect(() => {

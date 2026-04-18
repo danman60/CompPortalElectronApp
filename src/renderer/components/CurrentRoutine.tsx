@@ -52,7 +52,7 @@ export default function CurrentRoutine(): React.ReactElement {
           <div className="recording-timer">
             <span className="rec-dot" />
             <span>{formatTime(obsState.recordTimeSec)}</span>
-            <span style={{ opacity: 0.5, fontSize: '10px' }}>
+            <span style={{ opacity: 0.6, fontSize: '18px' }}>
               / ~{current.durationMinutes}:00
             </span>
           </div>

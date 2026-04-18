@@ -14,6 +14,7 @@ import {
   OverlayClockAction,
   OverlayLogoAction,
 } from './actions/overlay-toggle'
+import { JudgeMeterAction } from './actions/judge-meter'
 
 streamDeck.actions.registerAction(new NextFullAction())
 streamDeck.actions.registerAction(new NextRoutineAction())
@@ -26,6 +27,7 @@ streamDeck.actions.registerAction(new OverlayLowerThirdAction())
 streamDeck.actions.registerAction(new OverlayCounterAction())
 streamDeck.actions.registerAction(new OverlayClockAction())
 streamDeck.actions.registerAction(new OverlayLogoAction())
+streamDeck.actions.registerAction(new JudgeMeterAction())
 
 conn.connect()
 streamDeck.connect()

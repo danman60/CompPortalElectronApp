@@ -128,6 +128,15 @@
         { "Image": "imgs/actions/logo", "Title": "LOGO" },
         { "Image": "imgs/actions/logo-active", "Title": "LOGO" }
       ]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.judge-meter",
+      "Name": "Judge Meter",
+      "Tooltip": "Live audio level meter for a judge or performance input",
+      "Icon": "imgs/actions/clock",
+      "PropertyInspectorPath": "judge-meter.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
     }
   ]
 }

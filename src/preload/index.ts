@@ -64,6 +64,7 @@ const api = {
   photosBrowse: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_BROWSE),
   photosImport: (folderPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_IMPORT, folderPath),
+  photosCancel: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_CANCEL),
   photosReassignOrphan: (orphanPath: string, routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, orphanPath, routineId),
   photosDiscardOrphan: (orphanPath: string) =>
@@ -188,6 +189,21 @@ const api = {
   // Stream Deck plugin
   streamdeckGetStatus: () => ipcRenderer.invoke(IPC_CHANNELS.STREAMDECK_GET_STATUS),
   streamdeckInstallPlugin: () => ipcRenderer.invoke(IPC_CHANNELS.STREAMDECK_INSTALL_PLUGIN),
+
+  // Overlay Mode (floating panels)
+  overlayModeOpen: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_OPEN),
+  overlayModeClose: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_CLOSE),
+  overlayModeToggle: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_TOGGLE),
+
+  // Day Checklist (Start-of-Day / End-of-Day modals)
+  dayChecklistGet: (date: string, kind: 'start' | 'end') =>
+    ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_GET, date, kind),
+  dayChecklistSetItem: (date: string, kind: 'start' | 'end', itemId: string, value: 'open' | 'checked' | 'skipped' | 'na') =>
+    ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_SET_ITEM, date, kind, itemId, value),
+  dayChecklistDismiss: (date: string, kind: 'start' | 'end') =>
+    ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_DISMISS, date, kind),
+  dayChecklistReopen: (kind: 'start' | 'end') =>
+    ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_REOPEN, kind),
 
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {

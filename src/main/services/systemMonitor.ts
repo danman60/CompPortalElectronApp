@@ -6,6 +6,7 @@ import { getSettings } from './settings'
 import { logger } from '../logger'
 import * as uploadService from './upload'
 import * as ffmpegService from './ffmpeg'
+import * as perf from './perfLogger'
 
 let pollTimer: NodeJS.Timeout | null = null
 let prevCpuTimes: { idle: number; total: number } | null = null
@@ -87,6 +88,9 @@ function poll(): void {
   }
 
   sendToRenderer(IPC_CHANNELS.SYSTEM_STATS, stats)
+  perf.gauge('sys.cpu_pct', cpuPercent)
+  perf.gauge('sys.mem_pct', memPercent)
+  if (disk.freeGB >= 0) perf.gauge('sys.disk_free_gb', disk.freeGB)
 
   // Fix 9: drive lost / recovered detection
   if (configuredDir) {

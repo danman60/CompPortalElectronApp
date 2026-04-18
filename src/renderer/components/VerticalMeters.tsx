@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import '../styles/vertical-meters.css'
 
@@ -15,16 +15,88 @@ function dBToClass(dB: number): string {
   return 'good'
 }
 
+function peakToDb(peak: number): number {
+  if (peak <= 0) return -Infinity
+  return 20 * Math.log10(peak)
+}
+
+// This component bypasses the app's IPC+store audio-level path entirely and
+// connects directly to the WS hub (port 9877) as a "tablet"-type client.
+// That's the same pipe the Android app uses — which works reliably, unlike
+// the IPC path which has shown intermittent behavior. One less layer of
+// indirection = far fewer places for updates to silently drop.
 export default function VerticalMeters(): React.ReactElement {
-  const meters = useStore((s) => s.audioMeters)
   const settings = useStore((s) => s.settings)
   const judgeCount = settings?.competition.judgeCount ?? 3
+  const [peaks, setPeaks] = useState<Record<string, number>>({})
+  const wsRef = useRef<WebSocket | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    function connect(): void {
+      if (cancelled) return
+      try {
+        const ws = new WebSocket('ws://localhost:9877')
+        wsRef.current = ws
+
+        ws.onopen = () => {
+          console.error('[VM-WS] open, sending identify')
+          try { ws.send(JSON.stringify({ type: 'identify', client: 'tablet' })) } catch {}
+        }
+
+        let msgCount = 0
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data)
+            if (msg && msg.type === 'audioLevels' && Array.isArray(msg.levels)) {
+              const next: Record<string, number> = {}
+              for (const item of msg.levels) {
+                if (item && typeof item.role === 'string' && typeof item.peak === 'number') {
+                  next[item.role] = item.peak
+                }
+              }
+              msgCount++
+              if (msgCount <= 3 || msgCount % 50 === 0) {
+                console.error(`[VM-WS #${msgCount}] audioLevels received, roles=${Object.keys(next).join(',')} peaks=${JSON.stringify(next)}`)
+              }
+              setPeaks(next)
+            } else if (msgCount === 0 && msg && msg.type) {
+              console.error(`[VM-WS] first non-audio msg type=${msg.type}`)
+            }
+          } catch (e) {
+            console.error(`[VM-WS] parse error: ${e instanceof Error ? e.message : e}`)
+          }
+        }
+
+        ws.onerror = () => { console.error('[VM-WS] ws error'); try { ws.close() } catch {} }
+
+        ws.onclose = () => {
+          console.error('[VM-WS] closed')
+          wsRef.current = null
+          if (!cancelled) {
+            reconnectTimer = setTimeout(connect, 1000)
+          }
+        }
+      } catch {
+        if (!cancelled) reconnectTimer = setTimeout(connect, 1000)
+      }
+    }
+
+    connect()
+    return () => {
+      cancelled = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      try { wsRef.current?.close() } catch {}
+    }
+  }, [])
 
   const tracks = [
-    { label: 'P', dB: meters.performance },
+    { label: 'P', dB: peakToDb(peaks['performance'] ?? 0) },
     ...Array.from({ length: judgeCount }, (_, i) => ({
       label: `J${i + 1}`,
-      dB: meters.judges[i] ?? -Infinity,
+      dB: peakToDb(peaks[`judge${i + 1}`] ?? 0),
     })),
   ]
 

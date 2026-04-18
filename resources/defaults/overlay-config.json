@@ -1,0 +1,23 @@
+{
+  "animConfig": {
+    "animationDuration": 2,
+    "animationEasing": "ease",
+    "autoHideSeconds": 8
+  },
+  "ticker": {
+    "visible": false,
+    "text": "Hi Welcome to the show",
+    "speed": 89,
+    "backgroundColor": "#1e1e2e",
+    "textColor": "#e0e0f0"
+  },
+  "startingSoon": {
+    "visible": false,
+    "title": "The Ultimate Dance Connection",
+    "subtitle": "Starting soon...",
+    "showCountdown": true,
+    "countdownTarget": ""
+  },
+  "animation": "random",
+  "autoFireEnabled": false
+}

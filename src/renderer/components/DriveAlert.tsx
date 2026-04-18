@@ -42,6 +42,25 @@ export function restoreMinimizedImport(): void {
   window.dispatchEvent(new CustomEvent('drive-alert:restore'))
 }
 
+// Bug B fix: called from Header when the manual Photos button is used.
+// Activates the import pill without a drive-detect event so the operator
+// sees scan/EXIF progress immediately. Without this, large imports (20k+
+// photos) used to run silently and look frozen.
+export function setImportPillActiveFromHeader(folder: string | null): void {
+  if (folder) {
+    setMinimized({
+      active: true,
+      stage: 'scanning',
+      current: 0,
+      total: 0,
+      message: 'Scanning...',
+      driveKey: `header:${folder}`,
+    })
+  } else {
+    setMinimized({ active: false })
+  }
+}
+
 interface ImportProgress {
   stage: 'idle' | 'scanning' | 'reading-exif' | 'matching' | 'copying' | 'uploading' | 'done' | 'error'
   message: string
@@ -131,6 +150,13 @@ export default function DriveAlert(): React.ReactElement | null {
           (result.clockOffsetMs !== 0 ? ` (clock offset: ${Math.round(result.clockOffsetMs / 1000)}s)` : ''),
       }))
       setShowResults(true)
+      // Bug B: header-triggered imports own the pill via Header's finally{}.
+      // Drive-detect imports own it via handleDismiss. For both, clear it
+      // here once the match-result lands so the pill doesn't get stuck on
+      // "999/1000" after the final yield.
+      if (minimizedState.driveKey?.startsWith('header:')) {
+        setMinimized({ active: false })
+      }
     })
 
     return () => {

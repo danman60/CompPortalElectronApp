@@ -7,6 +7,7 @@ import { WSCommandMessage, WSStateMessage, AudioLevel } from '../../shared/types
 import * as chatBridge from './chatBridge'
 import { logger } from '../logger'
 import { getSettings } from './settings'
+import * as perf from './perfLogger'
 
 const PORT = 9877
 let wss: WebSocketServer | null = null
@@ -218,8 +219,11 @@ function buildStateMessage(): WSStateMessage {
 }
 
 export function broadcastState(): void {
+  perf.gauge('ws.clients', clients.size)
   if (clients.size === 0) return
   const msg = JSON.stringify(buildStateMessage())
+  perf.counter('ws.state.broadcast')
+  perf.size('ws.state.bytes', msg.length)
   for (const ws of clients) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(msg)
@@ -231,19 +235,25 @@ let lastAudioBroadcast = 0
 const AUDIO_BROADCAST_THROTTLE = 200
 
 function broadcastAudioLevels(rawLevels: AudioLevel[]): void {
+  perf.counter('ws.audio.in')
+  // Early exit if no WS clients at all — skip throttle math and scan entirely.
+  if (clients.size === 0) { perf.counter('ws.audio.skip_noclient'); return }
   const now = Date.now()
   if (now - lastAudioBroadcast < AUDIO_BROADCAST_THROTTLE) return
   lastAudioBroadcast = now
 
   let hasTablet = false
   let hasOverlay = false
+  let hasStreamdeck = false
   for (const ws of clients) {
     if (ws.readyState === WebSocket.OPEN) {
       if (ws.clientType === 'tablet') hasTablet = true
       if (ws.clientType === 'overlay') hasOverlay = true
+      if (ws.clientType === 'streamdeck') hasStreamdeck = true
     }
   }
-  if (!hasTablet && !hasOverlay) return
+  if (!hasTablet && !hasOverlay && !hasStreamdeck) { perf.counter('ws.audio.skip_noclient'); return }
+  perf.counter('ws.audio.out')
 
   const settings = getSettings()
   const mapping = settings.audioInputMapping || {}
@@ -258,7 +268,7 @@ function broadcastAudioLevels(rawLevels: AudioLevel[]): void {
 
   const msg = JSON.stringify({ type: 'audioLevels', levels: mapped })
   for (const ws of clients) {
-    if (ws.readyState === WebSocket.OPEN && (ws.clientType === 'tablet' || ws.clientType === 'overlay')) {
+    if (ws.readyState === WebSocket.OPEN && (ws.clientType === 'tablet' || ws.clientType === 'overlay' || ws.clientType === 'streamdeck')) {
       ws.send(msg)
     }
   }

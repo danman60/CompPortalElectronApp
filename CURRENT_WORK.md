@@ -1,107 +1,101 @@
 # Current Work — CompSyncElectronApp
 
-## Next session priority: AUTONOMOUS E2E TESTING ON EMPWR-LONDON
+## STATUS: Friday recovery + Saturday show in progress (2026-04-18 ~13:42 PM EDT)
 
-The user wants extensive end-to-end user-flow testing of the Electron app, autonomously, using the EMPWR Dance - London competition. Use the `test-electron` skill (per CLAUDE.md guidance) to launch a separate Claude session that runs the actual Electron app in a Windows context and drives it via Playwright Electron API.
+**Saturday show wraps ~10pm EDT.** App patched twice mid-show:
+- 13:05 EDT: 5 show-survival fixes + auto-scroll-to-next-pending (MD5 `B3B2E0FBF3879C021E8BD7136755BC12`)
+- 13:42 EDT: lower-third update-gate fix + LeftPanel restructure (CurrentRoutine + Controls/RECORD moved to top, PreviewPanel removed) (**current MD5 `D9EF73529F8467C6267730067EBFF264`**)
 
-### Test target
+**Active task for fresh session:** Explore TRUE compact view feature — see INBOX.md top entry. Two options to investigate (half-screen OR transparent OBS-overlay frame). DO NOT pick stale tasks from this CURRENT_WORK.md.
 
-| Field | Value |
-|---|---|
-| Competition | EMPWR Dance - London |
-| Share code | `EMPWR-LONDON` |
-| Tenant ID | `00000000-0000-0000-0000-000000000001` |
-| Competition ID | `79cef00c-e163-449c-9f3c-d021fbb4d672` |
-| Entries | 562 (559 with `performance_time`) |
-| Other EMPWR codes | `EMPWR-STCATH-1`, `EMPWR-STCATH-2` (smaller, secondary) |
+## Recent fixes deployed today (Saturday)
 
-### What to test (priority order)
+- **Lower-third bug:** Removed visibility-gate at `overlay.ts:607` that blocked text updates while LT was visible — caused multi-routine staleness
+- **Layout restructure:** `LeftPanel.tsx` reorganized — CurrentRoutine + Controls (RECORD) at top, OverlayModules/Controls below, PreviewPanel removed (was disabled anyway)
+- **Drive monitor startup fix:** Already-mounted SDs now fire DRIVE_DETECTED at app startup
+- **Photo import:** Single-flight + cancel button + EXIF date sanity check + sharp guard
 
-1. **Cold load via share code**
-   - Launch app, enter `EMPWR-LONDON` in share code field, click load
-   - Verify: 562 routines load, day filter populated, no errors in main process log
-   - Screenshot the loaded state
-   - **Expected limitation:** `Time` column may show em-dashes if CompPortal brief (b) is NOT yet deployed. That's a known state, not a bug. If CompPortal deployed, expect HH:MM values.
+## Chat bug NOT FIXED
 
-2. **Navigation + filtering**
-   - Day filter dropdown
-   - Search box (entry number, title, studio, dancer)
-   - Click row → jump-to-routine
-   - Verify current routine highlight, current routine card update
-   - Pipeline stage column (REC/SPLIT/PHOTO/UP) icons render
+DART log shows Supabase Realtime channel TIMED_OUT after 10s on every subscribe attempt. Realtime IS enabled (operator confirmed chat works elsewhere). Likely DART-specific network issue or wrong channel name on producer side. Needs post-show investigation.
 
-3. **Reconcile pass dry-run**
-   - On load, look in main process log for "[DRY RUN] would demote" entries
-   - For EMPWR-LONDON which has zero media_packages, no routines should be eligible (all start `pending`, no `uploaded`/`confirmed` to demote)
-   - **Expected:** zero dry-run lines. If any appear, that's a bug.
+## Read first (in order)
 
-4. **Record/encode/upload pipeline** (requires OBS + CompPortal up)
-   - **SKIP unless OBS is actually running on the test machine.** Don't try to mock — the OBS WebSocket integration is too tightly coupled.
-   - If OBS is up: pick one routine, click record button, verify status transitions: pending → recording → recorded → encoded → uploading → uploaded
-   - Verify `compsync-state.json` persists state correctly between transitions
-   - Verify the upload pipeline calls `/api/plugin/upload-url` with a `uploadRunId` field (Phase 4 change — not yet wired to server, will be ignored harmlessly)
+1. `docs/plans/2026-04-18-friday-recovery-truths.md` — operator-confirmed facts (cameras, offsets, timezone, video windows). **Treat as ground truth, do NOT re-derive.**
+2. `docs/plans/2026-04-18-friday-script-mistakes-postmortem.md` — what last night's v4 script got wrong
+3. `docs/plans/2026-04-18-saturday-photo-import-incident.md` — today's mid-show app failure + 6 bugs documented
+4. `docs/plans/2026-04-18-overnight-runbook-v5.md` — tonight's overnight execution plan
+5. `INBOX.md` top entries — feature requests captured today (timezone storage, original filename preservation, day-checklist modals, completed-routine flag)
 
-5. **Settings panel**
-   - Open settings, verify all sections render without errors
-   - Tablet display section, OBS settings, FFmpeg settings, branding, etc.
-   - Don't change anything destructive
+## Friday recovery state
 
-6. **Wifi tablet display, overlay, hotkeys**
-   - Smoke test only — open each panel, verify it renders, close. Don't actually start the wifi server or fire hotkeys.
+- Match v3 done: **17,944 / 18,325 orphans matched** (97.9%)
+- Cam B clock correction confirmed at H:168 P1687292.JPG boundary
+- 15 missing video windows (R101-R119) backfilled from MKV mtimes today
+- Manifest at `/tmp/fri-recovery/v5-imports/v5-2026-04-17-<ts>.json` (17,936 entries from v5 dry-run)
+- v5 script ready at `scripts/overnight-sd-import-v5.py`
 
-### What NOT to test
+## ⚠️ Manifest does NOT pass operator's distribution rules
 
-- Real OBS recording (unless OBS is set up on the test machine)
-- Real upload to CompPortal (would create real DB rows on production)
-- Bulk operations that hit the network
-- Anything that might leave state behind in the user's main `compsync-state.json` — use a temporary userData dir for tests if possible
+Operator expectations: no routines >300 photos, every routine 50-150, no zero-photo routines.
 
-### How to actually run this
+Projected final state (purge misassigned + add orphan matches):
+- **10 routines with 0 photos**: R230, R244, R258, R266, R274, R278, R280, R282, R284, R291
+- **41 routines under 50** (R190-195, R228-231, R255-260 etc.)
+- **57 routines in 50-150 target range** ✅
+- **77 routines 151-300**
+- **23 routines over 300** (R117=692, R121=575, R113=514, R122=487, etc.)
 
-Per CLAUDE.md, use the `test-electron` skill:
-> Launch a new Claude Code (Opus) session in a separate tmux window to test an Electron app. Syncs to Windows filesystem, runs tests via cmd.exe with Playwright Electron API, verifies DB via Supabase MCP.
+**Three things to investigate before approving the manifest for upload:**
+1. Why R244-R291 (afternoon) have zero matches when Cam B post-correction folders F:178-F:189 should cover that time range. Photos went somewhere else? Already in DB under different routines? Lost?
+2. Whether the >300 routines are real (both cameras shot, legit doubling) or duplicate-counted from same source files.
+3. Whether the 50-150 expectation is **per camera** or **total** (Friday had 2 cameras, Saturday has 1).
 
-The fresh session should:
-1. Read this CURRENT_WORK.md fully
-2. Read the test target details above
-3. Invoke `test-electron` skill to spawn the Windows-side test session
-4. Brief that session with: share code, comp id, the 6 priority tests above, and the "what NOT to test" guardrails
-5. Stay in the loop, watch results, document bugs in a fresh `tests/reports/empwr-london-e2e-2026-04-14.md` file
-6. Report back findings
+## Saturday recovery state
 
-## Holdover items (from prior session, not blocking)
+- Show in progress until ~10pm EDT
+- 9,283 Saturday photos confirmed on F:189-F:196 + H:196-H:198 as of 10:17 EDT scan (more being added)
+- Single camera body, 2 SDs, swap at 09:38 between F:196 and H:196
+- Operator says EXIF perfect (no offset, no clock issues)
+- Videos already going to R2 in normal flow
+- Need fresh SD scan after show ends, then mapping, then operator review
 
-1. **Manual: enable R2 bucket lock** (~30 sec):
-   - Cloudflare → R2 → `compsyncmedia` → Settings → Bucket lock rules → Add rule
-   - Prefix: `00000000-0000-0000-0000-000000000004/`
-   - Retention: 365 days
-   - Verified from Cloudflare R2 docs: prevents delete + overwrite, prefix-scoped, retroactive
+## Tonight's overnight plan
 
-2. **compSync window (claude:3) is on hold** with Tier B + brief (b) uncommitted, type-clean:
-   - Soft-delete columns + deleted_at filters everywhere
-   - deletePhoto soft-delete
-   - Schedule endpoint `mediaPackageStatus`/`mediaUpdatedAt`/`scheduledTime`
-   - User decides push/hold. If push → Vercel auto-deploy → Time column populates.
+After 10pm EDT show ends:
+1. Fresh SD scan for Saturday → match v5 dry-run for Saturday
+2. Operator reviews both Friday and Saturday manifests
+3. Resolve the 3 Friday investigation items above
+4. Operator approves both
+5. Kick off upload script on DART (mechanical R2 + DB writes from manifests)
+6. Sleep through it
 
-3. **Phase 4 Electron changes** are now committed (this session). `RECONCILE_DRY_RUN = true` in `src/main/services/state.ts`. Flip to false ONLY after watching one real share-code reload in dry-run mode and confirming the demote log is empty/correct.
+## Constraints / hard rules
 
-## Deferred (do not build without explicit OK)
+- **Cameras set to EDT.** EXIF naive value = EDT. The `+00:00` label in orphan JSON is wrong.
+- **Use `media_packages.video_start_timestamp/end_timestamp` for routine windows**, NOT `performance_time`.
+- **Camera identity by folder prefix**, NOT drive letter.
+- **No between-routine shots** — every photo is during a routine.
+- **F:224 / Camera 2** is irrelevant, ignore.
+- **R310 has 144 legit Saturday photos** at 8:06-8:09 AM mtime from a parallel sync flow that worked correctly — do NOT delete.
+- DART app: NEVER kill without operator approval. Operator does asar swaps after closing app themselves.
 
-- **plugin/complete rewrite** (immutable upload paths, photo merge-by-filename, audit log writes) — held until end-to-end testing is possible. Tier B + bucket lock is the interim protection.
-- **Temp routine feature** — has 3 open design questions (entry number scheme, stub field defaults, promote-to-scheduled). See `CompPortal/INBOX.md`.
+## Recent files of interest
 
-## Known residual risks (after bucket lock + Tier B)
+- `/tmp/fri-recovery/match-v3.json` — per-photo Friday matches (gold standard)
+- `/tmp/fri-recovery/match-v3-summary.md` — readable summary
+- `/tmp/fri-recovery/video-windows-v3.json` — fresh DB pull including the backfilled 15
+- `/tmp/fri-recovery/sd-inventory-saturday.json` — Saturday SD inventory at 10:17 EDT (stale)
+- `/tmp/fri-recovery/v5-logs/` — v5 dry-run output
+- `/tmp/fri-recovery/dart-pull/` — Friday data pulled from DART (compsync-state.json, main-log-photos.txt, etc.)
 
-- `/api/plugin/complete` photos `deleteMany` still destructive — only fires if Electron sends a SHRUNK photo list. Document operator workflow: don't re-trigger photo uploads after first success. Monitor `media_photos` row counts during first real UDC.
-- Cross-tenant read in `src/app/api/mobile/v1/[...path]/route.ts` (CompPortal) — read-only, not a loss path. Separate security item.
-- No audit log writes yet (`plugin_write_log` table exists, empty).
+## Reference IDs
 
-## State elsewhere
-
-- **Supabase COMPSYNC**: Phase 2 migrations applied (deleted_at columns, FK RESTRICT, plugin_write_log table). Do NOT re-run.
-- **CompPortal**: Tier B + brief (b) uncommitted in compSync window (claude:3). 16 modified files. Type-clean per compSync.
-- **`/home/danman60/projects/CompPortal/INBOX.md`**: contains 3 briefs for compSync. Item 1 (Phase 3 full) deferred. Item 2 (brief b) done. Item 3 (temp routines) deferred.
-
-## Pre-existing modified files NOT touched this session
-
-~31 files from prior sessions (SS editor, tablet display, OBS, tether, etc.). Do NOT commit accidentally. Filter commits by explicit file path.
+- Competition: `6f29f048-61f2-48c2-982f-27b542f974b2` (UDC London)
+- Tenant: `00000000-0000-0000-0000-000000000004`
+- Supabase MCP: `supabase-COMPSYNC` (project `cafugvuaatsgihrsmvvl`)
+- R2 bucket: `compsyncmedia` (private)
+- Plugin API key: `csm_f68ddeef15d7bbe8e57fa3e0606dc475ee5dc56e6249803c`
+- DART SSH alias: `dart` (Windows, cmd.exe shell — use PowerShell for complex commands)
+- App data: `C:\Users\User\AppData\Roaming\compsync-media\`
+- TesterOutput: `C:\Users\User\OneDrive\Desktop\TesterOutput\UDC London 2026\`

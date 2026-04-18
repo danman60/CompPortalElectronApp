@@ -194,7 +194,129 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
         </div>
       </div>
 
+      {/* === Inline Chat Strip — latest 3, click-to-pin, scrollable history === */}
+      <InlineChatStrip />
+
       {editorOpen && <VisualEditor onClose={() => setEditorOpen(false)} />}
+    </div>
+  )
+}
+
+function InlineChatStrip(): React.ReactElement {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const historyScrollRef = useRef<HTMLDivElement>(null)
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [msgs, pins] = await Promise.all([
+        window.api.chatGetMessages(),
+        window.api.chatGetPinned(),
+      ])
+      if (Array.isArray(msgs)) setMessages(msgs)
+      if (Array.isArray(pins)) setPinned(pins)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+    // 5s cadence — chat messages also arrive via push (chatBridge → IPC), this poll
+    // is a safety net for missed pushes, not the primary delivery path.
+    pollRef.current = setInterval(fetchData, 5000)
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [fetchData])
+
+  useEffect(() => {
+    if (historyOpen && historyScrollRef.current) {
+      historyScrollRef.current.scrollTop = historyScrollRef.current.scrollHeight
+    }
+  }, [messages, historyOpen])
+
+  const isPinned = (id: string) => pinned.some((p) => p.id === id)
+
+  async function togglePin(id: string): Promise<void> {
+    if (isPinned(id)) {
+      await window.api.chatUnpin(id)
+    } else {
+      await window.api.chatPin(id)
+    }
+    fetchData()
+  }
+
+  // Latest 3 messages, newest at bottom (scrolling-feed style)
+  const latest3 = messages.slice(-3)
+
+  return (
+    <div className="oc-section ic-strip-wrap">
+      <div className="ic-strip-header">
+        <span className="ic-strip-title">Live Chat</span>
+        <div className="ic-strip-meta">
+          {pinned.length > 0 && <span className="ic-strip-pinned-count">{pinned.length} pinned</span>}
+          <span className="ic-strip-msg-count">{messages.length} msg</span>
+          <button
+            className="ic-strip-history-btn"
+            onClick={() => setHistoryOpen(!historyOpen)}
+            title={historyOpen ? 'Hide history' : 'Show full history'}
+          >
+            {historyOpen ? '▼' : '▲'}
+          </button>
+        </div>
+      </div>
+
+      {!historyOpen && (
+        <div className="ic-strip-feed">
+          {latest3.length === 0 ? (
+            <div className="ic-strip-empty">No messages yet</div>
+          ) : (
+            latest3.map((msg) => {
+              const pinState = isPinned(msg.id)
+              return (
+                <div
+                  key={msg.id}
+                  className={`ic-strip-msg${pinState ? ' pinned' : ''}`}
+                  onClick={() => togglePin(msg.id)}
+                  title={pinState ? 'Click to unpin' : 'Click to pin (fires on overlay)'}
+                >
+                  <span className="ic-strip-name">{msg.name}:</span>
+                  <span className="ic-strip-text">{msg.text}</span>
+                  {pinState && <span className="ic-strip-pin-tag">PINNED</span>}
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="ic-strip-history" ref={historyScrollRef}>
+          {messages.length === 0 ? (
+            <div className="ic-strip-empty">No messages yet</div>
+          ) : (
+            messages.map((msg) => {
+              const pinState = isPinned(msg.id)
+              return (
+                <div
+                  key={msg.id}
+                  className={`ic-strip-msg${pinState ? ' pinned' : ''}`}
+                  onClick={() => togglePin(msg.id)}
+                  title={pinState ? 'Click to unpin' : 'Click to pin (fires on overlay)'}
+                >
+                  <span className="ic-strip-name">{msg.name}:</span>
+                  <span className="ic-strip-text">{msg.text}</span>
+                  {pinState && <span className="ic-strip-pin-tag">PINNED</span>}
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -303,115 +425,6 @@ export function OverlayModules(): React.ReactElement {
       </div>
 
       {ssEditorOpen && <StartingSoonEditor onClose={() => setSsEditorOpen(false)} />}
-
-      {/* === Live Chat — collapsible === */}
-      <LiveChatModule />
     </>
-  )
-}
-
-function LiveChatModule(): React.ReactElement {
-  const [expanded, setExpanded] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  const fetchData = useCallback(async () => {
-    try {
-      const [msgs, pins] = await Promise.all([
-        window.api.chatGetMessages(),
-        window.api.chatGetPinned(),
-      ])
-      if (Array.isArray(msgs)) setMessages(msgs)
-      if (Array.isArray(pins)) setPinned(pins)
-    } catch { /* ignore */ }
-  }, [])
-
-  useEffect(() => {
-    if (expanded) {
-      fetchData()
-      pollRef.current = setInterval(fetchData, 2000)
-    }
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-    }
-  }, [expanded, fetchData])
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [messages])
-
-  const isPinned = (id: string) => pinned.some((p) => p.id === id)
-
-  async function handlePin(id: string): Promise<void> {
-    await window.api.chatPin(id)
-    fetchData()
-  }
-
-  async function handleUnpin(id: string): Promise<void> {
-    await window.api.chatUnpin(id)
-    fetchData()
-  }
-
-  async function handleClearPinned(): Promise<void> {
-    await window.api.chatClearPinned()
-    fetchData()
-  }
-
-  return (
-    <div className="oc-module">
-      <div
-        className="oc-module-header"
-        onClick={() => setExpanded(!expanded)}
-        style={{ cursor: 'pointer', marginBottom: expanded ? 6 : 0 }}
-      >
-        <span className="oc-module-title">Live Chat</span>
-        {messages.length > 0 && (
-          <span className="oc-chat-badge">{messages.length}</span>
-        )}
-      </div>
-      {expanded && (
-        <div className="oc-chat-panel">
-          {pinned.length > 0 && (
-            <div className="oc-chat-pinned-bar">
-              <span className="oc-chat-pinned-label">{pinned.length} pinned</span>
-              <button className="oc-chat-clear-btn" onClick={handleClearPinned}>
-                Clear All
-              </button>
-            </div>
-          )}
-          <div className="oc-chat-messages" ref={scrollRef}>
-            {messages.length === 0 ? (
-              <div className="oc-chat-empty">No chat messages yet</div>
-            ) : (
-              messages.map((msg) => {
-                const pinState = isPinned(msg.id)
-                return (
-                  <div key={msg.id} className={`oc-chat-msg${pinState ? ' pinned' : ''}`}>
-                    <div className="oc-chat-msg-header">
-                      <span className="oc-chat-msg-name">{msg.name}</span>
-                      {pinState && <span className="oc-chat-pinned-tag">Pinned</span>}
-                    </div>
-                    <div className="oc-chat-msg-text">{msg.text}</div>
-                    <button
-                      className={`oc-chat-pin-btn${pinState ? ' active' : ''}`}
-                      onClick={() => pinState ? handleUnpin(msg.id) : handlePin(msg.id)}
-                    >
-                      {pinState ? 'Unpin' : 'Pin'}
-                    </button>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-      )}
-    </div>
   )
 }

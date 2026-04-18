@@ -1,9 +1,15 @@
 import { BrowserWindow } from 'electron'
 
-/** Send a message to the renderer process via IPC */
+/**
+ * Broadcast a message to EVERY renderer window. Overlay Mode spawns extra
+ * BrowserWindows (panels) that need the same state updates as the main window,
+ * so a single-window send would starve them. Main-window-only callers still
+ * work because the main window is always in the returned list.
+ */
 export function sendToRenderer(channel: string, data: unknown): void {
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(channel, data)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, data)
+    }
   }
 }

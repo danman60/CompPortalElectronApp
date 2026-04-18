@@ -22,6 +22,10 @@ let pinnedMessages: PinnedChatMessage[] = []
 let onPinChange: (() => void) | null = null
 let onMessagePush: ((msg: ChatMessage) => void) | null = null
 let onMessagePinned: ((msg: ChatMessage) => void) | null = null
+let reconnectTimer: NodeJS.Timeout | null = null
+let reconnectDelayMs = 2000  // grows on repeated failures
+let consecutiveFailures = 0
+let started = false  // user has called startChatBridge — auto-reconnect on failures
 
 export function setOnPinChange(cb: () => void): void {
   onPinChange = cb
@@ -43,25 +47,61 @@ function notifyPinChange(): void {
   if (onPinChange) onPinChange()
 }
 
-export function startChatBridge(): void {
+function scheduleReconnect(): void {
+  if (!started) return
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  consecutiveFailures++
+  // Exponential backoff capped at 30s. Reset on successful SUBSCRIBED.
+  reconnectDelayMs = Math.min(2000 * 2 ** Math.min(consecutiveFailures - 1, 4), 30000)
+  logger.app.info(`Chat bridge: reconnecting in ${reconnectDelayMs}ms (attempt ${consecutiveFailures})`)
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    teardownChannel()
+    connectChannel()
+  }, reconnectDelayMs)
+}
+
+function teardownChannel(): void {
+  if (channel) {
+    try { channel.unsubscribe() } catch (err) {
+      logger.app.warn('Chat bridge: unsubscribe error:', err instanceof Error ? err.message : err)
+    }
+    channel = null
+  }
+  if (supabase) {
+    try { supabase.removeAllChannels() } catch {}
+    supabase = null
+  }
+}
+
+function connectChannel(): void {
   const conn = getResolvedConnection()
   if (!conn) {
-    logger.app.info('Chat bridge: no resolved connection, skipping')
+    logger.app.info('Chat bridge: no resolved connection, will retry')
+    scheduleReconnect()
     return
   }
 
-  if (channel) {
-    logger.app.info('Chat bridge: already running')
-    return
-  }
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    realtime: {
+      params: {
+        apikey: SUPABASE_ANON_KEY,
+        eventsPerSecond: 10,
+      },
+    },
+  })
 
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  // Set auth so Realtime accepts the connection (anon JWT). Some Supabase
+  // projects require this even for public broadcast channels.
+  try { supabase.realtime.setAuth(SUPABASE_ANON_KEY) } catch (err) {
+    logger.app.warn('Chat bridge: setAuth failed:', err instanceof Error ? err.message : err)
+  }
 
   const channelName = `livestream:${conn.competitionId}`
   logger.app.info(`Chat bridge: subscribing to ${channelName}`)
 
   channel = supabase.channel(channelName, {
-    config: { broadcast: { self: false } },
+    config: { broadcast: { self: false, ack: false } },
   })
 
   channel.on('broadcast', { event: 'chat' }, ({ payload }) => {
@@ -74,20 +114,36 @@ export function startChatBridge(): void {
     try { onMessagePush?.(msg) } catch {}
   })
 
-  channel.subscribe((status) => {
-    logger.app.info(`Chat bridge: channel status = ${status}`)
+  channel.subscribe((status, err) => {
+    logger.app.info(`Chat bridge: channel status = ${status}${err ? ` err=${err.message}` : ''}`)
+    if (status === 'SUBSCRIBED') {
+      consecutiveFailures = 0
+      reconnectDelayMs = 2000
+    } else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR' || status === 'CLOSED') {
+      scheduleReconnect()
+    }
   })
 }
 
+export function startChatBridge(): void {
+  if (started && channel) {
+    logger.app.info('Chat bridge: already running')
+    return
+  }
+  started = true
+  consecutiveFailures = 0
+  reconnectDelayMs = 2000
+  connectChannel()
+}
+
 export function stopChatBridge(): void {
-  if (channel) {
-    channel.unsubscribe()
-    channel = null
-    logger.app.info('Chat bridge: unsubscribed')
+  started = false
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
   }
-  if (supabase) {
-    supabase = null
-  }
+  teardownChannel()
+  logger.app.info('Chat bridge: stopped')
   messages = []
   pinnedMessages = []
 }

@@ -1,5 +1,8 @@
 .left-panel {
-  width: 66%;
+  /* Default ~1.5" narrower than the previous 66% so the schedule on the right
+     gets more breathing room. User can still drag the divider — DragHandle
+     just sets inline width: Npx, which overrides this. */
+  width: 60%;
   min-width: 400px;
   display: flex;
   flex-direction: column;
@@ -12,17 +15,34 @@
   min-width: 200px;
 }
 
-.preview-meters-row {
+.left-panel-top {
   display: flex;
   flex-shrink: 0;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.15), rgba(118, 75, 162, 0.15));
+  gap: 6px;
+  padding: 6px;
   align-items: stretch;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.10), rgba(118, 75, 162, 0.10));
+  font-size: 1.08em;
 }
 
-.preview-meters-row > .section.preview-section {
-  flex: 3;
-  border-bottom: none;
+.left-panel-top-col {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+
+.left-panel-top-col.current-routine-col {
+  flex: 2;
+}
+
+.left-panel-top-col.record-col {
+  flex: 1;
+}
+
+.left-panel-top-meters {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
 }
 
 .left-panel-controls {

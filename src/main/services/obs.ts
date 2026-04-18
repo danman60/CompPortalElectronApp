@@ -3,6 +3,7 @@ import { OBSState, AudioLevel, IPC_CHANNELS, ObsStats } from '../../shared/types
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getSettings } from './settings'
+import * as perf from './perfLogger'
 
 // Handle CJS←ESM interop: externalized ESM package wraps default export
 const OBSWebSocket = (OBSWebSocketDefault as any).default || OBSWebSocketDefault
@@ -49,7 +50,7 @@ let state: OBSState = {
 let recordingTimer: NodeJS.Timeout | null = null
 let eventHandlers: Array<{ event: string; handler: (...args: any[]) => void }> = []
 let lastMeterSendTime = 0
-const METER_THROTTLE_MS = 66 // ~15 Hz
+const METER_THROTTLE_MS = 100 // 10 Hz — still feels live, 33% fewer IPC/store updates vs 15 Hz
 let maxLimitWarned = false
 
 // Signal monitors (Fix 14)
@@ -344,13 +345,19 @@ export function waitForRecordStop(timeoutMs = 15000): Promise<void> {
   })
 }
 
+let recordingStartMs = 0
+
 function startRecordingTimer(): void {
   if (recordingTimer) clearInterval(recordingTimer)
   state.recordTimeSec = 0
   maxLimitWarned = false
+  recordingStartMs = Date.now()
   startBlackFrameMonitor()
   recordingTimer = setInterval(() => {
-    state.recordTimeSec++
+    // Anchor to wall clock — setInterval drifts under CPU load, which was
+    // causing clients (Stream Deck / tablet) to fall behind real time and
+    // the max-record warning to never fire on genuinely long recordings.
+    state.recordTimeSec = Math.floor((Date.now() - recordingStartMs) / 1000)
     const maxMinutes = getSettings().obs.maxRecordMinutes || 0
     if (maxMinutes > 0 && state.recordTimeSec >= maxMinutes * 60 && state.isRecording && !maxLimitWarned) {
       maxLimitWarned = true
@@ -389,6 +396,10 @@ function startBlackFrameMonitor(): void {
   blackAlertFired = false
   blackFrameTimer = setInterval(async () => {
     if (!state.isRecording || state.connectionStatus !== 'connected') return
+    // Skip screenshot probe while streaming — OBS is CPU-bound on the encoder,
+    // stealing a GetSourceScreenshot every 10s can push it into frame drops.
+    if (state.isStreaming) { perf.counter('obs.blackframe.skip_streaming'); return }
+    const t0 = Date.now()
     try {
       const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene')
       const res = await obs.call('GetSourceScreenshot', {
@@ -417,8 +428,9 @@ function startBlackFrameMonitor(): void {
         blackFrameCount = 0
         blackAlertFired = false
       }
+      perf.timing('obs.blackframe.tick_ms', Date.now() - t0)
     } catch {
-      // OBS may be busy or scene missing — ignore
+      perf.counter('obs.blackframe.err')
     }
   }, 10000)
 }
@@ -520,12 +532,18 @@ function registerOBSEvents(): void {
       sendToRenderer('obs:replay-saved', { path: event.savedReplayPath })
     }],
     ['InputVolumeMeters', (event: any) => {
+      perf.counter('obs.meters.event')
       const now = Date.now()
       if (now - lastMeterSendTime < METER_THROTTLE_MS) return
       lastMeterSendTime = now
+      perf.counter('obs.meters.emit')
       const levels: AudioLevel[] = event.inputs.map((input: any) => ({
         inputName: input.inputName as string,
-        levels: (input.inputLevelsMul as number[][]).map((ch) => ch[0] || 0),
+        // inputLevelsMul[channel] = [pre-fader, post-fader, post-fader-peak].
+        // We want post-fader peak (index 2) so operator gain adjustments
+        // in OBS actually move the meters. Index 0 was pre-fader, which is
+        // why cranking judge gains had no effect on the meters.
+        levels: (input.inputLevelsMul as number[][]).map((ch) => ch[2] || ch[1] || ch[0] || 0),
       }))
       sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
       onAudioLevelsCb?.(levels)
@@ -590,7 +608,15 @@ export function getState(): OBSState {
 
 let previewTimer: NodeJS.Timeout | null = null
 
-export function startPreview(fps = 5): void {
+let previewPaused = false
+
+export function setPreviewPaused(paused: boolean): void {
+  if (previewPaused === paused) return
+  previewPaused = paused
+  logger.obs.info(`Preview ${paused ? 'paused (window hidden)' : 'resumed'}`)
+}
+
+export function startPreview(fps = 2): void {
   stopPreview()
   if (state.connectionStatus !== 'connected') return
 
@@ -600,19 +626,23 @@ export function startPreview(fps = 5): void {
       stopPreview()
       return
     }
+    if (previewPaused) { perf.counter('obs.preview.paused'); return }
+    const t0 = Date.now()
     try {
       // Get current program scene name
       const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene')
       const { imageData } = await obs.call('GetSourceScreenshot', {
         sourceName: currentProgramSceneName,
         imageFormat: 'jpg',
-        imageCompressionQuality: 40,
-        imageWidth: 640,
-        imageHeight: 360,
+        imageCompressionQuality: 30,
+        imageWidth: 480,
+        imageHeight: 270,
       })
       sendToRenderer(IPC_CHANNELS.PREVIEW_FRAME, imageData)
+      perf.timing('obs.preview.tick_ms', Date.now() - t0)
+      perf.size('obs.preview.frame_b64', typeof imageData === 'string' ? imageData.length : 0)
     } catch {
-      // Scene may not exist or OBS disconnected
+      perf.counter('obs.preview.err')
     }
   }, interval)
   logger.obs.info(`Preview polling started at ${fps} FPS`)

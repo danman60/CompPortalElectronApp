@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
 import '../styles/table.css'
@@ -134,8 +134,8 @@ function statusToLabel(routine: Routine): { text: string; className: string } {
       return { text: 'Uploading', className: 'uploading' }
     case 'uploaded': {
       const hasPhotos = (routine.photos?.length ?? 0) > 0
-      const allPhotosUp = hasPhotos && routine.photos!.every(p => p.uploaded)
-      if (hasPhotos && allPhotosUp) return { text: 'Uploaded', className: 'complete' }
+      const allPhotosUp = !hasPhotos || routine.photos!.every(p => p.uploaded)
+      if (allPhotosUp) return { text: 'All media uploaded', className: 'complete' }
       return { text: 'Videos Uploaded', className: 'video-only' }
     }
     case 'confirmed':
@@ -337,6 +337,17 @@ export default function RoutineTable(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const nextUnrecordedRowRef = useRef<HTMLTableRowElement | null>(null)
+  const hasAutoScrolledRef = useRef(false)
+
+  useEffect(() => {
+    if (hasAutoScrolledRef.current) return
+    if (!competition?.routines?.length) return
+    const row = nextUnrecordedRowRef.current
+    if (!row) return
+    row.scrollIntoView({ block: 'center', behavior: 'auto' })
+    hasAutoScrolledRef.current = true
+  }, [competition?.routines?.length])
 
   let routines = competition?.routines ?? []
 
@@ -400,7 +411,7 @@ export default function RoutineTable(): React.ReactElement {
       <table className="upload-table">
         <thead>
           <tr>
-            <th style={{ paddingLeft: '10px' }}>#</th>
+            <th className="th-num" style={{ paddingLeft: '10px' }}>#</th>
             <th className="th-time">Time</th>
             <th>Routine</th>
             {!compactMode && <th className="th-pipeline">REC</th>}
@@ -416,6 +427,10 @@ export default function RoutineTable(): React.ReactElement {
             const uniqueDays = Array.from(new Set(routines.map((r) => r.scheduledDay || '')))
             const showDayHeaders = !dayFilter || uniqueDays.length > 1
             const items = buildGroupedList(routines, { showDayHeaders })
+            const firstUnrecorded = routines.find(
+              (r) => r.status === 'pending' || r.status === 'queued',
+            )
+            const firstUnrecordedId = firstUnrecorded?.id ?? null
             return items.map((item, idx) => {
               if (item.type === 'day-header') {
                 return (
@@ -452,6 +467,7 @@ export default function RoutineTable(): React.ReactElement {
             return (
               <tr
                 key={routine.id}
+                ref={routine.id === firstUnrecordedId ? nextUnrecordedRowRef : undefined}
                 className={`${isCurrent ? 'current-row' : ''}${dropTargetId === routine.id ? ' drop-target' : ''}`}
                 onClick={() => handleJumpTo(routine)}
                 onDragOver={(e) => handleDragOver(e, routine.id)}
@@ -471,7 +487,7 @@ export default function RoutineTable(): React.ReactElement {
                     : {}),
                 }}
               >
-                <td style={{ paddingLeft: isLive || isCurrent ? '7px' : '10px' }}>
+                <td className="td-num" style={{ paddingLeft: isLive || isCurrent ? '7px' : '10px' }}>
                   <span
                     className="entry-num"
                     style={isLive ? { color: 'var(--recording)' } : undefined}
