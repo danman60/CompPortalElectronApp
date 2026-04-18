@@ -261,6 +261,43 @@ export async function importPhotos(
   const filePaths = await scanDir(folderPath)
   logger.photos.info(`Found ${filePaths.length} JPEG files`)
 
+  // Multi-SD / multi-camera namespace awareness (UDC London 2026-04-18):
+  // F:\DCIM\166_PANA and H:\DCIM\166_PANA can both exist with DIFFERENT photos
+  // that share filenames (P1667001.JPG on each). Partition by drive letter (or
+  // top-level mount root on non-Windows) so any downstream ordering honours the
+  // drive boundary. Matching/copying key off full paths + sourceHash so a
+  // filename collision across drives cannot silently merge them. This is a
+  // belt-and-suspenders guard against a future caller passing a union of two
+  // roots, or scanDir returning entries from two drives via a symlink.
+  const byDrive = new Map<string, string[]>()
+  for (const fp of filePaths) {
+    // On Windows "F:\foo" → "F:". On POSIX → "" (no drive) — fall back to first
+    // path segment so SMB mounts like /mnt/sd1 vs /mnt/sd2 still partition.
+    let key = path.parse(fp).root
+    if (!key) {
+      const first = fp.split(path.sep).filter(Boolean)[0]
+      key = first ? path.sep + first : path.sep
+    }
+    key = key.toUpperCase()
+    let arr = byDrive.get(key)
+    if (!arr) { arr = []; byDrive.set(key, arr) }
+    arr.push(fp)
+  }
+  if (byDrive.size > 1) {
+    logger.photos.warn(
+      `Import spans ${byDrive.size} drives (${[...byDrive.keys()].join(', ')}) — ` +
+      `processing in drive-partitioned order to prevent filename-collision merge`,
+    )
+  }
+
+  // Rebuild filePaths in drive-partitioned order: all photos from drive A, then
+  // all photos from drive B, etc. Within a drive, preserve scan order so EXIF
+  // reads stay sequential for disk locality.
+  const partitionedPaths: string[] = []
+  for (const arr of byDrive.values()) {
+    partitionedPaths.push(...arr)
+  }
+
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
     stage: 'scanning',
     total: filePaths.length,
@@ -268,30 +305,31 @@ export async function importPhotos(
   })
 
   // Read EXIF timestamps + compute source hash per file, drop ones already uploaded.
+  // Iterate partitionedPaths so multi-drive scans process drive-by-drive (see above).
   const photos: { path: string; captureTime: Date; sourceHash: string }[] = []
   let skippedDupes = 0
-  for (let i = 0; i < filePaths.length; i++) {
-    const sourceHash = await manifest.computeSourceHash(filePaths[i]).catch(() => '')
+  for (let i = 0; i < partitionedPaths.length; i++) {
+    const sourceHash = await manifest.computeSourceHash(partitionedPaths[i]).catch(() => '')
     if (sourceHash && seenHashes.has(sourceHash)) {
       skippedDupes++
       continue
     }
-    const captureTime = await getPhotoCaptureTime(filePaths[i])
+    const captureTime = await getPhotoCaptureTime(partitionedPaths[i])
     if (captureTime) {
-      photos.push({ path: filePaths[i], captureTime, sourceHash })
+      photos.push({ path: partitionedPaths[i], captureTime, sourceHash })
     }
 
     if (i % 10 === 0) {
       sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
         stage: 'reading-exif',
-        total: filePaths.length,
+        total: partitionedPaths.length,
         current: i,
       })
       await yieldToEventLoop()
     }
   }
 
-  logger.photos.info(`${photos.length}/${filePaths.length} photos have EXIF timestamps (skipped ${skippedDupes} already-uploaded)`)
+  logger.photos.info(`${photos.length}/${partitionedPaths.length} photos have EXIF timestamps (skipped ${skippedDupes} already-uploaded)`)
 
   // Build recording windows from routines
   const windows: RecordingWindow[] = routines
