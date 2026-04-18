@@ -90,6 +90,27 @@ export interface DriveDetectedEvent {
   label: string
 }
 
+/**
+ * Emitted from main → renderer when a newly-inserted SD card has photos whose
+ * EXIF DateTimeOriginal dates don't match today. Triggers the wrong-day modal.
+ *
+ * `sampledDates` holds the (normalized YYYY-MM-DD) dates we saw across the 5
+ * sample photos — repeated dates collapse. `daysOffMax` is the largest absolute
+ * delta between today (local) and any sampled date. `dominantDate` is the most
+ * common sampled date (ties broken by "furthest from today"), used for the
+ * "Camera clock is N days off" phrasing.
+ */
+export interface CameraClockMismatchEvent {
+  drivePath: string
+  photoPath: string
+  label: string
+  sampledDates: string[] // unique ISO dates (YYYY-MM-DD) sorted descending
+  dominantDate: string // YYYY-MM-DD
+  todayDate: string // YYYY-MM-DD (local)
+  daysOffMax: number
+  sampleCount: number // how many photos were actually sampled (0-5)
+}
+
 export interface UploadProgress {
   state: 'queued' | 'uploading' | 'paused' | 'failed' | 'complete'
   percent: number // 0-100
@@ -541,6 +562,7 @@ export const IPC_CHANNELS = {
   // Drive Monitor
   DRIVE_DETECTED: 'drive:detected',
   DRIVE_DISMISS: 'drive:dismiss',
+  DRIVE_CAMERA_CLOCK_MISMATCH: 'drive:camera-clock-mismatch',
 
   // CLIP Verification
   CLIP_VERIFY_IMPORT: 'clip:verify-import',

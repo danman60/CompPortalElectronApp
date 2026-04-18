@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
-import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent, PhotoMatch } from '../../shared/types'
+import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent, PhotoMatch, CameraClockMismatchEvent } from '../../shared/types'
 import { setOrphansFromResult, openOrphanReview } from './OrphanReview'
 import '../styles/drive-alert.css'
 
@@ -56,6 +56,7 @@ interface ImportProgress {
 export default function DriveAlert(): React.ReactElement | null {
   const [detected, setDetected] = useState<DriveDetectedEvent | null>(null)
   const [wpdDevice, setWpdDevice] = useState<WPDDevice | null>(null)
+  const [clockMismatch, setClockMismatch] = useState<CameraClockMismatchEvent | null>(null)
   const [progress, setProgress] = useState<ImportProgress>({
     stage: 'idle', message: '', current: 0, total: 0, matched: 0, unmatched: 0, copied: 0, uploadQueued: 0,
   })
@@ -114,6 +115,10 @@ export default function DriveAlert(): React.ReactElement | null {
     const onRestore = (): void => setMinimizedLocal(false)
     window.addEventListener('drive-alert:restore', onRestore)
 
+    const unsubClockMismatch = window.api.on('drive:camera-clock-mismatch', (data: unknown) => {
+      setClockMismatch(data as CameraClockMismatchEvent)
+    })
+
     const unsubResult = window.api.on('photos:match-result', (data: unknown) => {
       const result = data as { totalPhotos: number; matched: number; unmatched: number; clockOffsetMs: number }
       setProgress((prev) => ({
@@ -129,7 +134,7 @@ export default function DriveAlert(): React.ReactElement | null {
     })
 
     return () => {
-      unsubDrive(); unsubWPD(); unsubProgress(); unsubResult()
+      unsubDrive(); unsubWPD(); unsubProgress(); unsubResult(); unsubClockMismatch()
       window.removeEventListener('drive-alert:restore', onRestore)
     }
   }, [])
@@ -236,8 +241,7 @@ export default function DriveAlert(): React.ReactElement | null {
     })
   }
 
-  if (!detected && !wpdDevice) return null
-  if (minimized) return null
+  if (!detected && !wpdDevice && !clockMismatch) return null
 
   const isWorking = ['scanning', 'reading-exif', 'matching', 'copying', 'uploading'].includes(progress.stage)
   const hasCompetition = !!competition
@@ -245,13 +249,82 @@ export default function DriveAlert(): React.ReactElement | null {
     (r) => r.recordingStartedAt && r.recordingStoppedAt,
   ).length ?? 0
 
+  const showPrimaryAlert = (detected || wpdDevice) && !minimized
   const sourceLabel = wpdDevice ? 'MTP/PTP Camera Detected' : 'SD Card Detected'
   const sourceSubtitle = wpdDevice
     ? `${wpdDevice.name}${wpdDevice.manufacturer ? ` — ${wpdDevice.manufacturer}` : ''}`
-    : `${detected!.label} (${detected!.drivePath}) — ${detected!.photoCount} photos${detected!.isDcim ? ' in DCIM' : ''}`
+    : detected
+      ? `${detected.label} (${detected.drivePath}) — ${detected.photoCount} photos${detected.isDcim ? ' in DCIM' : ''}`
+      : ''
+
+  // Wrong-day camera modal. Renders standalone (above the regular drive alert)
+  // when EXIF sampling found a date mismatch. Dismissible — operator chooses
+  // to continue with the import, attempt offset correction, or manually
+  // reassign photos once imported.
+  const clockMismatchModal = clockMismatch ? (
+    <div className="drive-alert-overlay" style={{ zIndex: 9998 }}>
+      <div className="drive-alert" style={{ borderLeft: '6px solid #c17f00' }}>
+        <div className="da-header">
+          <span className="da-icon">{'\u26A0\uFE0F'}</span>
+          <div>
+            <div className="da-title">Camera clock is {clockMismatch.daysOffMax} day{clockMismatch.daysOffMax === 1 ? '' : 's'} off</div>
+            <div className="da-subtitle">
+              {clockMismatch.label} ({clockMismatch.drivePath}) — photos dated {clockMismatch.dominantDate}, today is {clockMismatch.todayDate}
+            </div>
+          </div>
+          <div className="da-header-actions">
+            <button
+              className="da-close"
+              onClick={() => setClockMismatch(null)}
+              title="Dismiss"
+            >
+              {'\u2715'}
+            </button>
+          </div>
+        </div>
+        <div className="da-warning">
+          EXIF DateTimeOriginal on {clockMismatch.sampleCount} sampled photo{clockMismatch.sampleCount === 1 ? '' : 's'} does not match today.
+          Matching photos to today's recordings will fail. Options:
+          <ul style={{ margin: '8px 0 0 18px', padding: 0 }}>
+            <li><strong>Assign manually</strong> — skip auto-match, use the Orphan Review drawer after import to assign photos by eye.</li>
+            <li><strong>Attempt correction</strong> — import anyway; the matcher will detect the offset and try to correct.</li>
+            <li><strong>Dismiss</strong> — you fixed the camera clock; re-plug the SD to retry.</li>
+          </ul>
+        </div>
+        <div className="da-actions">
+          <button
+            className="da-btn"
+            onClick={() => setClockMismatch(null)}
+            title="Acknowledge and continue — orphans will land in the review drawer"
+          >
+            Assign manually
+          </button>
+          <button
+            className="da-btn primary"
+            onClick={() => setClockMismatch(null)}
+            title="Continue with the import — matcher will attempt offset correction"
+          >
+            Attempt correction
+          </button>
+          <button
+            className="da-btn dismiss"
+            onClick={() => setClockMismatch(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null
+
+  if (!showPrimaryAlert) {
+    return clockMismatchModal
+  }
 
   return (
-    <div className="drive-alert-overlay">
+    <>
+      {clockMismatchModal}
+      <div className="drive-alert-overlay">
       <div className="drive-alert">
         <div className="da-header">
           <span className="da-icon">{'\u{1F4F7}'}</span>
@@ -358,5 +431,6 @@ export default function DriveAlert(): React.ReactElement | null {
         )}
       </div>
     </div>
+    </>
   )
 }
