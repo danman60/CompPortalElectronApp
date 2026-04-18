@@ -12,6 +12,7 @@ import RecoveryPanel from './components/RecoveryPanel'
 import DriveAlert from './components/DriveAlert'
 import FirstRunSetup from './components/FirstRunSetup'
 import OrphanReview, { openOrphanReview } from './components/OrphanReview'
+import ClockSyncReminder from './components/ClockSyncReminder'
 import './styles/app.css'
 
 function HardeningBanners(): React.ReactElement | null {
@@ -315,6 +316,7 @@ export default function App(): React.ReactElement {
       <ImportSummaryToast />
       <HardeningBanners />
       <FirstRunSetup />
+      <ClockSyncReminder />
     </div>
   )
 }

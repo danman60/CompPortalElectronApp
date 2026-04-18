@@ -1,0 +1,128 @@
+/* Clock sync reminder — front-and-center, bright, impossible to miss. */
+
+.clock-sync-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 9000; /* above normal UI, below hardening banners (9999) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: clockSyncFadeIn 180ms ease-out;
+}
+
+@keyframes clockSyncFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.clock-sync-modal {
+  background: linear-gradient(180deg, #1a2337 0%, #0f1724 100%);
+  border: 2px solid #f5b301;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7), 0 0 0 4px rgba(245, 179, 1, 0.18);
+  padding: 32px 40px;
+  min-width: 520px;
+  max-width: 680px;
+  color: #f5f7fb;
+  text-align: center;
+}
+
+.clock-sync-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.clock-sync-icon {
+  font-size: 42px;
+  line-height: 1;
+}
+
+.clock-sync-title {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #f5b301;
+}
+
+.clock-sync-instruction {
+  font-size: 17px;
+  font-weight: 500;
+  color: #e6ecf5;
+  margin-bottom: 22px;
+}
+
+.clock-sync-clockbox {
+  background: #05090f;
+  border: 1px solid rgba(245, 179, 1, 0.35);
+  border-radius: 8px;
+  padding: 22px 18px;
+  margin-bottom: 18px;
+}
+
+.clock-sync-date {
+  font-size: 16px;
+  color: #a8b4c8;
+  margin-bottom: 6px;
+  letter-spacing: 0.3px;
+}
+
+.clock-sync-time {
+  font-family: "JetBrains Mono", "Consolas", "Menlo", monospace;
+  font-size: 58px;
+  font-weight: 700;
+  color: #f5b301;
+  line-height: 1;
+  letter-spacing: 4px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 18px rgba(245, 179, 1, 0.35);
+}
+
+.clock-sync-hint {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.45;
+  margin-bottom: 22px;
+}
+
+.clock-sync-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.clock-sync-btn {
+  padding: 12px 28px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #243148;
+  color: #f5f7fb;
+  cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease;
+}
+
+.clock-sync-btn:hover {
+  background: #2f3f5c;
+}
+
+.clock-sync-btn:active {
+  transform: translateY(1px);
+}
+
+.clock-sync-btn.primary {
+  background: #f5b301;
+  color: #1a1a1a;
+  border-color: #f5b301;
+}
+
+.clock-sync-btn.primary:hover {
+  background: #ffc81d;
+}
