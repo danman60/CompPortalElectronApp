@@ -447,6 +447,11 @@ async function processLoop(): Promise<void> {
           // this as `photoThumbnailStoragePaths[i]` → `media_photos.thumbnail_url` for
           // `media_photos[i]`. An empty string means "no thumb, fall back to on-the-fly".
           const photoThumbnailStoragePaths: string[] = []
+          // Parallel array of EXIF DateTimeOriginal ISO timestamps per photo. Maps to
+          // `media_photos[i].captured_at` on the CompPortal side. Empty string when the
+          // photo carries no EXIF capture time (should be rare — tether path always has
+          // one). Persisting captured_at enables post-hoc dedup + forensic audit.
+          const photoCapturedAt: string[] = []
 
           // Include already-uploaded files from routine state (covers prior session uploads)
           const routineState = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
@@ -458,6 +463,7 @@ async function processLoop(): Promise<void> {
               if (p.uploaded && p.storagePath) {
                 photoStoragePaths.push(p.storagePath)
                 photoThumbnailStoragePaths.push(p.thumbnailStoragePath || '')
+                photoCapturedAt.push(p.captureTime || '')
               }
             }
           }
@@ -472,6 +478,11 @@ async function processLoop(): Promise<void> {
               if (!photoStoragePaths.includes(sp)) {
                 photoStoragePaths.push(sp)
                 photoThumbnailStoragePaths.push(tsp || '')
+                // Look up capture time from routine.photos keyed by filePath/storagePath
+                const photo = routineState?.photos?.find(
+                  (p) => p.storagePath === sp || p.filePath === jp.filePath,
+                )
+                photoCapturedAt.push(photo?.captureTime || '')
               }
             } else if (jp.role) {
               storagePaths[jp.role] = sp
@@ -486,6 +497,7 @@ async function processLoop(): Promise<void> {
             storagePaths,
             photoStoragePaths,
             photoThumbnailStoragePaths,
+            photoCapturedAt,
           })
 
           // Mark individual files as uploaded with their storage paths
@@ -751,6 +763,7 @@ async function callPluginComplete(info: {
   storagePaths: Record<string, string>
   photoStoragePaths: string[]
   photoThumbnailStoragePaths?: string[] // parallel array, indexed same as photoStoragePaths
+  photoCapturedAt?: string[] // parallel array of ISO EXIF DateTimeOriginal per photo
 }): Promise<void> {
   const { apiBase, apiKey } = getConnection()
 
@@ -761,6 +774,10 @@ async function callPluginComplete(info: {
   // storage key for the thumbnail of `files.photos[i]`. Empty string or missing
   // array entry means "no thumb for this photo — CompPortal should fall back to
   // serving the original". Shape chosen to minimize diff from existing payload.
+  //
+  // 2026-04-18: `files.photo_captured_at` added as a second parallel array carrying
+  // EXIF DateTimeOriginal (ISO) per photo. CompPortal persists as
+  // `media_photos[i].captured_at`. Empty string means no EXIF timestamp available.
   const body = {
     entryId: info.entryId,
     competitionId: info.competitionId,
@@ -777,6 +794,10 @@ async function callPluginComplete(info: {
       photo_thumbnails:
         info.photoThumbnailStoragePaths && info.photoThumbnailStoragePaths.length > 0
           ? info.photoThumbnailStoragePaths
+          : undefined,
+      photo_captured_at:
+        info.photoCapturedAt && info.photoCapturedAt.length > 0
+          ? info.photoCapturedAt
           : undefined,
     },
   }
@@ -834,6 +855,7 @@ export async function retryOrphanedCompletions(): Promise<number> {
       const storagePaths: Record<string, string> = {}
       const photoStoragePaths: string[] = []
       const photoThumbnailStoragePaths: string[] = []
+      const photoCapturedAt: string[] = []
       for (const job of activeJobs) {
         const jp = job.payload as unknown as UploadPayload
         const sp = (job.payload as Record<string, unknown>).storagePath as string | undefined
@@ -842,6 +864,10 @@ export async function retryOrphanedCompletions(): Promise<number> {
         if (jp.type === 'photos') {
           photoStoragePaths.push(sp)
           photoThumbnailStoragePaths.push(tsp || '')
+          const photo = routine.photos?.find(
+            (p) => p.storagePath === sp || p.filePath === jp.filePath,
+          )
+          photoCapturedAt.push(photo?.captureTime || '')
         } else if (jp.role) {
           storagePaths[jp.role] = sp
         }
@@ -866,6 +892,7 @@ export async function retryOrphanedCompletions(): Promise<number> {
         storagePaths,
         photoStoragePaths,
         photoThumbnailStoragePaths,
+        photoCapturedAt,
       })
 
       state.updateRoutineStatus(routineId, 'uploaded')
