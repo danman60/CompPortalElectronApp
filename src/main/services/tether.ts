@@ -37,6 +37,12 @@ interface RecordingWindow {
   recordingStopped: Date
 }
 
+/**
+ * Upstream metadata hint shape. We intentionally DO NOT use `captureTime`
+ * from this struct for matching — EXIF DateTimeOriginal is the single source
+ * of truth (see processNewPhoto). Kept for potential future use (deviceName
+ * surfacing, filename logging), not currently read.
+ */
 interface StagedPhotoMetadata {
   filename?: string
   deviceName?: string
@@ -46,7 +52,7 @@ interface StagedPhotoMetadata {
 
 const PHOTO_EXTENSIONS = /\.(jpg|jpeg|arw|cr3|nef|raf)$/i
 function getBufferMs(): number {
-  return getSettings().tether?.matchBufferMs ?? 1000
+  return getSettings().tether?.matchBufferMs ?? 5000
 }
 const CLOCK_OK_THRESHOLD = 5_000
 const CLOCK_WARN_THRESHOLD = 30_000
@@ -95,25 +101,10 @@ async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
   }
 }
 
-async function getStagedPhotoMetadata(filePath: string): Promise<StagedPhotoMetadata | null> {
-  const sidecarPath = `${filePath}.json`
-
-  try {
-    const raw = await fs.promises.readFile(sidecarPath, 'utf8')
-    return JSON.parse(raw) as StagedPhotoMetadata
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      logger.photos.warn(`Tether: Failed to read metadata sidecar for ${path.basename(filePath)}:`, err)
-    }
-    return null
-  }
-}
-
-function parseCaptureTime(value?: string | null): Date | null {
-  if (!value) return null
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
+// getStagedPhotoMetadata + parseCaptureTime intentionally removed:
+// they were the sidecar/incoming fallback path for captureTime. That path is
+// now explicitly disallowed — EXIF DateTimeOriginal is the only accepted time
+// source for tether matching (UDC London 2026-04-18 rule).
 
 // --- Recording window helpers ---
 
@@ -203,15 +194,23 @@ async function processNewPhoto(
     logger.photos.info(`Tether: New photo detected: ${path.basename(filePath)}`)
   }
 
-  const stagedMetadata = await getStagedPhotoMetadata(filePath)
-  const captureTime =
-    parseCaptureTime(incomingMetadata.captureTime) ||
-    parseCaptureTime(stagedMetadata?.captureTime) ||
-    (await getPhotoCaptureTime(filePath))
+  // EXIF DateTimeOriginal only — no fallback to file mtime, sidecar metadata,
+  // or incoming-metadata capture hints. UDC London 2026 postmortem rule:
+  // copying / syncing files shifts mtime, contaminates matching. The sidecar
+  // and WPD helper's captureTime hints are upstream best-effort and have been
+  // observed to reflect transfer time rather than shutter time on some camera
+  // bodies. If EXIF DateTimeOriginal is missing, fail loud and skip — never
+  // silently fall back to a different time source.
+  const captureTime = await getPhotoCaptureTime(filePath)
   if (!captureTime) {
     if (!isRetry) {
-      logger.photos.warn(`Tether: No EXIF timestamp for ${path.basename(filePath)} — skipping`)
+      logger.photos.warn(
+        `Tether: EXIF DateTimeOriginal MISSING for ${path.basename(filePath)} — skipping ` +
+        `(no mtime/sidecar fallback; fix the camera EXIF or import manually)`,
+      )
     }
+    // Discard any upstream captureTime hint we received — do NOT use it.
+    void incomingMetadata
     importedFiles.set(normalizedPath, null)
     return
   }
@@ -219,9 +218,13 @@ async function processNewPhoto(
   // Update clock offset
   updateClockOffset(captureTime)
 
-  // Match to routine
+  // Match to routine — use raw EXIF time directly. The clock offset
+  // adjustment was corrupted by tether transfer delay: photos arrive
+  // 10-30s after shutter, making updateClockOffset think the camera is
+  // ahead, then overcorrecting by pushing timestamps into the future.
+  // Camera clock is confirmed synced at the venue.
   const windows = getRecordingWindows()
-  const adjustedCaptureTime = getAdjustedCaptureTime(captureTime)
+  const adjustedCaptureTime = captureTime
   const match = matchSinglePhoto(adjustedCaptureTime, windows)
 
   if (!match) {
