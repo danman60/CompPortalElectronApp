@@ -5,6 +5,9 @@ import Store from 'electron-store'
 import { safeStorage } from 'electron'
 import { AppSettings, DEFAULT_SETTINGS } from '../../shared/types'
 import { logger } from '../logger'
+import { seedUserDataFromBundle } from './seedDefaults'
+
+seedUserDataFromBundle()
 
 const store = new Store({
   name: 'compsync-media-settings',
@@ -138,7 +141,30 @@ function deepMerge(target: Record<string, unknown>, defaults: Record<string, unk
   return target
 }
 
+function quarantineCorruptSettings(storePath: string): void {
+  // Copy (not move) the on-disk file out of the way for forensic review so a
+  // later getSettings() call doesn't trip over the same corruption. Never
+  // delete it — operators have recovered passwords/shareCodes from quarantine.
+  try {
+    if (!fs.existsSync(storePath)) return
+    const quarantined = `${storePath}.corrupt-${Date.now()}`
+    fs.copyFileSync(storePath, quarantined)
+    logger.settings.warn(`Corrupt settings quarantined to ${quarantined}`)
+  } catch (err) {
+    logger.settings.warn(`Quarantine failed: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
 export function getSettings(): AppSettings {
+  // IMPORTANT (UDC London 2026-04-18): never call store.clear() from the read
+  // path. The operator request is explicit — onboarding / first-run / read
+  // recovery may fill MISSING keys with defaults, but must NEVER overwrite
+  // values the operator configured. store.clear() wipes shareCode, outputDir,
+  // OBS password, tether folder… all unrecoverable without a backup. Instead,
+  // if the raw store is corrupt or throws, we quarantine the file for
+  // forensics and rely on deepMerge below to fill the missing sections from
+  // DEFAULT_SETTINGS. The operator sees a warning, keeps whatever values
+  // survived in `raw`, and can restore from `.corrupt-*` if needed.
   let raw: Record<string, unknown>
   try {
     raw = store.store as unknown as Record<string, unknown>
@@ -148,9 +174,11 @@ export function getSettings(): AppSettings {
       if (restored) {
         raw = store.store as unknown as Record<string, unknown>
       } else {
-        logger.settings.warn('No usable backup — resetting to defaults')
-        store.clear()
-        raw = store.store as unknown as Record<string, unknown>
+        logger.settings.warn(
+          'No usable backup — filling missing keys from defaults without overwriting existing values',
+        )
+        // Do NOT call store.clear(). Leave `raw` as-is; deepMerge below will
+        // layer DEFAULT_SETTINGS under any configured values.
       }
     }
   } catch (err) {
@@ -160,12 +188,18 @@ export function getSettings(): AppSettings {
       try {
         raw = store.store as unknown as Record<string, unknown>
       } catch {
-        store.clear()
-        raw = store.store as unknown as Record<string, unknown>
+        logger.settings.warn(
+          'Backup restored but store still unreadable — quarantining and starting from empty merge surface',
+        )
+        quarantineCorruptSettings(getStorePath())
+        raw = {}
       }
     } else {
-      store.clear()
-      raw = store.store as unknown as Record<string, unknown>
+      logger.settings.warn(
+        'No usable backup — quarantining corrupt settings file; defaults will fill via merge',
+      )
+      quarantineCorruptSettings(getStorePath())
+      raw = {}
     }
   }
 
