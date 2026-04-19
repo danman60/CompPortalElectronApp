@@ -6,6 +6,7 @@ import { getSettings } from './settings'
 import * as ffmpegService from './ffmpeg'
 import * as jobQueue from './jobQueue'
 import * as stateService from './state'
+import { pickLongestMkv } from './recording'
 
 interface OrphanedFile {
   filePath: string
@@ -137,9 +138,11 @@ export async function recoverOrphans(orphans: OrphanedFile[]): Promise<void> {
 
     logger.app.info(`Recovering orphan: ${orphan.fileName} → routine ${routineId}`)
 
+    // Upload the longest take across current + _archive/vN.
+    const encodeInput = pickLongestMkv(dir, orphan.filePath)
     ffmpegService.enqueueJob({
       routineId,
-      inputPath: orphan.filePath,
+      inputPath: encodeInput,
       outputDir: dir,
       judgeCount: settings.competition.judgeCount,
       trackMapping: settings.audioTrackMapping,

@@ -172,7 +172,17 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  logger.app.info('App starting, version:', app.getVersion())
+  // Defensive: if the module-level single-instance lock check didn't fire
+  // fast enough, catch it here before starting services or logging. This
+  // exits a phantom second instance silently with zero side effects.
+  if (!app.hasSingleInstanceLock()) {
+    app.exit(0)
+    return
+  }
+
+  logger.app.info(
+    `App starting, version: ${app.getVersion()}, pid=${process.pid}, ppid=${process.ppid}, argv=${JSON.stringify(process.argv.slice(1))}`,
+  )
   logger.app.info('User data path:', app.getPath('userData'))
 
   // Fix 5: elevation gate — runs after whenReady so the message box can render.
@@ -447,6 +457,19 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   logger.app.info('All windows closed')
+  // Mid-show survival guard. Phantom second-instance cascades and stray
+  // taskbar clicks (via wifi-display touch injection) have closed the main
+  // window mid-recording, cascading into app.quit() and orphaning the
+  // recording. If OBS is actively recording, refuse to quit and recreate
+  // the main window instead. When nothing is recording, quit normally so
+  // the operator can close the app between shows.
+  let recording = false
+  try { recording = obs.getState().isRecording } catch {}
+  if (recording) {
+    logger.app.warn('Windows closed while OBS recording — recreating main window instead of quitting')
+    createWindow()
+    return
+  }
   app.quit()
 })
 
@@ -499,10 +522,14 @@ app.on('will-quit', () => {
   hotkeys.unregister()
 })
 
-// Prevent multiple instances
+// Prevent multiple instances. Use app.exit(0) instead of app.quit() so a
+// phantom second instance dies instantly without running whenReady, starting
+// services, or logging. Previously app.quit() was slow enough that whenReady
+// fired and wrote "App starting" before the shutdown completed — polluting
+// the log and racing for ports (OBS/WS hub/overlay server).
 const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
-  app.quit()
+  app.exit(0)
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {

@@ -282,12 +282,18 @@ export function setCompetition(comp: Competition): void {
       }
     }
 
-    // Restore current routine by ID (migrated or native)
-    if (currentRoutineId) {
-      const found = comp.routines.find(r => r.id === currentRoutineId)
-      if (!found) {
-        logger.app.warn(`Persisted current routine ID ${currentRoutineId} not found in loaded competition`)
-        currentRoutineId = null
+    // Restore currentRoutineId from persisted state. This was nulled at
+    // line 250 when we swapped in the new competition reference; bring it
+    // back so post-restart the operator's selection (and the next-routine
+    // pointer) survive. Without this, every app restart falls through to
+    // the "default to first visible routine" fallback below and lands on
+    // R#100 — causing accidental re-records when the operator hits RECORD.
+    if (existing.currentRoutineId) {
+      const found = comp.routines.find(r => r.id === existing.currentRoutineId)
+      if (found) {
+        currentRoutineId = existing.currentRoutineId
+      } else {
+        logger.app.warn(`Persisted current routine ID ${existing.currentRoutineId} not found in loaded competition`)
       }
     }
 
@@ -299,11 +305,13 @@ export function setCompetition(comp: Competition): void {
     }
   }
 
-  // Default to first routine if none set
-  if (!currentRoutineId && comp.routines.length > 0) {
-    const visible = comp.routines.filter(r => r.status !== 'skipped')
-    if (visible.length > 0) currentRoutineId = visible[0].id
-  }
+  // Previously defaulted to the first visible routine (= R100 in practice)
+  // when currentRoutineId was null. That caused accidental recordings of
+  // R100 every time the app restarted or the schedule was reloaded,
+  // because pressing RECORD while currentRoutineId is null silently binds
+  // to whatever getCurrentRoutine returns. Operator's rule: the selected
+  // routine must come from an explicit click, not a fallback. Leave
+  // currentRoutineId null until the operator sets it.
 
   // ── Reconcile pass (Media loss prevention, Phase 4) ──
   //
@@ -451,6 +459,22 @@ export function getUpcomingRoutines(count: number): Routine[] {
 export function advanceToNext(): Routine | null {
   if (!currentCompetition) return null
   const visible = getVisibleRoutines()
+  if (visible.length === 0) return null
+
+  // No current routine selected (e.g., fresh app start, post-restart before
+  // the operator has clicked anything). "Next" here means "pick up where we
+  // left off" — the first routine that still needs recording. Falling back
+  // to visible[0] or visible[1] would silently jump to R100 or R101, which
+  // is the bug operator's been chasing.
+  if (!currentRoutineId) {
+    const firstPending = visible.find(r => r.status === 'pending')
+    const target = firstPending ?? visible[0]
+    currentRoutineId = target.id
+    saveState()
+    logger.app.info(`advanceToNext: no current routine — jumping to ${firstPending ? 'first pending' : 'first visible'} #${target.entryNumber}`)
+    return target
+  }
+
   const idx = getCurrentIndex()
   if (idx < visible.length - 1) {
     currentRoutineId = visible[idx + 1].id

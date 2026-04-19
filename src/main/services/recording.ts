@@ -8,6 +8,11 @@ import * as overlay from './overlay'
 import * as wsHub from './wsHub'
 import * as uploadService from './upload'
 import * as tether from './tether'
+// Cyclic import: photos.ts imports `broadcastFullState` from this file.
+// Both sides only access the imports inside function bodies (never at
+// module-evaluation time), so Vite resolves the cycle correctly via
+// getter-based bindings.
+import * as photos from './photos'
 import * as jobQueue from './jobQueue'
 import { getSettings } from './settings'
 import * as schedule from './schedule'
@@ -182,7 +187,19 @@ function scheduleAutoFire(): void {
 const MIN_FREE_GB_TO_RECORD = 5
 
 /** Fix 2 + Fix 8: Validate that recording can start. Returns null if OK, or a blocked reason. */
-export function canStartRecording(): { blocked: true; reason: 'no-output-dir' | 'dir-not-accessible' | 'disk-space-low'; detail?: string } | null {
+export function canStartRecording(): { blocked: true; reason: 'no-output-dir' | 'dir-not-accessible' | 'disk-space-low' | 'no-routine-selected'; detail?: string } | null {
+  // Block if the operator hasn't explicitly selected a routine. Prior behavior
+  // silently bound recordings to whatever getCurrentRoutine returned — if that
+  // fell through to the first visible routine (R100), the operator would think
+  // they were recording a different routine while bytes were actually going to
+  // R100. Force an explicit click.
+  const routine = state.getCurrentRoutine()
+  if (!routine) {
+    logger.app.error('No routine selected — recording blocked')
+    sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'no-routine-selected' })
+    return { blocked: true, reason: 'no-routine-selected', detail: 'Click a routine row before pressing RECORD.' }
+  }
+
   const settings = getSettings()
   const outputDir = settings.fileNaming.outputDirectory
   if (!outputDir || outputDir.trim() === '') {
@@ -348,6 +365,56 @@ async function waitForFileLock(filePath: string, maxWaitMs = 30000): Promise<voi
   logger.app.warn(`File may still be locked after ${maxWaitMs / 1000}s: ${filePath}`)
 }
 
+/**
+ * Re-record archive structure: routineDir has the current take at the top
+ * level plus prior takes under `_archive/vN/`. For portal uploads the
+ * operator wants the full-length video — not the most recent, which may
+ * be an accidental short re-record that overwrote the real take. Scans
+ * the routine dir + every `_archive/v*` and returns the MKV with the
+ * largest file size (reliable proxy for duration at consistent OBS
+ * settings). Returns `defaultPath` if no better candidate is found.
+ */
+export function pickLongestMkv(routineDir: string, defaultPath: string): string {
+  if (!routineDir || !fs.existsSync(routineDir)) return defaultPath
+  const candidates: { path: string; size: number }[] = []
+  const scanDir = (dir: string): void => {
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.toLowerCase().endsWith('.mkv')) continue
+        const full = path.join(dir, f)
+        try {
+          const st = fs.statSync(full)
+          if (st.isFile()) candidates.push({ path: full, size: st.size })
+        } catch {}
+      }
+    } catch {}
+  }
+  scanDir(routineDir)
+  const archiveDir = path.join(routineDir, '_archive')
+  if (fs.existsSync(archiveDir)) {
+    try {
+      for (const v of fs.readdirSync(archiveDir)) {
+        const vDir = path.join(archiveDir, v)
+        try {
+          if (fs.statSync(vDir).isDirectory()) scanDir(vDir)
+        } catch {}
+      }
+    } catch {}
+  }
+  if (candidates.length === 0) return defaultPath
+  candidates.sort((a, b) => b.size - a.size)
+  const best = candidates[0].path
+  if (best !== defaultPath) {
+    const bestMB = (candidates[0].size / (1024 * 1024)).toFixed(1)
+    const cur = candidates.find((c) => c.path === defaultPath)
+    const curMB = cur ? (cur.size / (1024 * 1024)).toFixed(1) : '?'
+    logger.app.warn(
+      `pickLongestMkv: uploading ${best} (${bestMB} MB) instead of current ${defaultPath} (${curMB} MB)`,
+    )
+  }
+  return best
+}
+
 async function archiveExistingFiles(routineDir: string): Promise<void> {
   if (!fs.existsSync(routineDir)) return
 
@@ -490,26 +557,63 @@ export async function handleRecordingStopped(
 
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath, outputDir: routineDir })
 
-    // Auto-encode if enabled
+    // Auto-encode if enabled.
+    // Operator rule: a short accidental re-record must NEVER overwrite a
+    // longer prior upload to the portal. If the current take is not the
+    // longest across {current, _archive/vN}, we skip the auto-encode
+    // pipeline entirely — the prior upload stays intact on CompPortal,
+    // the short take remains on disk for audit, and the operator can
+    // manually trigger an encode if they really want to replace it.
     if (settings.behavior.autoEncodeRecordings) {
-      const queueBusy = ffmpegService.getQueueLength() > 0
-      state.updateRoutineStatus(routine.id, queueBusy ? 'queued' : 'encoding')
-      broadcastFullState()
-      ffmpegService.enqueueJob({
-        routineId: routine.id,
-        inputPath: newPath,
-        outputDir: routineDir,
-        judgeCount: settings.competition.judgeCount,
-        trackMapping: settings.audioTrackMapping,
-        processingMode: settings.ffmpeg.processingMode,
-        filePrefix: schedule.buildFilePrefix(routine.entryNumber),
-      })
+      const encodeInput = pickLongestMkv(routineDir, newPath)
+      if (encodeInput !== newPath) {
+        logger.app.warn(
+          `Skipping auto-encode for routine ${routine.entryNumber} — current take is not the longest. ` +
+          `Preserving prior upload. current=${newPath}, longer=${encodeInput}`,
+        )
+        // Leave status at 'recorded'. Next app restart's reconcile pass
+        // will pull CompPortal's authoritative state back into local (so
+        // status flips back to 'uploaded' if the portal still has the
+        // media_package from the earlier longer run).
+        broadcastFullState()
+      } else {
+        const queueBusy = ffmpegService.getQueueLength() > 0
+        state.updateRoutineStatus(routine.id, queueBusy ? 'queued' : 'encoding')
+        broadcastFullState()
+        ffmpegService.enqueueJob({
+          routineId: routine.id,
+          inputPath: encodeInput,
+          outputDir: routineDir,
+          judgeCount: settings.competition.judgeCount,
+          trackMapping: settings.audioTrackMapping,
+          processingMode: settings.ffmpeg.processingMode,
+          filePrefix: schedule.buildFilePrefix(routine.entryNumber),
+        })
+      }
     }
 
     // Rescan watch folder — retry unmatched photos + pick up new files
     tether.rescanPhotos().catch((err) => {
       logger.app.warn(`Photo rescan after recording stop failed: ${err.message}`)
     })
+
+    // Re-scan existing orphan drawer for photos whose EXIF falls inside this
+    // routine's new recording window. Makes the "drop SD mid-session, later
+    // recordings auto-pick-up their photos" flow work without operator
+    // intervention. Fire-and-forget; errors are logged and skipped.
+    if (routine.recordingStartedAt && timestamp) {
+      const startedAt = new Date(routine.recordingStartedAt)
+      const stoppedAt = new Date(timestamp)
+      if (Number.isFinite(startedAt.getTime()) && Number.isFinite(stoppedAt.getTime())) {
+        photos.rematchOrphansForWindow(routine.id, startedAt, stoppedAt).then((n) => {
+          if (n > 0) {
+            broadcastFullState()
+          }
+        }).catch((err: unknown) => {
+          logger.app.warn(`rematchOrphansForWindow failed: ${err instanceof Error ? err.message : err}`)
+        })
+      }
+    }
   } catch (err) {
     logger.app.error('File move failed:', err)
     if (stoppedRoutineId) {

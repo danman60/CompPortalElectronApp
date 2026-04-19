@@ -143,9 +143,11 @@ export function registerAllHandlers(): void {
     if (!routine || !routine.outputPath) return { error: 'Routine not found or not recorded' }
     const s = settings.getSettings()
     const dir = routine.outputDir || path.dirname(routine.outputPath)
+    // Upload the longest take across current + _archive/vN.
+    const encodeInput = recording.pickLongestMkv(dir, routine.outputPath)
     ffmpegService.enqueueJob({
       routineId: routine.id,
-      inputPath: routine.outputPath,
+      inputPath: encodeInput,
       outputDir: dir,
       judgeCount: s.competition.judgeCount,
       trackMapping: s.audioTrackMapping,
@@ -172,9 +174,11 @@ export function registerAllHandlers(): void {
     for (const routine of comp.routines) {
       if (routine.status === 'recorded' && routine.outputPath) {
         const dir = routine.outputDir || path.dirname(routine.outputPath)
+        // Upload the longest take across current + _archive/vN.
+        const encodeInput = recording.pickLongestMkv(dir, routine.outputPath)
         ffmpegService.enqueueJob({
           routineId: routine.id,
-          inputPath: routine.outputPath,
+          inputPath: encodeInput,
           outputDir: dir,
           judgeCount: s.competition.judgeCount,
           trackMapping: s.audioTrackMapping,

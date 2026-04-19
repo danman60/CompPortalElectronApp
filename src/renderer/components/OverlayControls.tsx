@@ -23,8 +23,14 @@ const EASING_OPTIONS: AnimationEasing[] = [
 export default function OverlayControls({ compact = false }: { compact?: boolean }): React.ReactElement {
   const currentRoutine = useStore((s) => s.currentRoutine)
   const [editorOpen, setEditorOpen] = useState(false)
+  // Initial defaults are all FALSE so nothing shows as "active/green" until
+  // the server state is actually confirmed via overlayGetState. Previous
+  // defaults of counter: true, logo: true caused a UI-vs-overlay mismatch
+  // after app restart when the true server state was false and the fetch
+  // either errored silently or lagged — operator saw green toggles while
+  // the overlay itself was off.
   const [toggles, setToggles] = useState<OverlayToggles>({
-    counter: true, clock: false, logo: true, lowerThird: false,
+    counter: false, clock: false, logo: false, lowerThird: false,
   })
 
   // Animation config
@@ -34,24 +40,33 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
   const [selectedAnim, setSelectedAnim] = useState<OverlayAnimation>('random')
 
   useEffect(() => {
-    window.api.overlayGetState().then((state: any) => {
-      if (state) {
-        setToggles({
-          counter: state.counter?.visible ?? true,
-          clock: state.clock?.visible ?? false,
-          logo: state.logo?.visible ?? true,
-          lowerThird: state.lowerThird?.visible ?? false,
-        })
-        if (state.animConfig) {
-          setAnimDuration(state.animConfig.animationDuration ?? 0.5)
-          setAnimEasing(state.animConfig.animationEasing ?? 'ease')
-          setAutoHideSec(state.animConfig.autoHideSeconds ?? 8)
+    const sync = (): void => {
+      window.api.overlayGetState().then((state: any) => {
+        if (state) {
+          setToggles({
+            counter: !!state.counter?.visible,
+            clock: !!state.clock?.visible,
+            logo: !!state.logo?.visible,
+            lowerThird: !!state.lowerThird?.visible,
+          })
+          if (state.animConfig) {
+            setAnimDuration(state.animConfig.animationDuration ?? 0.5)
+            setAnimEasing(state.animConfig.animationEasing ?? 'ease')
+            setAutoHideSec(state.animConfig.autoHideSeconds ?? 8)
+          }
+          if (state.lowerThird?.animation) {
+            setSelectedAnim(state.lowerThird.animation)
+          }
         }
-        if (state.lowerThird?.animation) {
-          setSelectedAnim(state.lowerThird.animation)
-        }
-      }
-    })
+      }).catch((err: unknown) => {
+        console.error('overlayGetState failed:', err)
+      })
+    }
+    sync()
+    // Re-sync every 2s so Stream Deck toggles / auto-hide / external state
+    // changes reflect in the UI without requiring a refresh.
+    const poll = setInterval(sync, 2000)
+    return () => clearInterval(poll)
   }, [])
 
   async function handleToggle(element: keyof OverlayToggles): Promise<void> {

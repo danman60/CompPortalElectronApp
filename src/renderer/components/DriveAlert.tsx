@@ -213,10 +213,33 @@ export default function DriveAlert(): React.ReactElement | null {
     })
   }
 
-  function handleStartImport(): void {
+  // Guard helper — true if we've already kicked off import for this drive
+  // OR an import is in flight. Used by both manual and auto paths to prevent
+  // double-fire (e.g. operator clicks "Start Import" during the single-frame
+  // flash before the auto-minimize effect runs).
+  function fireImportOnce(): void {
     if (!detected || !competition) return
+    if (progress.stage !== 'idle') return
+    const key = `${detected.drivePath}::${detected.photoCount}`
+    if (autoImportFiredRef.current.has(key)) return
+    autoImportFiredRef.current.add(key)
     runImport(detected.photoPath)
   }
+
+  function handleStartImport(): void {
+    fireImportOnce()
+  }
+
+  // Auto-minimize as soon as a drive is detected when auto-import is on, so
+  // the full-screen overlay never flashes over the show UI. Runs in a
+  // dedicated effect on `detected` change — scheduling this in the same
+  // effect as the import-fire below caused a one-frame flash because React
+  // renders `detected=true, minimized=false` before the effect body runs.
+  useEffect(() => {
+    if (!autoImportOnDrive) return
+    if (!detected) return
+    setMinimizedLocal(true)
+  }, [detected, autoImportOnDrive])
 
   useEffect(() => {
     if (!autoImportOnDrive) return
@@ -225,6 +248,17 @@ export default function DriveAlert(): React.ReactElement | null {
     const key = `${detected.drivePath}::${detected.photoCount}`
     if (autoImportFiredRef.current.has(key)) return
     autoImportFiredRef.current.add(key)
+    // Initialize the Header progress pill AND overlay-mode pill (same
+    // module state backs both). The operator sees a soft pill no matter
+    // which window mode they're in.
+    setMinimized({
+      active: true,
+      stage: 'scanning',
+      current: 0,
+      total: detected.photoCount ?? 0,
+      message: `SD matched: ${detected.photoCount ?? 0} photos — importing`,
+      driveKey: `${detected.drivePath}::${detected.photoCount}`,
+    })
     runImport(detected.photoPath)
     // runImport identity changes every render; intentional single-fire guard via ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps

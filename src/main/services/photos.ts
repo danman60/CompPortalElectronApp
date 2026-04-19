@@ -905,6 +905,79 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
   }
 }
 
+/**
+ * Scan existing `_orphans/<runId>/` directories and reassign any orphans
+ * whose EXIF DateTimeOriginal falls inside a newly-recorded routine's
+ * window (with a small buffer). Called from handleRecordingStopped so
+ * the "drop SD mid-session, later recordings auto-pick-up" flow works.
+ *
+ * Best-effort: errors on individual orphans are logged and skipped; the
+ * function always resolves. Returns the count of photos successfully
+ * reassigned.
+ */
+export async function rematchOrphansForWindow(
+  routineId: string,
+  startedAt: Date,
+  stoppedAt: Date,
+): Promise<number> {
+  try {
+    const outputDir = getSettings().fileNaming.outputDirectory
+    if (!outputDir) return 0
+    const orphanRoot = path.join(outputDir, '_orphans')
+    if (!fs.existsSync(orphanRoot)) return 0
+
+    // 30s buffer on each side so photos taken right at the boundary count.
+    const BUFFER_MS = 30_000
+    const winStart = startedAt.getTime() - BUFFER_MS
+    const winStop = stoppedAt.getTime() + BUFFER_MS
+
+    const runDirs = await fs.promises.readdir(orphanRoot)
+    let reassigned = 0
+    for (const runDir of runDirs) {
+      const fullRunDir = path.join(orphanRoot, runDir)
+      let files: string[]
+      try {
+        const s = await fs.promises.stat(fullRunDir)
+        if (!s.isDirectory()) continue
+        files = await fs.promises.readdir(fullRunDir)
+      } catch {
+        continue
+      }
+      for (const f of files) {
+        if (!f.endsWith('.json')) continue
+        const sidecarPath = path.join(fullRunDir, f)
+        const jpgPath = sidecarPath.replace(/\.json$/, '')
+        try {
+          if (!fs.existsSync(jpgPath)) continue
+          const raw = await fs.promises.readFile(sidecarPath, 'utf-8')
+          const parsed = JSON.parse(raw) as { exifTime?: string }
+          if (!parsed.exifTime) continue
+          const exifMs = Date.parse(parsed.exifTime)
+          if (!Number.isFinite(exifMs)) continue
+          if (exifMs < winStart || exifMs > winStop) continue
+          // Match. Reassign.
+          const res = await reassignOrphan(jpgPath, routineId)
+          if (res.ok) {
+            reassigned++
+            logger.photos.info(`rematchOrphans: moved ${jpgPath} -> routine ${routineId}`)
+          } else {
+            logger.photos.warn(`rematchOrphans: reassign failed for ${jpgPath}: ${res.error}`)
+          }
+        } catch (err) {
+          logger.photos.warn(`rematchOrphans: skip ${sidecarPath}: ${err instanceof Error ? err.message : err}`)
+        }
+      }
+    }
+    if (reassigned > 0) {
+      logger.photos.info(`rematchOrphans: reassigned ${reassigned} photo(s) to routine ${routineId}`)
+    }
+    return reassigned
+  } catch (err) {
+    logger.photos.warn(`rematchOrphans failed: ${err instanceof Error ? err.message : err}`)
+    return 0
+  }
+}
+
 /** Delete an orphan photo and its sidecar. */
 export async function discardOrphan(orphanPath: string): Promise<{ ok: boolean; error?: string }> {
   try {

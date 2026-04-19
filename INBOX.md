@@ -1,6 +1,35 @@
 
 ---
 
+## From CompSyncElectronApp-current — 2026-04-18 15:20 ET
+
+### Feature request: double-click routine row → operator note editor (faster trigger)
+
+**From Saturday 2026-04-18 mid-show.** Operator wants a faster capture path for per-routine notes: mistakes, weirdness, re-record requests, audio issues, camera swaps, etc.
+
+**Current state (as-wired — not missing, just slow):**
+- `Routine.notes` field in `src/shared/types.ts` — stored in local `state.json` only
+- `STATE_SET_NOTE` IPC + `setRoutineNote` preload method — wired
+- `NoteEditor` component at `RoutineTable.tsx:282-327` — ✎ button per row opens inline textarea editor
+- ✅ **Operator-only confirmed:** grep of `src/main/services/compPortal.ts` returned zero matches for `notes`. Nothing syncs to CompPortal. SDs/CDs cannot see these notes.
+- ⚠️ **One leak path to be aware of:** notes ARE included in the local CSV session report (state.ts ~line 609, `exportReport`). If operator emails that CSV to anyone, notes go with it. Stays local to the machine unless explicitly exported + shared.
+
+**What's missing — just the faster trigger:**
+- Add `onDoubleClick` handler to the `<tr>` in `RoutineTable.tsx:468` area that opens the existing `NoteEditor` (rather than requiring the operator to hit the tiny ✎ button mid-show)
+- No backend changes. Pure UI wire-up.
+- Apply to the overlay panels automatically — `PreviousRoutines` and `NextRoutines` already use `RoutineTable` via the `windowMode` prop, so they inherit the handler for free.
+
+**Why now:** during live shows routines happen 1-2 minutes apart. If something weird happens (music wrong, camera bumped, photographer missed front half) there's no fast way to capture it. By end of day operator has forgotten which routine had the issue. Post-hoc reconciliation takes hours.
+
+**Not in scope:**
+- Server sync to CompPortal (and SHOULD stay out — operator notes are by definition operator-private; surfacing them to SDs/CDs would break their purpose)
+- Rich text / attachments / screenshots
+
+**Optional hardening (also operator-private concern):**
+- Consider adding a toggle in Settings: "Include operator notes in CSV session report" (default: off). Prevents the one current leak path even if operator accidentally emails the CSV.
+
+---
+
 ## From CompSyncElectronApp-7 — 2026-04-18 ~13:30 ET
 
 ### Feature request: TRUE compact view — half-screen layout OR transparent OBS-overlay frame
@@ -289,3 +318,58 @@ v4 lives at `scripts/overnight-sd-import.py` SHA `9662d6c0...`. Known issues:
   - Strict containment matcher is currently MISSING 34 routines that the
     operator confirmed WERE shot — investigation in progress in fresh
     session CompSyncElectronApp-6
+
+---
+
+## From CompSyncElectronApp-bugfix — 2026-04-18 21:30 ET
+
+### Feature request: SD card "just works" flow — auto-import, auto-offset, background processing
+
+**Operator context (verbatim, 2026-04-18 ~21:17 ET):** mid-session SD swaps are the primary workflow. Operator wants:
+- Plug SD mid-session → no modal, no clicking through steps
+- Photos auto-match to routines, auto-upload to CompPortal in background
+- If a known-bad offset is detected, one-line popup to confirm/correct; offset then persists for rest of day (per camera body)
+- While session continues, second SD goes in later → same silent flow
+- By end of session, all photos live in CompPortal DB, sorted by routine
+
+**What was shipped as a partial fix tonight (2026-04-18 build md5 `5fc6349546e80...`):**
+- `DriveAlert.tsx` now auto-minimizes when `settings.behavior.autoImportOnDrive === true` (the default). Operator now sees a Header progress pill instead of the full-screen modal. Existing background import + orphan review drawer + wrong-day detection all unchanged.
+
+**Still to do (this is the full spec — don't build piecemeal, build as a coherent flow):**
+
+1. **Persistent per-camera offset**
+   - `state.json` → add `cameraOffsets: { [folderPrefix: string]: { offsetMinutes: number, appliedAt: ISO, confirmedBy: 'operator' | 'auto' } }`
+   - Keyed by folder prefix (e.g., `P166`, `P196`, `F:\DCIM\224`) since that identifies the camera body, not drive letter (drive letters rotate)
+   - Applied to all subsequent EXIF timestamps from that prefix for the rest of the day (until app restart OR operator clears)
+   - Cleared on new session day (compare `date(cameraOffsets[*].appliedAt)` to today)
+
+2. **Auto-detect suggested offset**
+   - On SD insert, sample first 20 photos' EXIF
+   - If <20% match any recording window → compute candidate offset by looking for the offset value that maximizes matches
+   - If a strong candidate exists (say +X min gives >80% match), offer it: tiny one-line modal "Camera clock appears +X min off. Apply for today?" → one click Yes/No
+   - If no strong candidate → still show the modal with a manual minutes input, pre-filled with the best guess
+   - Soft modal (dismissible, reappears until addressed)
+
+3. **Re-match orphans when new recordings complete**
+   - Current: photos whose EXIF doesn't fall in any known recording window become orphans (visible in the orphan drawer)
+   - Desired: every time a routine's recording stops (recordingStoppedAt set), re-scan orphans. If any now match the new window, auto-assign them
+   - This makes the "drop SD in mid-session, later recordings pick up photos for not-yet-recorded routines" flow work naturally
+
+4. **Upload ordering — raw first, thumbnails second**
+   - Currently upload.ts uploads both. Flip priority: full-res photo uploads first, thumbnail queues after
+   - Rationale: the secondary operator who culls for the on-stage slideshow views photos directly on CompPortal and needs the hi-res (they zoom / inspect). Thumbnails are only a fallback for grid rendering speed
+   - Thumbnails still get generated and uploaded — just not first
+   - Paired with CompPortal's "prefer hi-res, fall back to thumb" serving change (see CompPortal INBOX 2026-04-18 21:27)
+
+5. **Toast copy**
+   - Instead of current progress pill text ("Importing 45/2000"), add a clear "SD matched — X photos, importing" toast on start, and "Import complete — X matched, Y orphan" toast on finish
+   - Soft toast, dismissible, non-blocking
+
+**Not in scope:**
+- WPD/PTP mode — still shelved
+- Thumbnails-on-CD-portal size (handled in CompPortal INBOX)
+- Photo culling UI on the app itself
+
+**Known related issues from today:**
+- "Every routine WAS captured" feedback memory (`feedback_every_routine_captured.md`) — matcher bugs cause false absences, not real absence. Whatever offset detection we build must never dismiss a whole folder as "no matches" silently.
+- Friday recovery showed offset chaos (+60min post-lunch, -15 days Cam B) — per-camera offset storage is ESSENTIAL, not nice-to-have.

@@ -1,12 +1,24 @@
 /* ===== Overlay Controls — Broadcast Console ===== */
 
 /* --- Main Panel --- */
+/* Fill the parent column height and let the LIVE CHAT section (last child)
+   consume remaining space so the left panel no longer has dead space below
+   the chat strip. Inner ic-strip-feed/ic-strip-history does its own scroll. */
 .oc-panel {
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0;
-  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.oc-panel > .ic-strip-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* --- Action Bar (Fire / Hide) --- */
@@ -135,7 +147,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1 1 auto;
   min-height: 60px;
+  overflow-y: auto;
 }
 
 .ic-strip-history {
