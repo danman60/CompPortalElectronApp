@@ -239,6 +239,44 @@ export async function browseForFolder(): Promise<string | null> {
   return result.filePaths[0]
 }
 
+/**
+ * Camera body identifier derived from the filename prefix. Panasonic Lumix
+ * (the operator's cameras) names files as `P<3-digit folder><4-digit seq>.JPG`.
+ * We use `P<folder>` as the body key. NOT drive letter — SD cards rotate.
+ *
+ * Operator-confirmed camera body grouping (UDC London 2026-04-17):
+ *   Cam 1 "OLD": folders 101-110 (prefixes P10x)
+ *   Cam 2 "NEW": folders 166-189 (prefixes P16x/P17x/P18x)
+ *
+ * So the 4-character prefix (e.g. "P166") is a folder-level key; the first
+ * 2 digits give a body-level key when the camera rolls multiple folders.
+ * We use the body-level key (P1 + first digit, like "P16") for offset
+ * persistence — same camera across folders gets the same offset.
+ */
+function getCameraBodyKey(filePath: string): string | null {
+  const base = path.basename(filePath)
+  const m = base.match(/^(P\d{2})\d{5}\.(?:jpg|jpeg)$/i)
+  return m ? m[1].toUpperCase() : null
+}
+
+/**
+ * DCIM folder name partitioning key. Lumix cameras create `DCIM/NNN_PANA/`
+ * subfolders and increment NNN as each fills. Two sequential SDs in the
+ * same reader slot can share the same drive letter but have different
+ * NNN_PANA folders with different photos under the same filenames — we
+ * must partition on folder to prevent filename-collision merge.
+ */
+function getDcimFolderKey(filePath: string): string {
+  const segments = filePath.split(/[\\/]/)
+  // Walk back to the DCIM/<folder>/ segment.
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (/^\d{3}_?/.test(segments[i])) {
+      return segments[i].toUpperCase()
+    }
+  }
+  return ''
+}
+
 async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
   try {
     // Read only first 128KB — EXIF data is always in the file header
@@ -270,6 +308,7 @@ async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
 function detectClockOffset(
   photos: { path: string; captureTime: Date }[],
   windows: RecordingWindow[],
+  seedOffsetMs = 0,
 ): number {
   if (photos.length === 0 || windows.length === 0) return 0
 
@@ -281,8 +320,12 @@ function detectClockOffset(
     samplePhotos.push(photos[i])
   }
 
-  // For each sample photo, find the 3 nearest windows and generate candidate offsets
+  // For each sample photo, find the 3 nearest windows and generate candidate offsets.
+  // seedOffsetMs is injected at the head of candidates — when a persisted
+  // per-camera offset exists, it's evaluated first so sparse imports don't
+  // re-learn from scratch when the second SD from the same body arrives.
   const candidates: number[] = [0]
+  if (seedOffsetMs !== 0) candidates.unshift(seedOffsetMs)
   const sortedWindows = [...windows].sort(
     (a, b) => a.recordingStarted.getTime() - b.recordingStarted.getTime(),
   )
@@ -489,33 +532,75 @@ async function runImport(
   // filename collision across drives cannot silently merge them. This is a
   // belt-and-suspenders guard against a future caller passing a union of two
   // roots, or scanDir returning entries from two drives via a symlink.
+  // Partition on {driveRoot}::{dcimFolder}. Drive root alone is insufficient
+  // because two sequential SDs swapped into the same reader share the same
+  // drive letter. DCIM folder alone is insufficient because two SDs mounted
+  // simultaneously can both expose 166_PANA. The composite key prevents
+  // filename-collision merge across both dimensions (confirmed 2026-04-18
+  // UDC London F:\DCIM\166_PANA + H:\DCIM\166_PANA both had P1667001.JPG
+  // with different photos).
   const byDrive = new Map<string, string[]>()
   for (const fp of filePaths) {
     // On Windows "F:\foo" → "F:". On POSIX → "" (no drive) — fall back to first
     // path segment so SMB mounts like /mnt/sd1 vs /mnt/sd2 still partition.
-    let key = path.parse(fp).root
-    if (!key) {
+    let driveKey = path.parse(fp).root
+    if (!driveKey) {
       const first = fp.split(path.sep).filter(Boolean)[0]
-      key = first ? path.sep + first : path.sep
+      driveKey = first ? path.sep + first : path.sep
     }
-    key = key.toUpperCase()
+    driveKey = driveKey.toUpperCase()
+    const dcimKey = getDcimFolderKey(fp)
+    const key = dcimKey ? `${driveKey}::${dcimKey}` : driveKey
     let arr = byDrive.get(key)
     if (!arr) { arr = []; byDrive.set(key, arr) }
     arr.push(fp)
   }
   if (byDrive.size > 1) {
     logger.photos.warn(
-      `Import spans ${byDrive.size} drives (${[...byDrive.keys()].join(', ')}) — ` +
-      `processing in drive-partitioned order to prevent filename-collision merge`,
+      `Import spans ${byDrive.size} partitions (${[...byDrive.keys()].join(', ')}) — ` +
+      `processing in partition order to prevent filename-collision merge`,
     )
   }
 
   // Rebuild filePaths in drive-partitioned order: all photos from drive A, then
   // all photos from drive B, etc. Within a drive, preserve scan order so EXIF
   // reads stay sequential for disk locality.
-  const partitionedPaths: string[] = []
+  const partitionedPathsRaw: string[] = []
   for (const arr of byDrive.values()) {
-    partitionedPaths.push(...arr)
+    partitionedPathsRaw.push(...arr)
+  }
+
+  // ── SD watermark filter ──
+  // Skip photos whose filename is <= the persisted watermark for that
+  // camera body. Operator directive (2026-04-19): SDs always contain the
+  // full competition's photos; each insertion should ONLY process photos
+  // taken AFTER the app last saw this SD. Without this filter the
+  // 2nd-day import re-scans yesterday's 10k photos (wasted EXIF reads,
+  // potential mis-match against today's routines).
+  const partitionedPaths: string[] = []
+  let skippedByWatermark = 0
+  for (const fp of partitionedPathsRaw) {
+    const bodyKey = getCameraBodyKey(fp)
+    if (!bodyKey) {
+      partitionedPaths.push(fp)
+      continue
+    }
+    const wm = state.getSdWatermark(bodyKey)
+    if (wm) {
+      const fileName = path.basename(fp).toUpperCase()
+      // String comparison: "P1678123.JPG" > "P1668050.JPG" — valid because
+      // Panasonic filenames are fixed-width and monotonically increasing.
+      if (fileName <= wm.lastFilename.toUpperCase()) {
+        skippedByWatermark++
+        continue
+      }
+    }
+    partitionedPaths.push(fp)
+  }
+  if (skippedByWatermark > 0) {
+    logger.photos.info(
+      `SD watermark filter: skipped ${skippedByWatermark}/${partitionedPathsRaw.length} photos (already processed in prior sessions)`,
+    )
   }
 
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
@@ -599,11 +684,71 @@ async function runImport(
       recordingStopped: new Date(r.recordingStoppedAt!),
     }))
 
-  // Detect clock offset
-  const clockOffsetMs = detectClockOffset(photos, windows)
+  // ── Per-camera-body offset detection ────────────────────────────────
+  // Group photos by filename-prefix body key ("P16", "P10", etc). Run
+  // detection per body so Cam 1 and Cam 2 can have different offsets
+  // (confirmed 2026-04-17 UDC London: Cam 2 was +60min before lunch but
+  // reset to +0 after lunch, same camera). Seed with persisted offset so
+  // a thin second SD from the same body doesn't re-learn from scratch.
+  const photosByBody = new Map<string, typeof photos>()
+  const photoBodyIndex: (string | null)[] = new Array(photos.length)
+  for (let i = 0; i < photos.length; i++) {
+    const body = getCameraBodyKey(photos[i].path) ?? '_unknown'
+    photoBodyIndex[i] = body
+    let arr = photosByBody.get(body)
+    if (!arr) { arr = []; photosByBody.set(body, arr) }
+    arr.push(photos[i])
+  }
 
-  // Match photos to routines
-  const matches = matchPhotosToRoutines(photos, windows, clockOffsetMs)
+  const offsetByBody = new Map<string, number>()
+  for (const [body, bodyPhotos] of photosByBody.entries()) {
+    const seed = body !== '_unknown' ? (state.getCameraOffset(body)?.offsetMs ?? 0) : 0
+    const detected = detectClockOffset(bodyPhotos, windows, seed)
+    offsetByBody.set(body, detected)
+    if (body !== '_unknown' && detected !== 0) {
+      state.setCameraOffset(body, detected, 'auto')
+      sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+        stage: 'matching',
+        total: photos.length,
+        current: 0,
+        message: `Camera ${body}: offset ${Math.round(detected / 1000)}s applied`,
+      })
+    }
+  }
+
+  // Fallback for downstream code paths that still reference a single offset
+  // (orphan sidecar write, manifest, etc). Pick the offset with the most
+  // photos behind it as the "dominant" clockOffsetMs. Unknown-body photos
+  // inherit this dominant offset.
+  let dominantBody = '_unknown'
+  let dominantCount = -1
+  for (const [body, arr] of photosByBody.entries()) {
+    if (arr.length > dominantCount) {
+      dominantCount = arr.length
+      dominantBody = body
+    }
+  }
+  const clockOffsetMs = offsetByBody.get(dominantBody) ?? 0
+
+  // Match photos to routines. We run matchPhotosToRoutines once per body
+  // with that body's offset, then stitch the results back into original
+  // input order so callers referencing photos[i] ↔ matches[i] stay valid.
+  const matches = new Array<PhotoMatch>(photos.length)
+  const matchesByBody = new Map<string, PhotoMatch[]>()
+  const bodyIndexCursor = new Map<string, number>()
+  for (const [body, bodyPhotos] of photosByBody.entries()) {
+    const bodyOffset = offsetByBody.get(body) ?? 0
+    const bodyMatches = matchPhotosToRoutines(bodyPhotos, windows, bodyOffset)
+    matchesByBody.set(body, bodyMatches)
+    bodyIndexCursor.set(body, 0)
+  }
+  for (let i = 0; i < photos.length; i++) {
+    const body = photoBodyIndex[i] ?? '_unknown'
+    const cursor = bodyIndexCursor.get(body) ?? 0
+    const bodyMatches = matchesByBody.get(body)!
+    matches[i] = bodyMatches[cursor]
+    bodyIndexCursor.set(body, cursor + 1)
+  }
 
   // Attach sourceHash to each match — used downstream for dedup + safe-delete gating.
   for (let i = 0; i < matches.length; i++) {
@@ -658,15 +803,43 @@ async function runImport(
 
     // Generate thumbnail (WebP — small, fast, served directly by CompPortal Media Portal)
     // Bug E mitigation: validate the JPEG before feeding sharp. libvips throws
-    // "TypeError: A boolean was expected" on zero-byte / partial / non-JPEG
-    // inputs. Pre-flight check turns those into a single info-line skip
-    // instead of a stack-trace flood.
+    // "TypeError: A boolean was expected" on zero-byte / partial / non-JPEG inputs.
+    // Pre-flight check (isThumbnailSafe) turns those into a single info-line skip.
+    //
+    // UDC London 2026-04-19: sharp 0.33.5 in the asar runtime was throwing that
+    // same TypeError on valid JPEGs too — 3,649/3,649 failures during Sunday SD
+    // import. Root cause was an option default not propagating cleanly through
+    // the asar bundle (pipeline call at sharp/lib/output.js:1536). Setting every
+    // boolean option explicitly + failOn:'none' sidesteps the default-lookup
+    // misfire.
     try {
       const thumbDir = path.join(routineDir, 'thumbnails')
       if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
       const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.webp`)
       if (await isThumbnailSafe(destFile)) {
-        await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbPath)
+        await sharp(destFile, {
+          failOn: 'none',
+          sequentialRead: true,
+          unlimited: false,
+        })
+          .rotate()
+          .resize({
+            width: 200,
+            height: 200,
+            fit: 'cover',
+            withoutEnlargement: false,
+            withoutReduction: false,
+            fastShrinkOnLoad: true,
+          })
+          .webp({
+            quality: 80,
+            effort: 4,
+            lossless: false,
+            nearLossless: false,
+            smartSubsample: false,
+            alphaQuality: 100,
+          })
+          .toFile(thumbPath)
         match.thumbnailPath = thumbPath
       } else {
         logger.photos.info(`Thumbnail skipped (not a valid JPEG): ${destFile}`)
@@ -725,6 +898,12 @@ async function runImport(
 
     const sidecar = {
       exifTime: match.captureTime,
+      // Offset applied during this import's clock-offset detection. Rematch
+      // code downstream adds this to `exifTime` before comparing to new
+      // recording windows — otherwise an orphan imported under a +15min
+      // offset would fail to rematch because its sidecar holds the raw
+      // (offset-unaware) EXIF time while new windows are in real time.
+      clockOffsetMs,
       nearestWindow: nearestWindow
         ? {
             routineId: nearestWindow.routineId,
@@ -792,12 +971,25 @@ async function runImport(
   // Auto-upload photos if enabled
   const settings = getSettings()
   if (settings.behavior.autoUploadAfterEncoding) {
-    for (const [routineId] of photosByRoutine) {
-      const updatedRoutine = state.getCompetition()?.routines.find(r => r.id === routineId)
-      if (updatedRoutine) {
-        const result = uploadService.enqueueRoutine(updatedRoutine)
-        if (result.queuedJobs > 0) {
-          uploadService.startUploads()
+    const strategy = settings.upload?.strategy || 'routine-batch'
+    if (strategy === 'round-robin') {
+      const routinesWithPhotos: Routine[] = []
+      for (const [routineId] of photosByRoutine) {
+        const updatedRoutine = state.getCompetition()?.routines.find(r => r.id === routineId)
+        if (updatedRoutine) routinesWithPhotos.push(updatedRoutine)
+      }
+      if (routinesWithPhotos.length > 0) {
+        uploadService.enqueueRoundRobin(routinesWithPhotos)
+        uploadService.startUploads()
+      }
+    } else {
+      for (const [routineId] of photosByRoutine) {
+        const updatedRoutine = state.getCompetition()?.routines.find(r => r.id === routineId)
+        if (updatedRoutine) {
+          const result = uploadService.enqueueRoutine(updatedRoutine)
+          if (result.queuedJobs > 0) {
+            uploadService.startUploads()
+          }
         }
       }
     }
@@ -807,18 +999,66 @@ async function runImport(
     `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s`,
   )
 
+  // Advance SD watermark per camera body to the highest filename we saw
+  // this import. Subsequent inserts will skip everything up through this
+  // filename — enforcing the "only scan NEW photos" rule.
+  const maxFileByBody: Record<string, string> = {}
+  for (const p of partitionedPathsRaw) {
+    const body = getCameraBodyKey(p)
+    if (!body) continue
+    const f = path.basename(p).toUpperCase()
+    if (!maxFileByBody[body] || f > maxFileByBody[body]) maxFileByBody[body] = f
+  }
+  if (Object.keys(maxFileByBody).length > 0) {
+    state.setSdWatermarksBulk(maxFileByBody)
+  }
+
+  // ── Distribution-sanity validator ──
+  // Surface routines with unexpected photo counts so the operator sees silent
+  // mis-matches without reading logs. Thresholds per operator expectation
+  // (2026-04-18 UDC London): no routine >300, recorded routines should have
+  // at least 10. These are soft warnings only — toast, never block.
+  const routinesOver300: Array<{ entryNumber: string; count: number }> = []
+  const routinesUnder10: Array<{ entryNumber: string; count: number }> = []
+  for (const [routineId, list] of photosByRoutine.entries()) {
+    const r = routines.find(rr => rr.id === routineId)
+    const entryNumber = r?.entryNumber ?? routineId.slice(0, 8)
+    if (list.length > 300) routinesOver300.push({ entryNumber, count: list.length })
+    // Only flag "under 10" when the routine has been recorded — pending
+    // routines legitimately have zero photos.
+    if (list.length > 0 && list.length < 10 && r?.recordingStartedAt) {
+      routinesUnder10.push({ entryNumber, count: list.length })
+    }
+  }
+  if (routinesOver300.length > 0) {
+    logger.photos.warn(`Distribution sanity: ${routinesOver300.length} routine(s) have >300 photos — ` +
+      routinesOver300.slice(0, 5).map(x => `R${x.entryNumber}=${x.count}`).join(', '))
+  }
+  if (routinesUnder10.length > 0) {
+    logger.photos.warn(`Distribution sanity: ${routinesUnder10.length} recorded routine(s) have <10 photos — ` +
+      routinesUnder10.slice(0, 5).map(x => `R${x.entryNumber}=${x.count}`).join(', '))
+  }
+
   sendToRenderer(IPC_CHANNELS.PHOTOS_MATCH_RESULT, result)
 
   // Completion summary — consumed by renderer toast + OrphanReview drawer.
   // Shape is stable (see tests/e2e-sd-import.mjs); extend by adding fields,
-  // never rename existing keys.
+  // never rename existing keys. New distribution fields + per-camera offset
+  // summary ride alongside existing data — old renderers ignore them.
   try {
+    const cameraOffsetSummary: Record<string, number> = {}
+    for (const [body, offsetMs] of offsetByBody.entries()) {
+      if (body !== '_unknown') cameraOffsetSummary[body] = offsetMs
+    }
     sendToRenderer(IPC_CHANNELS.PHOTOS_IMPORT_COMPLETE_SUMMARY, {
       runId: importRunId,
       routinesUpdated: photosByRoutine.size,
       photosUploaded: result.matched, // uploads happen async; this is "photos queued for upload"
       thumbsUploaded: matches.filter(m => m.confidence !== 'unmatched' && m.thumbnailPath).length,
       orphaned: result.unmatched,
+      routinesOver300,
+      routinesUnder10,
+      cameraOffsets: cameraOffsetSummary,
     })
   } catch (err) {
     logger.photos.warn('import summary broadcast failed:', err instanceof Error ? err.message : err)
@@ -867,7 +1107,29 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
       if (!fs.existsSync(thumbDir)) await fs.promises.mkdir(thumbDir, { recursive: true })
       thumbnailPath = path.join(thumbDir, `thumb_${String(nextIdx).padStart(3, '0')}.webp`)
       if (await isThumbnailSafe(destFile)) {
-        await sharp(destFile).resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toFile(thumbnailPath)
+        await sharp(destFile, {
+          failOn: 'none',
+          sequentialRead: true,
+          unlimited: false,
+        })
+          .rotate()
+          .resize({
+            width: 200,
+            height: 200,
+            fit: 'cover',
+            withoutEnlargement: false,
+            withoutReduction: false,
+            fastShrinkOnLoad: true,
+          })
+          .webp({
+            quality: 80,
+            effort: 4,
+            lossless: false,
+            nearLossless: false,
+            smartSubsample: false,
+            alphaQuality: 100,
+          })
+          .toFile(thumbnailPath)
       } else {
         logger.photos.info(`Thumbnail skipped (not a valid JPEG): ${destFile}`)
         thumbnailPath = undefined
@@ -950,11 +1212,15 @@ export async function rematchOrphansForWindow(
         try {
           if (!fs.existsSync(jpgPath)) continue
           const raw = await fs.promises.readFile(sidecarPath, 'utf-8')
-          const parsed = JSON.parse(raw) as { exifTime?: string }
+          const parsed = JSON.parse(raw) as { exifTime?: string; clockOffsetMs?: number }
           if (!parsed.exifTime) continue
           const exifMs = Date.parse(parsed.exifTime)
           if (!Number.isFinite(exifMs)) continue
-          if (exifMs < winStart || exifMs > winStop) continue
+          // Apply the offset that was detected during the original import.
+          // Missing in old orphans (pre-fix) — treat as 0 for back-compat.
+          const offset = Number.isFinite(parsed.clockOffsetMs) ? (parsed.clockOffsetMs as number) : 0
+          const adjustedMs = exifMs + offset
+          if (adjustedMs < winStart || adjustedMs > winStop) continue
           // Match. Reassign.
           const res = await reassignOrphan(jpgPath, routineId)
           if (res.ok) {
@@ -976,6 +1242,71 @@ export async function rematchOrphansForWindow(
     logger.photos.warn(`rematchOrphans failed: ${err instanceof Error ? err.message : err}`)
     return 0
   }
+}
+
+/**
+ * Scan all currently-mounted camera drives and advance SD watermarks to
+ * the highest filename on each. Operator's "mark SDs as processed" button
+ * fires this — after invocation, subsequent imports only pick up photos
+ * with a filename greater than what's on the SD right now.
+ *
+ * Side-effect: does NOT import any photos, does NOT modify state.routines.
+ * Only writes to state.sdWatermarks.
+ *
+ * Returns a summary of what was marked, for operator confirmation toast.
+ */
+export async function markCurrentSdsAsProcessed(): Promise<{
+  scannedDrives: number
+  watermarksSet: Record<string, string>
+  error?: string
+}> {
+  try {
+    // Lazy require to avoid any main-bundle cycle concerns.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const driveMonitor = require('./driveMonitor') as typeof import('./driveMonitor')
+    const drives = driveMonitor.scanCurrentCameraDrives()
+    if (drives.length === 0) {
+      return { scannedDrives: 0, watermarksSet: {} }
+    }
+    const maxByBody: Record<string, string> = {}
+    for (const d of drives) {
+      // Recursively scan this drive's photo folder for JPEGs. Cheap — just
+      // filename enumeration, no content reads.
+      const files = await collectJpegFilenames(d.photoPath)
+      for (const full of files) {
+        const body = getCameraBodyKey(full)
+        if (!body) continue
+        const f = path.basename(full).toUpperCase()
+        if (!maxByBody[body] || f > maxByBody[body]) maxByBody[body] = f
+      }
+    }
+    state.setSdWatermarksBulk(maxByBody)
+    return { scannedDrives: drives.length, watermarksSet: maxByBody }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.photos.error(`markCurrentSdsAsProcessed failed: ${msg}`)
+    return { scannedDrives: 0, watermarksSet: {}, error: msg }
+  }
+}
+
+async function collectJpegFilenames(root: string): Promise<string[]> {
+  const out: string[] = []
+  const pending: string[] = [root]
+  while (pending.length > 0) {
+    const dir = pending.pop()!
+    let entries: fs.Dirent[]
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) pending.push(full)
+      else if (/\.(jpg|jpeg)$/i.test(e.name)) out.push(full)
+    }
+  }
+  return out
 }
 
 /** Delete an orphan photo and its sidecar. */

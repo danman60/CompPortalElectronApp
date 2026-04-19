@@ -45,6 +45,7 @@ export interface Routine {
   outputPath?: string // path to renamed MKV
   outputDir?: string // routine folder path
   encodedFiles?: EncodedFile[]
+  keyframes?: string[]    // local paths to 3 WebP keyframes — videos/keyframes/
   photos?: PhotoMatch[]
   uploadProgress?: UploadProgress
   error?: string
@@ -427,6 +428,9 @@ export interface AppSettings {
   }
   upload: {
     bandwidthCapBytesPerSec: number // 0 = unlimited
+    strategy: 'routine-batch' | 'round-robin' // default 'round-robin' — interleave photos across routines for slideshow breadth
+    incrementalPublish: boolean // default true — fire plugin/complete progressively during an upload
+    incrementalPublishEvery: number // default 20 — fire every N photos per routine
   }
   hotkeys: {
     toggleRecording: string
@@ -559,6 +563,8 @@ export const IPC_CHANNELS = {
   PHOTOS_IMPORT_COMPLETE_SUMMARY: 'photos:import:complete:summary',
   PHOTOS_REASSIGN_ORPHAN: 'photos:reassign-orphan',
   PHOTOS_DISCARD_ORPHAN: 'photos:discard-orphan',
+  PHOTOS_MARK_SDS_PROCESSED: 'photos:mark-sds-processed',
+  PHOTOS_CLEAR_SD_WATERMARKS: 'photos:clear-sd-watermarks',
 
   // Drive Monitor
   DRIVE_DETECTED: 'drive:detected',
@@ -1018,6 +1024,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   upload: {
     bandwidthCapBytesPerSec: 0,
+    strategy: 'round-robin',
+    incrementalPublish: true,
+    incrementalPublishEvery: 20,
   },
   hotkeys: {
     toggleRecording: 'F5',

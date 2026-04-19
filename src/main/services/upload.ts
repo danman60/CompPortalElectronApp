@@ -4,7 +4,7 @@ import path from 'path'
 import https from 'https'
 import http from 'http'
 import { URL } from 'url'
-import { IPC_CHANNELS, UploadProgress, Routine } from '../../shared/types'
+import { IPC_CHANNELS, UploadProgress, Routine, PhotoMatch } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getResolvedConnection } from './schedule'
@@ -25,6 +25,11 @@ interface UploadPayload {
   type: 'videos' | 'photos'
   role?: string // 'performance' | 'judge1' etc for videos
   thumbnailPath?: string // local path to 200×200 WebP thumb (SD-import photos only)
+  // Keyframe marker — when present, this upload is a video-keyframe (WebP).
+  // Uploaded under `<entry>/videos/keyframes/<objectName>` even though
+  // `type === 'videos'` by default path convention.
+  isKeyframe?: boolean
+  keyframeIndex?: number // 0, 1, 2
 }
 
 export interface EnqueueRoutineResult {
@@ -97,6 +102,10 @@ let isUploading = false
 let isPaused = false
 let currentAbortController: AbortController | null = null
 let currentAbortRoutineId: string | null = null
+
+// Tracks photos already included in a plugin/complete call per routine,
+// so incremental mode knows when the threshold has been crossed again.
+const publishedPhotoCountByRoutine = new Map<string, number>()
 
 // Fix 8/9: external pause flags (disk space low / drive lost)
 let pausedByDiskSpace = false
@@ -196,6 +205,29 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
     jobCount++
   }
 
+  // Queue video keyframes — nested under the video's R2 prefix as
+  // `videos/keyframes/keyframe_N.webp`. Used by CompPortal's Gemini
+  // spot-check validator as reference frames for the routine's dancer(s).
+  const keyframes = routine.keyframes || []
+  for (let i = 0; i < keyframes.length; i++) {
+    const kfPath = keyframes[i]
+    if (!kfPath || !fs.existsSync(kfPath)) continue
+    const objectName = `keyframes/keyframe_${i}.webp`
+    if (skipObjectNames.has(objectName)) continue
+    jobQueue.enqueue('upload', routine.id, {
+      routineId: routine.id,
+      entryId: routine.id,
+      competitionId: conn.competitionId,
+      filePath: kfPath,
+      objectName,
+      contentType: 'image/webp',
+      type: 'videos',
+      isKeyframe: true,
+      keyframeIndex: i,
+    } satisfies UploadPayload as unknown as Record<string, unknown>)
+    jobCount++
+  }
+
   // Queue photos
   if (routine.photos) {
     for (const photo of routine.photos) {
@@ -231,6 +263,93 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
   })
 
   return { queuedJobs: jobCount }
+}
+
+/**
+ * Interleave photo uploads across multiple routines — slideshow-friendly
+ * breadth-first ordering. Videos + keyframes still enqueue per-routine up
+ * front (they're few, fast, valuable early). Photos then round-robin pop
+ * across all provided routines.
+ *
+ * Call INSTEAD OF calling enqueueRoutine(r) per-routine when
+ * settings.upload.strategy === 'round-robin'.
+ */
+export function enqueueRoundRobin(routines: Routine[]): EnqueueRoutineResult {
+  const conn = getResolvedConnection()
+  if (!conn) {
+    logger.upload.warn('Skipping round-robin enqueue: no resolved upload connection')
+    return { queuedJobs: 0, skippedReason: 'no-connection' }
+  }
+
+  let total = 0
+
+  // Pass 1: videos + keyframes per routine (strip photos temporarily)
+  for (const routine of routines) {
+    const photoBackup = routine.photos
+    routine.photos = []
+    const res = enqueueRoutine(routine)
+    routine.photos = photoBackup
+    total += res.queuedJobs
+  }
+
+  // Pass 2: bucket each routine's unuploaded photos, round-robin pop
+  const buckets: Array<{ routine: Routine; queue: PhotoMatch[] }> = []
+  for (const routine of routines) {
+    const pending = (routine.photos || [])
+      .filter((p) => !p.uploaded && p.confidence !== 'unmatched')
+      .sort((a, b) => (a.captureTime || '').localeCompare(b.captureTime || ''))
+    if (pending.length > 0) {
+      buckets.push({ routine, queue: pending })
+    }
+  }
+
+  // Per-routine skip-sets to avoid dupe-enqueue against existing jobs
+  const skipByRoutine = new Map<string, Set<string>>()
+  for (const { routine } of buckets) {
+    const existing = jobQueue.getByRoutine(routine.id)
+    const skip = new Set(
+      existing
+        .filter((j) => j.type === 'upload' && (j.status === 'done' || j.status === 'pending' || j.status === 'running'))
+        .map((j) => (j.payload as Record<string, unknown>).objectName as string),
+    )
+    skipByRoutine.set(routine.id, skip)
+  }
+
+  let cursor = 0
+  let photoJobs = 0
+  while (buckets.length > 0) {
+    const idx = cursor % buckets.length
+    const bucket = buckets[idx]
+    const photo = bucket.queue.shift()
+    if (!photo) {
+      buckets.splice(idx, 1)
+      continue
+    }
+    const objectName = path.basename(photo.filePath)
+    const skip = skipByRoutine.get(bucket.routine.id)!
+    if (!skip.has(objectName)) {
+      jobQueue.enqueue('upload', bucket.routine.id, {
+        routineId: bucket.routine.id,
+        entryId: bucket.routine.id,
+        competitionId: conn.competitionId,
+        filePath: photo.filePath,
+        objectName,
+        contentType: 'image/jpeg',
+        type: 'photos',
+        thumbnailPath: photo.thumbnailPath,
+      } satisfies UploadPayload as unknown as Record<string, unknown>)
+      photoJobs++
+    }
+    if (bucket.queue.length === 0) {
+      buckets.splice(idx, 1)
+      continue
+    }
+    cursor++
+  }
+
+  total += photoJobs
+  logger.upload.info(`Round-robin enqueue: ${photoJobs} photo jobs across ${routines.length} routines (plus videos/keyframes)`)
+  return { queuedJobs: total }
 }
 
 export function startUploads(): void {
@@ -437,6 +556,19 @@ async function processLoop(): Promise<void> {
       const updatedJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload' && j.status !== 'cancelled')
       const allDone = updatedJobs.every(j => j.status === 'done')
 
+      // Incremental publish trigger — photo jobs only, fires every N completions per routine
+      if (payload.type === 'photos') {
+        const settings = getSettings()
+        if (settings.upload?.incrementalPublish) {
+          const threshold = Math.max(1, settings.upload?.incrementalPublishEvery || 20)
+          const donePhotoCount = updatedJobs.filter(j => j.status === 'done' && (j.payload as UploadPayload).type === 'photos').length
+          const lastPublished = publishedPhotoCountByRoutine.get(payload.routineId) || 0
+          if (donePhotoCount - lastPublished >= threshold && !allDone) {
+            void callPluginCompletePartial(payload.routineId, uploadRunId)
+          }
+        }
+      }
+
       if (allDone) {
         // Call plugin/complete — collect storagePaths from completed jobs + already-uploaded files
         try {
@@ -452,6 +584,11 @@ async function processLoop(): Promise<void> {
           // photo carries no EXIF capture time (should be rare — tether path always has
           // one). Persisting captured_at enables post-hoc dedup + forensic audit.
           const photoCapturedAt: string[] = []
+          // Parallel-indexed keyframe storage paths (3 elements expected,
+          // or fewer if extraction failed). Goes to CompPortal as
+          // `files.video_keyframes` — used by the Gemini spot-check
+          // validator as reference frames for the routine's dancer(s).
+          const videoKeyframeStoragePaths: string[] = []
 
           // Include already-uploaded files from routine state (covers prior session uploads)
           const routineState = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
@@ -474,7 +611,13 @@ async function processLoop(): Promise<void> {
             const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
             const tsp = (doneJob.payload as Record<string, unknown>).thumbStoragePath as string | undefined
             if (!sp) continue
-            if (jp.type === 'photos') {
+            if (jp.isKeyframe && typeof jp.keyframeIndex === 'number') {
+              // Keyframes are indexed by `keyframeIndex` (0..2) — slot in at that position.
+              while (videoKeyframeStoragePaths.length <= jp.keyframeIndex) {
+                videoKeyframeStoragePaths.push('')
+              }
+              videoKeyframeStoragePaths[jp.keyframeIndex] = sp
+            } else if (jp.type === 'photos') {
               if (!photoStoragePaths.includes(sp)) {
                 photoStoragePaths.push(sp)
                 photoThumbnailStoragePaths.push(tsp || '')
@@ -498,7 +641,10 @@ async function processLoop(): Promise<void> {
             photoStoragePaths,
             photoThumbnailStoragePaths,
             photoCapturedAt,
+            videoKeyframeStoragePaths,
           })
+
+          publishedPhotoCountByRoutine.delete(payload.routineId)
 
           // Mark individual files as uploaded with their storage paths
           const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
@@ -755,6 +901,83 @@ function uploadFileToSignedUrl(
   })
 }
 
+/**
+ * Fire an incremental /plugin/complete with cumulative paths built from
+ * all currently-done jobs + already-uploaded files in routine state.
+ * Called mid-upload when settings.upload.incrementalPublish is true and
+ * the per-routine threshold has been crossed.
+ *
+ * Safe to call multiple times per routine — CompPortal's endpoint upserts
+ * on (media_package_id, storage_url). If upsert semantics aren't deployed
+ * yet, DO NOT enable incrementalPublish — the destructive-replace will
+ * wipe prior rows on every call.
+ */
+async function callPluginCompletePartial(routineId: string, uploadRunId: string): Promise<void> {
+  const routine = state.getCompetition()?.routines.find(r => r.id === routineId)
+  if (!routine) return
+
+  const conn = getResolvedConnection()
+  if (!conn) return
+
+  const allJobs = jobQueue.getByRoutine(routineId).filter(j => j.type === 'upload' && j.status !== 'cancelled')
+  const doneJobs = allJobs.filter(j => j.status === 'done')
+
+  const storagePaths: Record<string, string> = {}
+  const photoStoragePaths: string[] = []
+  const photoThumbnailStoragePaths: string[] = []
+  const photoCapturedAt: string[] = []
+  const videoKeyframeStoragePaths: string[] = []
+
+  for (const f of routine.encodedFiles || []) {
+    if (f.uploaded && f.storagePath) storagePaths[f.role] = f.storagePath
+  }
+  for (const p of routine.photos || []) {
+    if (p.uploaded && p.storagePath) {
+      photoStoragePaths.push(p.storagePath)
+      photoThumbnailStoragePaths.push(p.thumbnailStoragePath || '')
+      photoCapturedAt.push(p.captureTime || '')
+    }
+  }
+
+  for (const doneJob of doneJobs) {
+    const jp = doneJob.payload as unknown as UploadPayload
+    const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
+    const tsp = (doneJob.payload as Record<string, unknown>).thumbStoragePath as string | undefined
+    if (!sp) continue
+    if (jp.isKeyframe && typeof jp.keyframeIndex === 'number') {
+      while (videoKeyframeStoragePaths.length <= jp.keyframeIndex) videoKeyframeStoragePaths.push('')
+      videoKeyframeStoragePaths[jp.keyframeIndex] = sp
+    } else if (jp.type === 'photos') {
+      if (!photoStoragePaths.includes(sp)) {
+        photoStoragePaths.push(sp)
+        photoThumbnailStoragePaths.push(tsp || '')
+        const photo = routine.photos?.find(p => p.storagePath === sp || p.filePath === jp.filePath)
+        photoCapturedAt.push(photo?.captureTime || '')
+      }
+    } else if (jp.role) {
+      storagePaths[jp.role] = sp
+    }
+  }
+
+  try {
+    await callPluginComplete({
+      routineId,
+      entryId: routine.id,
+      competitionId: conn.competitionId,
+      uploadRunId,
+      storagePaths,
+      photoStoragePaths,
+      photoThumbnailStoragePaths,
+      photoCapturedAt,
+      videoKeyframeStoragePaths,
+    })
+    publishedPhotoCountByRoutine.set(routineId, photoStoragePaths.length)
+    logger.upload.info(`Incremental publish: routine ${routineId.slice(0,8)} now at ${photoStoragePaths.length} photos`)
+  } catch (err) {
+    logger.upload.warn(`Incremental publish failed for ${routineId.slice(0,8)} (non-fatal, terminal will retry):`, err instanceof Error ? err.message : err)
+  }
+}
+
 async function callPluginComplete(info: {
   routineId: string
   entryId: string
@@ -764,6 +987,7 @@ async function callPluginComplete(info: {
   photoStoragePaths: string[]
   photoThumbnailStoragePaths?: string[] // parallel array, indexed same as photoStoragePaths
   photoCapturedAt?: string[] // parallel array of ISO EXIF DateTimeOriginal per photo
+  videoKeyframeStoragePaths?: string[] // 3-element array of R2 keys for keyframes 0,1,2
 }): Promise<void> {
   const { apiBase, apiKey } = getConnection()
 
@@ -798,6 +1022,15 @@ async function callPluginComplete(info: {
       photo_captured_at:
         info.photoCapturedAt && info.photoCapturedAt.length > 0
           ? info.photoCapturedAt
+          : undefined,
+      // CompPortal-gemini contract (2026-04-19): 3-element array of R2
+      // storage keys for `keyframe_{0,1,2}.webp` at 20/50/80% of the
+      // performance video. Consumed by CompPortal's spot-check validator
+      // as reference anchors. Omit when empty/all-empty — backwards
+      // compatible with older CompPortal builds (field ignored).
+      video_keyframes:
+        info.videoKeyframeStoragePaths && info.videoKeyframeStoragePaths.some(k => k)
+          ? info.videoKeyframeStoragePaths
           : undefined,
     },
   }
