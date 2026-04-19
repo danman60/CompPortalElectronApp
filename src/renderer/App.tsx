@@ -136,6 +136,9 @@ interface ImportSummary {
   photosUploaded: number
   thumbsUploaded: number
   orphaned: number
+  routinesOverMax?: Array<{ entryNumber: string; count: number; sizeCategory?: string; threshold: number }>
+  routinesUnderMin?: Array<{ entryNumber: string; count: number; sizeCategory?: string; threshold: number }>
+  cameraOffsets?: Record<string, number>
 }
 
 function ImportSummaryToast(): React.ReactElement | null {
@@ -163,7 +166,11 @@ function ImportSummaryToast(): React.ReactElement | null {
   if (!summary) return null
 
   const hasOrphans = summary.orphaned > 0
-  const borderColor = hasOrphans ? 'var(--warning)' : 'var(--success)'
+  const hasDistributionWarn =
+    (summary.routinesOverMax?.length ?? 0) > 0 ||
+    (summary.routinesUnderMin?.length ?? 0) > 0
+  const hasCameraOffset = summary.cameraOffsets && Object.keys(summary.cameraOffsets).length > 0
+  const borderColor = hasOrphans || hasDistributionWarn ? 'var(--warning)' : 'var(--success)'
 
   function onClick(): void {
     if (hasOrphans) {
@@ -193,6 +200,25 @@ function ImportSummaryToast(): React.ReactElement | null {
         {hasOrphans && (
           <span style={{ color: 'var(--warning)' }}>
             {summary.orphaned} orphan{summary.orphaned === 1 ? '' : 's'} — click to review
+          </span>
+        )}
+        {hasCameraOffset && summary.cameraOffsets && (
+          <span style={{ color: '#9db4d8' }}>
+            Offset applied: {Object.entries(summary.cameraOffsets)
+              .map(([body, ms]) => `${body} ${ms > 0 ? '+' : ''}${Math.round(ms / 1000)}s`)
+              .join(', ')}
+          </span>
+        )}
+        {summary.routinesOverMax && summary.routinesOverMax.length > 0 && (
+          <span style={{ color: 'var(--warning)' }}>
+            ⚠ {summary.routinesOverMax.length} routine(s) over max —
+            likely mis-match ({summary.routinesOverMax.slice(0, 3).map(x => `R${x.entryNumber}[${x.sizeCategory ?? '?'}]=${x.count}>${x.threshold}`).join(', ')}{summary.routinesOverMax.length > 3 ? '...' : ''})
+          </span>
+        )}
+        {summary.routinesUnderMin && summary.routinesUnderMin.length > 0 && (
+          <span style={{ color: 'var(--warning)' }}>
+            ⚠ {summary.routinesUnderMin.length} recorded routine(s) under min
+            ({summary.routinesUnderMin.slice(0, 3).map(x => `R${x.entryNumber}[${x.sizeCategory ?? '?'}]=${x.count}<${x.threshold}`).join(', ')}{summary.routinesUnderMin.length > 3 ? '...' : ''})
           </span>
         )}
       </div>

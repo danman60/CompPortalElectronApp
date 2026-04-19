@@ -1015,28 +1015,45 @@ async function runImport(
 
   // ── Distribution-sanity validator ──
   // Surface routines with unexpected photo counts so the operator sees silent
-  // mis-matches without reading logs. Thresholds per operator expectation
-  // (2026-04-18 UDC London): no routine >300, recorded routines should have
-  // at least 10. These are soft warnings only — toast, never block.
-  const routinesOver300: Array<{ entryNumber: string; count: number }> = []
-  const routinesUnder10: Array<{ entryNumber: string; count: number }> = []
+  // mis-matches without reading logs. These are soft warnings only — toast,
+  // never block.
+  //
+  // UDC London 2026-04-19 calibration: flat 300 ceiling mis-flagged legitimate
+  // Productions (R410 = 970 photos, real 7.7-min Production) AND couldn't
+  // distinguish contaminated solos (R117 SOLO = 692 photos, almost certainly
+  // mis-matched) from them. Fri+Sat data: every non-Production size category
+  // maxes at ≤463 photos; only PRODUCTIONS exceeds that. Two-band model
+  // matches operator's actual workflow: Production = extra-length, everything
+  // else shoots for similar duration.
+  const PRODUCTION_MAX = 1500
+  const DEFAULT_MAX = 500
+  const MIN_RECORDED = 10
+  const routinesOverMax: Array<{ entryNumber: string; count: number; sizeCategory?: string; threshold: number }> = []
+  const routinesUnderMin: Array<{ entryNumber: string; count: number; sizeCategory?: string; threshold: number }> = []
   for (const [routineId, list] of photosByRoutine.entries()) {
     const r = routines.find(rr => rr.id === routineId)
     const entryNumber = r?.entryNumber ?? routineId.slice(0, 8)
-    if (list.length > 300) routinesOver300.push({ entryNumber, count: list.length })
-    // Only flag "under 10" when the routine has been recorded — pending
+    const sizeCategory = r?.sizeCategory
+    // Case-insensitive prefix match: schedule API returns 'PRODUCTIONS' today
+    // but accept 'Production'/'Productions' too for future casing drift.
+    const isProduction = (sizeCategory ?? '').toUpperCase().startsWith('PRODUCTION')
+    const maxBound = isProduction ? PRODUCTION_MAX : DEFAULT_MAX
+    if (list.length > maxBound) {
+      routinesOverMax.push({ entryNumber, count: list.length, sizeCategory, threshold: maxBound })
+    }
+    // Only flag "under min" when the routine has been recorded — pending
     // routines legitimately have zero photos.
-    if (list.length > 0 && list.length < 10 && r?.recordingStartedAt) {
-      routinesUnder10.push({ entryNumber, count: list.length })
+    if (list.length > 0 && list.length < MIN_RECORDED && r?.recordingStartedAt) {
+      routinesUnderMin.push({ entryNumber, count: list.length, sizeCategory, threshold: MIN_RECORDED })
     }
   }
-  if (routinesOver300.length > 0) {
-    logger.photos.warn(`Distribution sanity: ${routinesOver300.length} routine(s) have >300 photos — ` +
-      routinesOver300.slice(0, 5).map(x => `R${x.entryNumber}=${x.count}`).join(', '))
+  if (routinesOverMax.length > 0) {
+    logger.photos.warn(`Distribution sanity: ${routinesOverMax.length} routine(s) over max — ` +
+      routinesOverMax.slice(0, 5).map(x => `R${x.entryNumber}[${x.sizeCategory ?? '?'}]=${x.count}>${x.threshold}`).join(', '))
   }
-  if (routinesUnder10.length > 0) {
-    logger.photos.warn(`Distribution sanity: ${routinesUnder10.length} recorded routine(s) have <10 photos — ` +
-      routinesUnder10.slice(0, 5).map(x => `R${x.entryNumber}=${x.count}`).join(', '))
+  if (routinesUnderMin.length > 0) {
+    logger.photos.warn(`Distribution sanity: ${routinesUnderMin.length} recorded routine(s) under min — ` +
+      routinesUnderMin.slice(0, 5).map(x => `R${x.entryNumber}[${x.sizeCategory ?? '?'}]=${x.count}<${x.threshold}`).join(', '))
   }
 
   sendToRenderer(IPC_CHANNELS.PHOTOS_MATCH_RESULT, result)
@@ -1056,8 +1073,8 @@ async function runImport(
       photosUploaded: result.matched, // uploads happen async; this is "photos queued for upload"
       thumbsUploaded: matches.filter(m => m.confidence !== 'unmatched' && m.thumbnailPath).length,
       orphaned: result.unmatched,
-      routinesOver300,
-      routinesUnder10,
+      routinesOverMax,
+      routinesUnderMin,
       cameraOffsets: cameraOffsetSummary,
     })
   } catch (err) {
