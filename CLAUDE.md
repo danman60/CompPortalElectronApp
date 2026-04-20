@@ -20,7 +20,11 @@ Do not propose, mention, or imply any of these without DIRECT evidence from a pr
 - "Operator's camera wasn't shooting at that time"
 - "Saturday-night entries that wouldn't be shot Sunday morning"
 - "Clock drift" — ONLY after showing the drift from paired reference timestamps
+- "`photo_NNN.JPG` is video-frame extraction / synthetic / rendered / thumbnail / preview" — without ASKING the user what that filename pattern actually represents
+- Any invented classification of photo filenames (MIXED / SYNTHETIC / SYNTHETIC-ONLY / do-not-delete / rendered / extracted / scratch / temp) that the user did not define
+- Any invented pipeline name (frame-extractor, video-slicer, preview-generator, thumbnail-pipeline) that you haven't verified exists in code or docs
 - Any explanation that attributes missing photos to operator behavior, workflow exception, or scheduling quirk
+- Any segmentation / categorization scheme built on an unknown filename pattern — if you don't know what `photo_NNN.JPG` means, the answer is "I don't know what that is, can you tell me?" — NOT "probably X, so here's how to handle it."
 
 These are ALL business-logic hallucinations. The first hypothesis is always: your scan / match query / time-window math / camera assignment / SD mount / EXIF parser / timezone conversion is wrong.
 
