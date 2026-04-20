@@ -5,6 +5,8 @@ import Controls from './Controls'
 import PreviousRoutines from './PreviousRoutines'
 import NextRoutines from './NextRoutines'
 import SystemStats from './SystemStats'
+import OverlayControls from './OverlayControls'
+import PanelChat from './PanelChat'
 
 interface PanelAppProps {
   panelId: string
@@ -16,10 +18,15 @@ const TITLES: Record<string, string> = {
   previousRoutines: 'Previous Routines',
   nextRoutines: 'Next Routines',
   systemStats: 'System',
+  overlays: 'Overlays & Lower Third',
+  chat: 'Chat',
 }
 
 export default function PanelApp({ panelId }: PanelAppProps): React.ReactElement {
   const title = TITLES[panelId] ?? 'Panel'
+
+  // Per spec: only SystemStats panel carries the Exit Overlay button.
+  const showExit = panelId === 'systemStats'
 
   let content: React.ReactElement
   switch (panelId) {
@@ -38,9 +45,15 @@ export default function PanelApp({ panelId }: PanelAppProps): React.ReactElement
     case 'systemStats':
       content = <SystemStats />
       break
+    case 'overlays':
+      content = <OverlayControls compact={true} />
+      break
+    case 'chat':
+      content = <PanelChat />
+      break
     default:
       content = <div style={{ padding: 12, color: '#888' }}>Unknown panel: {panelId}</div>
   }
 
-  return <PanelChrome title={title}>{content}</PanelChrome>
+  return <PanelChrome title={title} showExit={showExit}>{content}</PanelChrome>
 }

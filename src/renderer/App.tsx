@@ -130,6 +130,300 @@ function RecordingOverrunWarning(): React.ReactElement | null {
   )
 }
 
+// Re-record advisory toast: fired when main detects a suspect re-record
+// (new take > 90s AND prior routine dir had an encoded output). Purely
+// advisory — archive still proceeds as normal. Auto-dismisses after 60s.
+interface RerecEvent {
+  currentRoutineId: string
+  currentEntryNumber: string
+  priorMkvName: string | null
+  priorEncodedFiles: string[]
+  newMkvPath: string
+  newDurationSec: number
+  detectedAt: string
+}
+
+function RerecordToast(): React.ReactElement | null {
+  const [events, setEvents] = useState<RerecEvent[]>([])
+
+  useEffect(() => {
+    if (!window.api) return
+    const off = window.api.on(IPC_CHANNELS.RECORDING_REREC_SUSPECTED, (data: unknown) => {
+      const e = data as RerecEvent
+      setEvents((prev) => [...prev, e])
+      // Auto-dismiss after 60s so it doesn't linger across routines
+      setTimeout(() => {
+        setEvents((prev) => prev.filter((x) => x.detectedAt !== e.detectedAt))
+      }, 60_000)
+    })
+    return () => { try { off() } catch {} }
+  }, [])
+
+  function dismiss(detectedAt: string): void {
+    setEvents((prev) => prev.filter((x) => x.detectedAt !== detectedAt))
+  }
+
+  if (events.length === 0) return null
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: 16,
+        top: 80,
+        zIndex: 9998,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        maxWidth: 420,
+      }}
+    >
+      {events.map((e) => (
+        <div
+          key={e.detectedAt}
+          style={{
+            background: '#2a1e08',
+            border: '1px solid #c17f00',
+            borderLeft: '4px solid #c17f00',
+            borderRadius: 6,
+            padding: '10px 12px',
+            color: '#fff',
+            fontSize: 12,
+            lineHeight: 1.4,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <span style={{ fontSize: 16 }}>{'\u26A0\uFE0F'}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, marginBottom: 3 }}>
+                Possible missed routine advance — R{e.currentEntryNumber}
+              </div>
+              <div style={{ color: '#d4c29a' }}>
+                Prior take for R{e.currentEntryNumber} already had an encoded output
+                ({e.priorEncodedFiles.slice(0, 2).join(', ')}{e.priorEncodedFiles.length > 2 ? ', ...' : ''})
+                and the new recording is {e.newDurationSec}s long. If this was actually
+                a <strong>new routine</strong> (not a re-record), stop now, advance to the
+                next entry, and re-record. The previous take has been archived either way.
+              </div>
+            </div>
+            <button
+              onClick={() => dismiss(e.detectedAt)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#d4c29a',
+                cursor: 'pointer',
+                fontSize: 14,
+                padding: '0 4px',
+              }}
+              title="Dismiss"
+            >
+              {'\u2715'}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Offset confirmation toast: shown when main detects a camera-clock offset
+// greater than the auto-apply threshold (15s). Import pauses until operator
+// decides. Yes = apply offset. No = use 0 for this import. Skip = use 0 and
+// remember "don't ask again this session" for this camera body.
+interface OffsetProposal {
+  proposalId: string
+  cameraBody: string
+  offsetMs: number
+  matchesAt: number
+  matchesAtZero: number
+  totalPhotos: number
+}
+
+function OffsetConfirmToast(): React.ReactElement | null {
+  const [proposals, setProposals] = useState<OffsetProposal[]>([])
+
+  useEffect(() => {
+    if (!window.api) return
+    const off = window.api.on(IPC_CHANNELS.PHOTOS_OFFSET_PROPOSAL, (data: unknown) => {
+      const p = data as OffsetProposal
+      setProposals((prev) => [...prev, p])
+    })
+    return () => { try { off() } catch {} }
+  }, [])
+
+  function decide(proposalId: string, decision: 'yes' | 'no' | 'skip'): void {
+    try {
+      (window.api as any).photosOffsetDecision(proposalId, decision)
+    } catch {
+      // ignore
+    }
+    setProposals((prev) => prev.filter((p) => p.proposalId !== proposalId))
+  }
+
+  if (proposals.length === 0) return null
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 16,
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        maxWidth: 420,
+      }}
+    >
+      {proposals.map((p) => {
+        const pctAt = p.totalPhotos > 0 ? Math.round((p.matchesAt / p.totalPhotos) * 100) : 0
+        const pctZero = p.totalPhotos > 0 ? Math.round((p.matchesAtZero / p.totalPhotos) * 100) : 0
+        const secs = Math.round(p.offsetMs / 1000)
+        const sign = secs > 0 ? '+' : ''
+        return (
+          <div
+            key={p.proposalId}
+            style={{
+              background: '#1e2a44',
+              border: '1px solid #4169e1',
+              borderLeft: '4px solid #4169e1',
+              borderRadius: 6,
+              padding: '12px 14px',
+              color: '#fff',
+              fontSize: 12,
+              lineHeight: 1.5,
+              boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>
+              Camera {p.cameraBody} offset {sign}{secs}s detected
+            </div>
+            <div style={{ color: '#bdd1f2', marginBottom: 10 }}>
+              {p.matchesAt}/{p.totalPhotos} photos match at this offset ({pctAt}%) vs
+              {' '}{p.matchesAtZero}/{p.totalPhotos} at zero ({pctZero}%). Apply for today?
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => decide(p.proposalId, 'yes')}
+                style={{
+                  flex: 1,
+                  background: '#2d7a4f',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Yes — apply
+              </button>
+              <button
+                onClick={() => decide(p.proposalId, 'no')}
+                style={{
+                  flex: 1,
+                  background: '#433',
+                  color: '#fff',
+                  border: '1px solid #666',
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                No — use 0
+              </button>
+              <button
+                onClick={() => decide(p.proposalId, 'skip')}
+                style={{
+                  background: 'transparent',
+                  color: '#9db4d8',
+                  border: '1px solid #4169e1',
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+                title="Use 0 and don't ask again this session for this camera"
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Import busy banner: pings main every 2s. If RTT > 500ms, shows a sticky banner
+// telling the operator that controls may lag. Banner auto-clears when RTT drops
+// back under 250ms. Non-blocking; does not prevent any action.
+function ImportBusyBanner(): React.ReactElement | null {
+  const [busy, setBusy] = useState(false)
+  const [lastRttMs, setLastRttMs] = useState<number>(0)
+
+  useEffect(() => {
+    if (!window.api) return
+    let cancelled = false
+
+    async function tick(): Promise<void> {
+      if (cancelled) return
+      const start = performance.now()
+      try {
+        await (window.api as any).appPing()
+        const rtt = performance.now() - start
+        if (cancelled) return
+        setLastRttMs(rtt)
+        setBusy((prev) => {
+          if (!prev && rtt > 500) return true
+          if (prev && rtt < 250) return false
+          return prev
+        })
+      } catch {
+        // ignore — main might be starting up
+      }
+    }
+
+    const id = setInterval(tick, 2000)
+    // fire once shortly after mount so we don't wait 2s for first sample
+    const warmup = setTimeout(tick, 500)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      clearTimeout(warmup)
+    }
+  }, [])
+
+  if (!busy) return null
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 12,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 9997,
+        background: '#2a1e08',
+        border: '1px solid #c17f00',
+        borderLeft: '4px solid #c17f00',
+        borderRadius: 6,
+        padding: '8px 14px',
+        color: '#ffd38a',
+        fontSize: 12,
+        fontWeight: 600,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      }}
+      title={`Main RTT ${Math.round(lastRttMs)}ms`}
+    >
+      {'\u23F3'} Import busy — controls may lag briefly
+    </div>
+  )
+}
+
 interface ImportSummary {
   runId: string
   routinesUpdated: number
@@ -340,6 +634,9 @@ export default function App(): React.ReactElement {
       <DriveAlert />
       <OrphanReview />
       <RecordingOverrunWarning />
+      <ImportBusyBanner />
+      <OffsetConfirmToast />
+      <RerecordToast />
       <StartupToast />
       <ImportSummaryToast />
       <HardeningBanners />

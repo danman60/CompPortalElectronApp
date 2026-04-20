@@ -70,25 +70,23 @@ html, body {
   border-color: #a32626;
 }
 
+/* Body is non-drag so scrollbars, wheel events, clicks, text selection, and
+   table row clicks all work. Drag is available via the titlebar (always) and
+   via any remaining drag-marked region. Tradeoff: you can't pick up the
+   window by grabbing its body — titlebar is the drag handle. */
 .panel-body {
   flex: 1;
   overflow: auto;
-  padding: 4px;
+  padding: 0;
   min-height: 0;
-}
-
-/* Interactive elements inside the body opt out of drag so clicks register. */
-.panel-body button,
-.panel-body input,
-.panel-body select,
-.panel-body textarea,
-.panel-body .mini-row.clickable {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollable content opts out of drag so wheel/touch scrolling works. */
-.panel-body .panel-mini-list {
-  -webkit-app-region: no-drag;
+/* Hosted tables (RoutineTable in windowMode) should fill the panel body and
+   be independently scrollable from the body itself — avoid double overflow. */
+.panel-body .table-scroll {
+  height: 100%;
+  overflow: auto;
 }
 
 /* Resize grab corner — sits on top of drag region, gives a reliable hit area
@@ -260,4 +258,149 @@ html, body {
   height: 1px;
   background: var(--border, #3a3a4a);
   margin: 2px 0;
+}
+
+/* ===== Panel-hosted RoutineTable (prev / next panels) ===== */
+
+/* RoutineTable inside a panel-body: fill height, keep its own scroll. */
+.panel-body > .table-scroll {
+  height: 100%;
+  overflow: auto;
+}
+
+.panel-body .upload-table {
+  font-size: 10px;
+}
+
+.panel-body .upload-table th,
+.panel-body .upload-table td {
+  padding: 3px 4px;
+}
+
+/* ===== Overlays panel — compact OverlayControls ===== */
+
+.panel-body > .overlay-controls,
+.panel-body > .section {
+  padding: 4px;
+  border: none;
+  background: transparent;
+  margin: 0;
+}
+
+/* ===== Chat panel ===== */
+
+.panel-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: 11px;
+}
+
+.panel-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--bg-primary, #161622);
+  border-bottom: 1px solid var(--border, #3a3a4a);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted, #9ca3af);
+}
+
+.panel-chat-count {
+  background: rgba(255,255,255,0.1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.panel-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panel-chat-empty {
+  text-align: center;
+  color: var(--text-muted, #9ca3af);
+  padding: 20px;
+  font-style: italic;
+}
+
+.panel-chat-msg {
+  display: flex;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--bg-primary, #161622);
+  border-radius: 3px;
+  border-left: 2px solid transparent;
+  align-items: flex-start;
+}
+
+.panel-chat-msg.pinned {
+  background: rgba(255, 193, 7, 0.08);
+  border-left-color: #ffc107;
+}
+
+.panel-chat-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent, #4b7bff);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.panel-chat-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-chat-meta {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 10px;
+}
+
+.panel-chat-meta strong {
+  color: var(--text-primary);
+}
+
+.panel-chat-time {
+  color: var(--text-muted, #9ca3af);
+  font-size: 9px;
+}
+
+.panel-chat-text {
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-size: 11px;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
+.panel-chat-pin-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.panel-chat-pin-btn:hover {
+  color: #ffc107;
 }

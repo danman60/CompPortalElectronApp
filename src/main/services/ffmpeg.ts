@@ -179,6 +179,168 @@ function getSpawnOptions(): SpawnOptions {
   return opts
 }
 
+/**
+ * Probe the video duration (seconds) from an MKV/MP4 via ffmpeg -i.
+ * Returns 0 on failure; caller treats 0 as "skip keyframes".
+ */
+function probeDurationSeconds(ffmpegPath: string, inputPath: string): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ['-i', inputPath, '-hide_banner'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    let stderr = ''
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    proc.on('close', () => {
+      const m = stderr.match(/Duration:\s+(\d+):(\d+):(\d+\.\d+)/)
+      if (!m) { resolve(0); return }
+      const hours = parseInt(m[1], 10)
+      const minutes = parseInt(m[2], 10)
+      const seconds = parseFloat(m[3])
+      resolve(hours * 3600 + minutes * 60 + seconds)
+    })
+    proc.on('error', () => resolve(0))
+    setTimeout(() => { proc.kill(); resolve(0) }, 10000)
+  })
+}
+
+/**
+ * Extract 3 keyframes at 20%, 50%, 80% of the video for CompPortal's
+ * Gemini spot-check validator. 400x400 WebP, quality 80 (tradeoff: large
+ * enough for Gemini to identify dancers, small enough to keep upload
+ * cost low). Failure is warn+skip — never blocks the encode/upload flow.
+ *
+ * Returns absolute paths of successfully-written keyframe files. Empty
+ * array on failure or if the source is too short (<3s).
+ */
+export async function extractKeyframes(
+  mkvPath: string,
+  outputDir: string,
+): Promise<string[]> {
+  const ffmpegPath = getFFmpegPath()
+  if (!fs.existsSync(mkvPath)) {
+    logger.ffmpeg.warn(`extractKeyframes: source missing: ${mkvPath}`)
+    return []
+  }
+  const durationSec = await probeDurationSeconds(ffmpegPath, mkvPath)
+  if (durationSec < 3) {
+    logger.ffmpeg.info(`extractKeyframes: source too short (${durationSec.toFixed(1)}s), skipping`)
+    return []
+  }
+
+  const keyframesDir = path.join(outputDir, 'keyframes')
+  try {
+    await fs.promises.mkdir(keyframesDir, { recursive: true })
+  } catch (err) {
+    logger.ffmpeg.warn(`extractKeyframes: mkdir failed: ${err instanceof Error ? err.message : err}`)
+    return []
+  }
+
+  const percentages = [0.20, 0.50, 0.80]
+  const written: string[] = []
+
+  for (let i = 0; i < percentages.length; i++) {
+    const seekSec = durationSec * percentages[i]
+    const outPath = path.join(keyframesDir, `keyframe_${i}.webp`)
+    const args = [
+      '-ss', String(seekSec.toFixed(3)),
+      '-i', mkvPath,
+      '-frames:v', '1',
+      '-vf', 'scale=400:400:force_original_aspect_ratio=increase,crop=400:400',
+      '-q:v', '5',
+      '-f', 'webp',
+      '-y',
+      outPath,
+    ]
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(ffmpegPath, args, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        })
+        let stderr = ''
+        proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+        proc.on('close', (code) => {
+          if (code === 0 && fs.existsSync(outPath)) {
+            resolve()
+          } else {
+            reject(new Error(`ffmpeg keyframe ${i} failed (code ${code}): ${stderr.slice(0, 200)}`))
+          }
+        })
+        proc.on('error', reject)
+        setTimeout(() => { proc.kill(); reject(new Error(`ffmpeg keyframe ${i} timed out`)) }, 30000)
+      })
+      written.push(outPath)
+    } catch (err) {
+      logger.ffmpeg.warn(`extractKeyframes: ${i} failed: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+  logger.ffmpeg.info(`extractKeyframes: wrote ${written.length}/3 keyframes to ${keyframesDir}`)
+  return written
+}
+
+/**
+ * Generate a 200×200 WebP thumbnail from a JPEG using the bundled ffmpeg.
+ *
+ * Replaces the sharp-based thumbnailing path that has been failing with
+ * "TypeError: A boolean was expected" inside the Windows asar runtime
+ * (confirmed 2026-04-19 UDC London: sharp 0.33.5 works standalone on
+ * Linux with identical options but throws on every photo inside the
+ * Electron/Windows runtime). ffmpeg is already bundled, runs as a
+ * subprocess (off main thread), and produces identical output.
+ *
+ * Returns true on success, false on any failure (caller treats false as
+ * "no thumb this photo — backfill will handle").
+ */
+export async function generatePhotoThumbnail(
+  inputJpgPath: string,
+  outputWebpPath: string,
+  timeoutMs = 15000,
+): Promise<boolean> {
+  if (!fs.existsSync(inputJpgPath)) return false
+  const ffmpegPath = getFFmpegPath()
+  const args = [
+    '-y',
+    '-i', inputJpgPath,
+    '-vf', 'scale=w=200:h=200:force_original_aspect_ratio=increase,crop=200:200',
+    '-c:v', 'libwebp',
+    '-quality', '80',
+    '-compression_level', '4',
+    '-frames:v', '1',
+    '-f', 'webp',
+    outputWebpPath,
+  ]
+  return new Promise<boolean>((resolve) => {
+    try {
+      const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      let stderr = ''
+      proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+      const timer = setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch {}
+        logger.ffmpeg.warn(`generatePhotoThumbnail: timed out after ${timeoutMs}ms for ${inputJpgPath}`)
+        resolve(false)
+      }, timeoutMs)
+      proc.on('close', (code) => {
+        clearTimeout(timer)
+        if (code === 0 && fs.existsSync(outputWebpPath)) {
+          resolve(true)
+        } else {
+          logger.ffmpeg.warn(`generatePhotoThumbnail: code=${code} stderr=${stderr.slice(-200)}`)
+          resolve(false)
+        }
+      })
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        logger.ffmpeg.warn(`generatePhotoThumbnail: spawn error: ${err.message}`)
+        resolve(false)
+      })
+    } catch (err) {
+      logger.ffmpeg.warn(`generatePhotoThumbnail: sync throw: ${err instanceof Error ? err.message : err}`)
+      resolve(false)
+    }
+  })
+}
+
 /** Probe input file for audio track count using ffprobe/ffmpeg. */
 function probeAudioTrackCount(ffmpegPath: string, inputPath: string): Promise<number> {
   return new Promise((resolve) => {
@@ -289,7 +451,17 @@ async function processNext(): Promise<void> {
         logger.ffmpeg.error(`No output files found after encoding routine ${job.routineId}`)
       }
 
-      state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles })
+      // Extract 3 keyframes from the source MKV for CompPortal's Gemini
+      // spot-check validator. Non-blocking — if extraction fails, the
+      // encode is already done and upload proceeds without keyframes.
+      let keyframePaths: string[] = []
+      try {
+        keyframePaths = await extractKeyframes(job.inputPath, job.outputDir)
+      } catch (err) {
+        logger.ffmpeg.warn(`Keyframe extraction threw for ${job.routineId}:`, err instanceof Error ? err.message : err)
+      }
+
+      state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles, keyframes: keyframePaths })
       jobQueue.updateStatus(jobRecord.id, 'done')
       broadcastRoutineUpdate(job.routineId)
 

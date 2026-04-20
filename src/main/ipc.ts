@@ -264,6 +264,17 @@ export function registerAllHandlers(): void {
     return { path: result.filePath }
   })
 
+  safeHandle(IPC_CHANNELS.STATE_LIST_CAMERA_OFFSETS, async () => {
+    logIPC(IPC_CHANNELS.STATE_LIST_CAMERA_OFFSETS)
+    return stateService.listCameraOffsets()
+  })
+
+  safeHandle(IPC_CHANNELS.STATE_CLEAR_CAMERA_OFFSETS, async () => {
+    logIPC(IPC_CHANNELS.STATE_CLEAR_CAMERA_OFFSETS)
+    stateService.clearCameraOffsets()
+    return { ok: true }
+  })
+
   // --- Settings ---
   safeHandle(IPC_CHANNELS.SETTINGS_GET, () => {
     logIPC(IPC_CHANNELS.SETTINGS_GET)
@@ -415,12 +426,26 @@ export function registerAllHandlers(): void {
     if (!uploadService.hasResolvedUploadConnection()) {
       return { error: 'No upload connection. Resolve a share code first.' }
     }
+    // Enqueue when there's ANY unfinished work for the routine:
+    //   - videos/keyframes encoded but not yet uploaded (legacy gate), OR
+    //   - photos[] has entries with `uploaded: false` that weren't picked up
+    //     by an active queue (e.g. late SD-import arrival after the routine
+    //     was already marked `uploaded/confirmed` from the video flow, or
+    //     the in-memory job queue was lost across an app restart — the
+    //     2026-04-19 UDC London incident: 33 routines with 1,384+ pending
+    //     photos sat idle after a 18:35 EDT restart because the outer
+    //     filter skipped anything with status `uploaded/confirmed`).
+    // `enqueueRoutine` already skips individual photos with `uploaded:true`,
+    // so enqueueing a mostly-uploaded routine only picks up its stragglers.
     let queued = 0
     for (const routine of comp.routines) {
-      if (routine.encodedFiles && routine.status !== 'uploaded' && routine.status !== 'confirmed' && routine.status !== 'uploading') {
-        const result = uploadService.enqueueRoutine(routine)
-        if (result.queuedJobs > 0) queued++
-      }
+      if (routine.status === 'uploading') continue
+      const hasEncodedWork = Boolean(routine.encodedFiles)
+      const hasUnuploadedPhotos = (routine.photos || []).some((p) => !p.uploaded)
+      const videoNotYetLanded = hasEncodedWork && routine.status !== 'uploaded' && routine.status !== 'confirmed'
+      if (!videoNotYetLanded && !hasUnuploadedPhotos) continue
+      const result = uploadService.enqueueRoutine(routine)
+      if (result.queuedJobs > 0) queued++
     }
     if (queued > 0) uploadService.startUploads()
     logger.ipc.info(`Upload all: queued ${queued} routines`)
@@ -458,6 +483,19 @@ export function registerAllHandlers(): void {
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
   })
 
+  safeHandle(IPC_CHANNELS.PHOTOS_PREVIEW_IMPORT, async (folderPath: unknown) => {
+    logIPC(IPC_CHANNELS.PHOTOS_PREVIEW_IMPORT, { folderPath })
+    const comp = stateService.getCompetition()
+    const s = settings.getSettings()
+    if (!comp) return { error: 'No competition loaded' }
+    return await photoService.importPhotos(
+      folderPath as string,
+      comp.routines,
+      s.fileNaming.outputDirectory,
+      { previewOnly: true },
+    )
+  })
+
   // Bug C: cancel an in-flight import. Aborts mid-loop so the runaway 21k-
   // photo scan from Saturday 2026-04-18 doesn't repeat.
   safeHandle(IPC_CHANNELS.PHOTOS_CANCEL, async () => {
@@ -473,6 +511,24 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.PHOTOS_DISCARD_ORPHAN, async (orphanPath: unknown) => {
     logIPC(IPC_CHANNELS.PHOTOS_DISCARD_ORPHAN, { orphanPath })
     return await photoService.discardOrphan(orphanPath as string)
+  })
+
+  safeHandle(IPC_CHANNELS.PHOTOS_MARK_SDS_PROCESSED, async () => {
+    logIPC(IPC_CHANNELS.PHOTOS_MARK_SDS_PROCESSED)
+    return await photoService.markCurrentSdsAsProcessed()
+  })
+
+  safeHandle(IPC_CHANNELS.PHOTOS_OFFSET_DECISION, async (proposalId: unknown, decision: unknown) => {
+    logIPC(IPC_CHANNELS.PHOTOS_OFFSET_DECISION, { proposalId, decision })
+    const d = decision === 'yes' || decision === 'no' || decision === 'skip' ? decision : 'yes'
+    photoService.resolveOffsetDecision(proposalId as string, d)
+    return { ok: true }
+  })
+
+  safeHandle(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS, async () => {
+    logIPC(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS)
+    stateService.clearSdWatermarks()
+    return { ok: true }
   })
 
   // --- Drive Monitor ---
@@ -738,6 +794,10 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.APP_GET_VERSION, () => {
     const { app } = require('electron')
     return app.getVersion()
+  })
+
+  safeHandle(IPC_CHANNELS.APP_PING, () => {
+    return { ts: Date.now() }
   })
 
   // Zoom

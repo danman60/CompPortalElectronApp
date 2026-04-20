@@ -396,6 +396,35 @@ export interface AnimationConfig {
   autoHideSeconds: number // 0-60, 0 = manual
 }
 
+// --- /plugin/complete contract (CompPortal) ---
+// This is the payload shape POSTed by the Electron app to
+// `/api/plugin/complete` when an upload run finishes for a routine. Both
+// CSE and CompPortal must agree on these field names; contract test
+// (tests/contract-plugin-complete.spec.ts) round-trips a canned payload
+// against a live preview deployment to detect drift.
+export interface PluginCompletePayload {
+  entryId: string
+  competitionId: string
+  uploadRunId: string
+  video_start_timestamp?: string // ISO
+  video_end_timestamp?: string // ISO
+  files: {
+    performance?: string
+    judge1?: string
+    judge2?: string
+    judge3?: string
+    judge4?: string
+    // Parallel arrays — all indexed identically when present.
+    photos?: string[]
+    photo_thumbnails?: string[]
+    photo_captured_at?: string[] // CompPortal 2026-04-18 field
+    // capture_times is an older alias kept for back-compat (CompPortal c542a945);
+    // the contract test should verify both forms land in media_photos.captured_at.
+    capture_times?: string[]
+    video_keyframes?: string[] // 3 elements: [20%, 50%, 80%]
+  }
+}
+
 // --- Settings ---
 
 export interface AppSettings {
@@ -519,6 +548,7 @@ export const IPC_CHANNELS = {
   RECORDING_PREV: 'recording:prev',
   RECORDING_SKIP: 'recording:skip',
   RECORDING_UNSKIP: 'recording:unskip',
+  RECORDING_REREC_SUSPECTED: 'recording:rerec-suspected',
 
   // FFmpeg
   FFMPEG_ENCODE: 'ffmpeg:encode',
@@ -541,6 +571,8 @@ export const IPC_CHANNELS = {
   STATE_JUMP_TO: 'state:jump-to',
   STATE_SET_NOTE: 'state:set-note',
   STATE_EXPORT_REPORT: 'state:export-report',
+  STATE_LIST_CAMERA_OFFSETS: 'state:list-camera-offsets',
+  STATE_CLEAR_CAMERA_OFFSETS: 'state:clear-camera-offsets',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -565,6 +597,10 @@ export const IPC_CHANNELS = {
   PHOTOS_DISCARD_ORPHAN: 'photos:discard-orphan',
   PHOTOS_MARK_SDS_PROCESSED: 'photos:mark-sds-processed',
   PHOTOS_CLEAR_SD_WATERMARKS: 'photos:clear-sd-watermarks',
+  PHOTOS_OFFSET_PROPOSAL: 'photos:offset-proposal',
+  PHOTOS_OFFSET_DECISION: 'photos:offset-decision',
+  PHOTOS_PREVIEW_IMPORT: 'photos:preview-import',
+  PHOTOS_PREVIEW_COMPLETE: 'photos:preview-complete',
 
   // Drive Monitor
   DRIVE_DETECTED: 'drive:detected',
@@ -628,6 +664,7 @@ export const IPC_CHANNELS = {
   APP_TOGGLE_DEVTOOLS: 'app:toggle-devtools',
   APP_SET_ZOOM: 'app:set-zoom',
   APP_GET_ZOOM: 'app:get-zoom',
+  APP_PING: 'app:ping',
 
   // Preview
   PREVIEW_START: 'preview:start',

@@ -4,6 +4,9 @@ import ExifReader from 'exifreader'
 import { IPC_CHANNELS, CameraClockMismatchEvent } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
+import * as events from './events'
+import * as state from './state'
+import { getCameraBodyKey } from './photos'
 
 /**
  * Drive Monitor — detects when removable storage (SD cards, USB drives) is plugged in.
@@ -74,11 +77,21 @@ function countJpegsRecursive(dir: string, maxDepth: number): number {
   return count
 }
 
-/** Collect up to N JPEG paths (shallow-first BFS) for EXIF sampling. */
+/**
+ * Collect up to N JPEG paths for EXIF sampling — biased toward the NEWEST
+ * files on the card, not the alphabetically-first. Rationale: SDs often
+ * retain older, already-uploaded photos from prior days; sampling from the
+ * lexicographic head produces false "camera N days off" popups
+ * (2026-04-19 UDC London: H:\ flagged 17-days-off, F:\ flagged 2-days-off
+ * despite both cameras being correctly clocked — samples hit leftover old
+ * photos). Panasonic filenames are monotonically increasing, so the
+ * highest-numbered files are the most recently shot. We walk the whole
+ * tree first, then sort descending and take the top N.
+ */
 function collectJpegSamples(dir: string, max: number, maxDepth = 3): string[] {
-  const results: string[] = []
+  const all: string[] = []
   const pendingDirs: { dir: string; depth: number }[] = [{ dir, depth: 0 }]
-  while (pendingDirs.length > 0 && results.length < max) {
+  while (pendingDirs.length > 0) {
     const cur = pendingDirs.shift()!
     if (cur.depth > maxDepth) continue
     try {
@@ -86,15 +99,19 @@ function collectJpegSamples(dir: string, max: number, maxDepth = 3): string[] {
       for (const entry of entries) {
         const fullPath = path.join(cur.dir, entry.name)
         if (entry.isFile() && /\.(jpg|jpeg)$/i.test(entry.name)) {
-          results.push(fullPath)
-          if (results.length >= max) return results
+          all.push(fullPath)
         } else if (entry.isDirectory()) {
           pendingDirs.push({ dir: fullPath, depth: cur.depth + 1 })
         }
       }
     } catch {}
+    // Bail early once we have far more than we need — sorting 50k paths is
+    // still fast but there's no value in scanning every partition.
+    if (all.length >= max * 200) break
   }
-  return results
+  // Sort by basename descending (Panasonic: highest sequence = most recent).
+  all.sort((a, b) => path.basename(b).localeCompare(path.basename(a)))
+  return all.slice(0, max)
 }
 
 /** Read EXIF DateTimeOriginal → local Date. No mtime/DateTime/DateTimeDigitized fallback. */
@@ -142,8 +159,38 @@ async function sampleAndReportCameraClock(
   label: string,
 ): Promise<void> {
   try {
-    const samples = collectJpegSamples(photoPath, 5)
-    if (samples.length === 0) return
+    // Collect a wider pool, then filter out photos already past the per-body
+    // SD watermark — those are from prior imports and their EXIF date is
+    // "days ago" by design. Without this filter, a partially-imported SD
+    // re-inserted produced false "N days off" popups (UDC London 2026-04-19
+    // H:\ flagged 17-days-off because sampler hit leftover Friday photos
+    // even though today's shots were there too). Over-collect 5× to
+    // survive filtering.
+    const rawSamples = collectJpegSamples(photoPath, 5 * 5)
+    const watermarks = state.listSdWatermarks()
+    const samples: string[] = []
+    let watermarkFiltered = 0
+    for (const s of rawSamples) {
+      const body = getCameraBodyKey(s)
+      const wm = body ? watermarks[body] : null
+      if (wm && path.basename(s).toUpperCase() <= wm.lastFilename.toUpperCase()) {
+        watermarkFiltered++
+        continue
+      }
+      samples.push(s)
+      if (samples.length >= 5) break
+    }
+    if (watermarkFiltered > 0) {
+      logger.photos.info(
+        `Clock sampler: filtered ${watermarkFiltered} already-watermarked photos, kept ${samples.length} fresh sample(s)`,
+      )
+    }
+    if (samples.length === 0) {
+      logger.photos.info(
+        `Drive ${drivePath}: all JPEG samples are below the SD watermark (already processed) — skipping clock check`,
+      )
+      return
+    }
 
     const today = new Date()
     const todayDate = toLocalIsoDate(today)
@@ -208,6 +255,7 @@ async function sampleAndReportCameraClock(
       `dominant=${dominantDate}, today=${todayDate}, daysOff=${daysOffMax}, samples=${sampledCount}`,
     )
     sendToRenderer(IPC_CHANNELS.DRIVE_CAMERA_CLOCK_MISMATCH, payload)
+    events.emit('drive.clockMismatch', { drivePath, label, dominantDate, todayDate, daysOffMax, sampleCount: sampledCount, sampledDates: sortedDates })
   } catch (err) {
     logger.photos.warn(
       `sampleAndReportCameraClock failed for ${drivePath}:`,
@@ -250,6 +298,7 @@ function poll(): void {
           isDcim: camera.isDcim,
           label,
         })
+        events.emit('drive.detected', { drive, label, photoCount: camera.photoCount, isDcim: camera.isDcim })
         // Background EXIF sample to catch wrong-day cameras (UDC London Cam 2
         // disaster: 15 days off, 171 unmatchable photos). Fire-and-forget so
         // the regular drive-detected flow isn't blocked.
@@ -280,40 +329,31 @@ export function startMonitoring(): void {
     return
   }
 
-  // Fire a synthetic DRIVE_DETECTED for any camera-looking drive already mounted
-  // at startup. Previously these were silently added to knownDrives, so an
-  // operator who booted the app with SD cards already plugged in never saw the
-  // auto-import popup. (Incident: 2026-04-18 mid-show, F:/H: mounted at 07:21
-  // were invisible until eject+reinsert.)
+  // Silently record startup-mounted drives so only FRESH insertions trigger
+  // the auto-import pipeline. Operator directive 2026-04-19: SDs already
+  // plugged in at boot should NOT fire import popups — operator may be
+  // intentionally keeping an SD mounted between sessions (e.g. yesterday's
+  // SD, a backup drive with DCIM, a photo archive on USB). Only eject +
+  // re-insert (or a brand-new insert) counts as "actively inserted".
   const initialDrives = getWindowsDrives()
-  logger.photos.info(`Drive monitor started — scanning ${initialDrives.length} mounted drive(s)`)
+  const startupCameraDrives: string[] = []
   for (const drive of initialDrives) {
     try {
       const camera = isCameraDrive(drive)
       if (camera.photoCount > 0) {
-        const label = getDriveLabel(drive)
-        logger.photos.info(
-          `Startup-mounted camera drive: ${drive} (${label}) — ${camera.photoCount} photos in ${camera.isDcim ? 'DCIM' : 'root'}`,
-        )
-        sendToRenderer(IPC_CHANNELS.DRIVE_DETECTED, {
-          drivePath: drive,
-          photoPath: camera.photoPath,
-          photoCount: camera.photoCount,
-          isDcim: camera.isDcim,
-          label,
-        })
-        // Background EXIF sample to catch wrong-day cameras (UDC London Cam 2
-        // disaster: 15 days off). Fire-and-forget so the popup isn't blocked.
-        sampleAndReportCameraClock(drive, camera.photoPath, label).catch(() => {})
+        startupCameraDrives.push(drive)
       }
-    } catch (err) {
-      logger.photos.warn(`startup-scan failed for ${drive}:`, err)
+    } catch {
+      // fall through; drive still added to knownDrives below via currentSet
     }
   }
-  // Seed knownDrives AFTER firing so the poll loop treats these as "already seen"
-  // and does not duplicate-fire on the first tick.
+  // Prime knownDrives with ALL currently-mounted drives (camera or not) so
+  // the first poll() tick doesn't mis-fire DRIVE_DETECTED for startup state.
   knownDrives = new Set(initialDrives)
-
+  logger.photos.info(
+    `Drive monitor started — ${initialDrives.length} mounted drive(s), ${startupCameraDrives.length} camera-looking; ` +
+    `silent at boot (only fresh insertions fire DRIVE_DETECTED)`,
+  )
   pollTimer = setInterval(poll, POLL_INTERVAL_MS)
 }
 
@@ -322,4 +362,43 @@ export function stopMonitoring(): void {
     clearInterval(pollTimer)
     pollTimer = null
   }
+}
+
+/**
+ * Enumerate currently-mounted drives that look like cameras (DCIM with
+ * JPEGs). Used by the "mark current SDs as processed" operator action so
+ * the watermark setter knows which drives to scan. Safe to call at any
+ * time — does not fire DRIVE_DETECTED, does not mutate any state.
+ */
+export function scanCurrentCameraDrives(): Array<{
+  drivePath: string
+  photoPath: string
+  photoCount: number
+  isDcim: boolean
+  label: string
+}> {
+  if (process.platform !== 'win32') return []
+  const drives = getWindowsDrives()
+  const out: Array<{
+    drivePath: string
+    photoPath: string
+    photoCount: number
+    isDcim: boolean
+    label: string
+  }> = []
+  for (const drive of drives) {
+    try {
+      const cam = isCameraDrive(drive)
+      if (cam.photoCount > 0) {
+        out.push({
+          drivePath: drive,
+          photoPath: cam.photoPath,
+          photoCount: cam.photoCount,
+          isDcim: cam.isDcim,
+          label: getDriveLabel(drive),
+        })
+      }
+    } catch {}
+  }
+  return out
 }

@@ -78,6 +78,8 @@ export default function Settings(): React.ReactElement {
   const [overlayCopied, setOverlayCopied] = useState(false)
   const [monitors, setMonitors] = useState<MonitorInfo[]>([])
   const [cpuCount, setCpuCount] = useState<number>(8)
+  const [watermarkStatus, setWatermarkStatus] = useState<string>('')
+  const [watermarkBusy, setWatermarkBusy] = useState<boolean>(false)
 
   useEffect(() => {
     if (currentSettings) {
@@ -790,6 +792,76 @@ export default function Settings(): React.ReactElement {
               <span className="hint">
                 How far outside a recording window (ms) a photo can still match. Lower = more precise, higher = more forgiving of clock drift.
               </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Photo Import — SD Watermarks */}
+        <div className="settings-section">
+          <div className="settings-section-title">Photo Import</div>
+          <p className="section-desc">
+            Mark currently-attached SD cards as already processed so auto-import skips existing
+            photos (e.g., when swapping in a card full of pre-show frames). Clear watermarks to
+            re-enable full import of all photos.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <div className="field-row" style={{ gap: 8 }}>
+                <button
+                  className="back-btn"
+                  disabled={watermarkBusy}
+                  onClick={async () => {
+                    const attached = await Promise.resolve().then(() => {
+                      // Best-effort check; actual scan happens in main. Prompt operator first.
+                      return confirm('Mark all currently-attached SDs as already processed?\n\nAuto-import will skip photos already on the cards at this moment. New photos taken after this will still import normally.')
+                    })
+                    if (!attached) return
+                    setWatermarkBusy(true)
+                    setWatermarkStatus('Scanning SDs...')
+                    try {
+                      const res = await (window.api as any).photosMarkSdsProcessed() as { scannedDrives: number; watermarksSet: Record<string, string>; error?: string }
+                      if (res?.error) {
+                        setWatermarkStatus(`Error: ${res.error}`)
+                      } else {
+                        const bodies = res.watermarksSet ? Object.keys(res.watermarksSet).length : 0
+                        setWatermarkStatus(
+                          res.scannedDrives === 0
+                            ? 'No camera SDs attached.'
+                            : `Watermarked ${bodies} camera body${bodies === 1 ? '' : 'ies'} across ${res.scannedDrives} drive${res.scannedDrives === 1 ? '' : 's'}.`,
+                        )
+                      }
+                    } catch (err) {
+                      setWatermarkStatus(`Error: ${err instanceof Error ? err.message : String(err)}`)
+                    } finally {
+                      setWatermarkBusy(false)
+                    }
+                  }}
+                >
+                  Mark Current SDs as Processed
+                </button>
+                <button
+                  className="back-btn"
+                  disabled={watermarkBusy}
+                  onClick={async () => {
+                    if (!confirm('Clear all SD watermarks?\n\nNext auto-import will include every photo currently on attached cards.')) return
+                    setWatermarkBusy(true)
+                    setWatermarkStatus('Clearing...')
+                    try {
+                      await (window.api as any).photosClearSdWatermarks()
+                      setWatermarkStatus('Cleared all SD watermarks.')
+                    } catch (err) {
+                      setWatermarkStatus(`Error: ${err instanceof Error ? err.message : String(err)}`)
+                    } finally {
+                      setWatermarkBusy(false)
+                    }
+                  }}
+                >
+                  Clear SD Watermarks
+                </button>
+              </div>
+              {watermarkStatus && (
+                <span className="hint" style={{ marginTop: 6 }}>{watermarkStatus}</span>
+              )}
             </div>
           </div>
         </div>

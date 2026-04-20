@@ -14,6 +14,8 @@ import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 import { ThrottleStream } from '../utils/throttle'
 import * as importManifest from './importManifest'
+import { generatePhotoThumbnail } from './ffmpeg'
+import os from 'os'
 
 interface UploadPayload {
   routineId: string
@@ -48,6 +50,40 @@ function deriveThumbObjectName(originalObjectName: string): string {
   // Strip trailing .jpg/.jpeg (case-insensitive) and append `_thumb.webp`.
   const base = originalObjectName.replace(/\.(jpe?g)$/i, '')
   return `${base}_thumb.webp`
+}
+
+/**
+ * Generate a thumbnail for a photo file on demand via the bundled ffmpeg.
+ * Returns the local thumbnail path (inside the photo's sibling `thumbnails`
+ * dir) on success, or null on failure. Sharp was moved out of the import
+ * loop (T-H17) because the sharp 0.32.6/0.33.x asar runtime on Windows
+ * produced a 100% failure rate during the UDC London 2026-04-19 H:\ import.
+ * ffmpeg is stable, bundled, and already a dep — slower (~200ms/photo)
+ * but runs off the main thread as a subprocess.
+ */
+async function ensurePhotoThumbnail(localPhotoPath: string): Promise<string | null> {
+  try {
+    if (!fs.existsSync(localPhotoPath)) return null
+    const parsed = path.parse(localPhotoPath)
+    // Prefer sibling `thumbnails` dir next to the photo (keeps everything
+    // within the routine output dir). Falls back to os.tmpdir() on any
+    // unexpected permission error.
+    const preferredDir = path.join(parsed.dir, '..', 'thumbnails')
+    let thumbDir = preferredDir
+    try {
+      await fs.promises.mkdir(thumbDir, { recursive: true })
+    } catch {
+      thumbDir = os.tmpdir()
+    }
+    const thumbPath = path.join(thumbDir, `${parsed.name}_thumb.webp`)
+    if (fs.existsSync(thumbPath)) return thumbPath
+    const ok = await generatePhotoThumbnail(localPhotoPath, thumbPath)
+    if (!ok) return null
+    return thumbPath
+  } catch (err) {
+    logger.upload.warn(`ensurePhotoThumbnail failed for ${localPhotoPath}: ${err instanceof Error ? err.message : err}`)
+    return null
+  }
 }
 
 /**
@@ -509,7 +545,20 @@ async function processLoop(): Promise<void> {
       // swapped to `_thumb.webp` (e.g. `photos/photo_001.jpg` → `photos/photo_001_thumb.webp`).
       // If the thumb PUT fails, we log + continue — the original already landed, so the
       // routine isn't blocked. CompPortal will fall back to on-the-fly serving.
+      //
+      // T-H17 (2026-04-19): if the upload payload didn't ship a pre-generated
+      // thumb path (import loop no longer creates them), generate one now
+      // via ffmpeg. Keeps main thread free during bulk SD imports.
       let thumbStoragePath: string | undefined
+      if (
+        payload.type === 'photos' &&
+        (!payload.thumbnailPath || !fs.existsSync(payload.thumbnailPath))
+      ) {
+        const jit = await ensurePhotoThumbnail(payload.filePath)
+        if (jit) {
+          payload.thumbnailPath = jit
+        }
+      }
       if (payload.type === 'photos' && payload.thumbnailPath && fs.existsSync(payload.thumbnailPath)) {
         try {
           const thumbObjectName = deriveThumbObjectName(payload.objectName)

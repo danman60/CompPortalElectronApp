@@ -43,17 +43,33 @@ function pruneStateBackups(statePath: string, keep: number): void {
 // written BEFORE the first mutation in each reconcile pass.
 const RECONCILE_DRY_RUN = false
 
+interface CameraOffsetEntry {
+  offsetMs: number
+  appliedAt: string // ISO
+  date: string      // YYYY-MM-DD local; cleared on day boundary
+  source: 'auto' | 'manual' | 'day-shift'
+}
+
+interface SdWatermarkEntry {
+  lastFilename: string   // e.g. "P1678123.JPG" — highest seen for this body
+  setAt: string          // ISO
+}
+
 interface PersistedState {
   competition: Competition | null
   currentRoutineId: string | null   // ID-based (was index-based)
   currentRoutineIndex?: number      // legacy — used for migration only
   savedAt: string
+  cameraOffsets?: Record<string, CameraOffsetEntry>
+  sdWatermarks?: Record<string, SdWatermarkEntry>
 }
 
 let currentCompetition: Competition | null = null
 let currentRoutineId: string | null = null
 let saveTimer: NodeJS.Timeout | null = null
 let savePending = false
+let cameraOffsets: Record<string, CameraOffsetEntry> = {}
+let sdWatermarks: Record<string, SdWatermarkEntry> = {}
 
 // Fix 8: Cached counts for WS broadcasts — updated incrementally
 let cachedSkippedCount = 0
@@ -106,6 +122,8 @@ function doSave(): void {
     competition: currentCompetition,
     currentRoutineId,
     savedAt: new Date().toISOString(),
+    cameraOffsets,
+    sdWatermarks,
   }
 
   try {
@@ -146,6 +164,27 @@ function tryParseStateFile(filePath: string): PersistedState | null {
 
 function applyLoadedState(data: PersistedState): void {
   currentCompetition = data.competition
+  // Hydrate persisted camera offsets and prune stale (not from today).
+  const today = localDateString(new Date())
+  const loaded = data.cameraOffsets ?? {}
+  cameraOffsets = {}
+  for (const [key, entry] of Object.entries(loaded)) {
+    if (entry && entry.date === today) {
+      cameraOffsets[key] = entry
+    } else if (entry) {
+      logger.app.info(`Pruned stale camera offset for "${key}" (from ${entry.date}, today ${today})`)
+    }
+  }
+  // Hydrate SD watermarks — these do NOT expire with day boundaries. An
+  // operator's "mark everything on the SD as processed" decision should
+  // persist across app restarts until explicitly cleared or overwritten
+  // by a larger filename during a subsequent import.
+  sdWatermarks = { ...(data.sdWatermarks ?? {}) }
+  const wmCount = Object.keys(sdWatermarks).length
+  if (wmCount > 0) {
+    logger.app.info(`Hydrated ${wmCount} SD watermark(s): ` +
+      Object.entries(sdWatermarks).map(([k, v]) => `${k}=${v.lastFilename}`).join(', '))
+  }
   recomputeCachedCounts()
 
   if (data.currentRoutineId) {
@@ -649,4 +688,114 @@ export function cleanup(): void {
     saveTimer = null
   }
   doSave()
+}
+
+// ── Per-camera offset API ─────────────────────────────────────────────────
+// Keys are camera-body identifiers derived by photos.ts (EXIF Make+Model+
+// BodySerialNumber, with a filename-prefix fallback like "P16"). Offsets
+// are day-scoped — entries from prior dates are dropped on state load. The
+// operator's rule (2026-04-18): per-camera offset applied silently after
+// confirmation, persists for the rest of the day. Photos.ts seeds the
+// detection step with the persisted offset so SD swaps don't re-learn
+// from scratch when the second SD has few photos.
+
+function localDateString(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export function getCameraOffset(bodyId: string): CameraOffsetEntry | null {
+  const entry = cameraOffsets[bodyId]
+  if (!entry) return null
+  const today = localDateString(new Date())
+  if (entry.date !== today) {
+    delete cameraOffsets[bodyId]
+    saveState()
+    return null
+  }
+  return entry
+}
+
+export function setCameraOffset(
+  bodyId: string,
+  offsetMs: number,
+  source: CameraOffsetEntry['source'],
+): void {
+  cameraOffsets[bodyId] = {
+    offsetMs,
+    appliedAt: new Date().toISOString(),
+    date: localDateString(new Date()),
+    source,
+  }
+  logger.app.info(`Camera offset set: body="${bodyId}" offsetMs=${offsetMs} source=${source}`)
+  saveState()
+}
+
+export function listCameraOffsets(): Record<string, CameraOffsetEntry> {
+  return { ...cameraOffsets }
+}
+
+export function clearCameraOffsets(): void {
+  const count = Object.keys(cameraOffsets).length
+  cameraOffsets = {}
+  logger.app.info(`Cleared ${count} camera offset(s)`)
+  saveState()
+}
+
+// ── SD watermark API ───────────────────────────────────────────────────
+// Operator workflow: SDs always contain the full competition's photos. On
+// each insertion we ONLY want to process photos newer than the last time
+// the app saw this SD/camera body. Keyed by camera body ID (same prefix
+// scheme as cameraOffsets — e.g. "P16"). Value is the highest JPEG
+// filename seen; because Panasonic names files with monotonically
+// increasing sequence numbers, string comparison on the filename is a
+// reliable "newer than" check within a folder, and folder numbers
+// themselves increment. So "P1678123.JPG" > "P1668050.JPG" correctly
+// represents "shot later".
+
+export function getSdWatermark(bodyId: string): SdWatermarkEntry | null {
+  return sdWatermarks[bodyId] ?? null
+}
+
+export function setSdWatermark(bodyId: string, lastFilename: string): void {
+  const existing = sdWatermarks[bodyId]
+  // Only bump forward — never regress a watermark on accident.
+  if (existing && existing.lastFilename >= lastFilename) return
+  sdWatermarks[bodyId] = {
+    lastFilename,
+    setAt: new Date().toISOString(),
+  }
+  logger.app.info(`SD watermark set: body="${bodyId}" lastFilename="${lastFilename}"`)
+  saveState()
+}
+
+export function setSdWatermarksBulk(
+  entries: Record<string, string>,
+): number {
+  let updated = 0
+  const now = new Date().toISOString()
+  for (const [bodyId, lastFilename] of Object.entries(entries)) {
+    const existing = sdWatermarks[bodyId]
+    if (existing && existing.lastFilename >= lastFilename) continue
+    sdWatermarks[bodyId] = { lastFilename, setAt: now }
+    updated++
+  }
+  if (updated > 0) {
+    logger.app.info(`Bulk SD watermark update: ${updated} body(ies) advanced`)
+    saveState()
+  }
+  return updated
+}
+
+export function clearSdWatermarks(): void {
+  const count = Object.keys(sdWatermarks).length
+  sdWatermarks = {}
+  logger.app.info(`Cleared ${count} SD watermark(s)`)
+  saveState()
+}
+
+export function listSdWatermarks(): Record<string, SdWatermarkEntry> {
+  return { ...sdWatermarks }
 }

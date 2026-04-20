@@ -279,9 +279,35 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
   return result
 }
 
-function NoteEditor({ routine }: { routine: Routine }): React.ReactElement {
+interface NoteEditorExternalOpen {
+  routineId: string
+  seq: number
+}
+
+function NoteEditor({
+  routine,
+  externalOpen,
+}: {
+  routine: Routine
+  externalOpen?: NoteEditorExternalOpen | null
+}): React.ReactElement {
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(routine.notes || '')
+  const lastSeqRef = useRef<number>(-1)
+
+  // Parent can force-open the editor (e.g. row double-click) by incrementing
+  // externalOpen.seq for this routine. We gate on seq change so closing + later
+  // re-opening is a clean signal rather than a bool flip race.
+  useEffect(() => {
+    if (
+      externalOpen &&
+      externalOpen.routineId === routine.id &&
+      externalOpen.seq !== lastSeqRef.current
+    ) {
+      lastSeqRef.current = externalOpen.seq
+      setEditing(true)
+    }
+  }, [externalOpen, routine.id])
 
   function handleSave(): void {
     window.api.setRoutineNote(routine.id, text.trim())
@@ -327,9 +353,23 @@ function NoteEditor({ routine }: { routine: Routine }): React.ReactElement {
   )
 }
 
-export default function RoutineTable(): React.ReactElement {
+interface RoutineTableProps {
+  /**
+   * Optional window-mode for Overlay Mode panels. When set, only a slice of
+   * the schedule is shown around the current routine:
+   *   - 'previous': N routines immediately before the current index
+   *   - 'next':     N routines immediately after the current index
+   * Day-headers / session-dividers / search / day-filter are bypassed so the
+   * panel stays compact.
+   */
+  windowMode?: 'previous' | 'next'
+  count?: number
+}
+
+export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProps = {}): React.ReactElement {
   const competition = useStore((s) => s.competition)
   const currentRoutine = useStore((s) => s.currentRoutine)
+  const currentIndex = useStore((s) => s.currentIndex)
   const settings = useStore((s) => s.settings)
   const dayFilter = useStore((s) => s.dayFilter)
   const searchQuery = useStore((s) => s.searchQuery)
@@ -337,25 +377,49 @@ export default function RoutineTable(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  // Double-click on a row opens the row's note editor (F5 wire-up). The seq
+  // increments per double-click so re-clicking the same row re-opens the
+  // editor cleanly after close.
+  const [noteOpenTarget, setNoteOpenTarget] = useState<NoteEditorExternalOpen | null>(null)
   const nextUnrecordedRowRef = useRef<HTMLTableRowElement | null>(null)
   const hasAutoScrolledRef = useRef(false)
+  const isWindowMode = windowMode != null
+
+  function openNoteForRoutine(routineId: string): void {
+    setNoteOpenTarget((prev) => ({
+      routineId,
+      seq: (prev?.routineId === routineId ? prev.seq : 0) + 1,
+    }))
+  }
 
   useEffect(() => {
+    if (isWindowMode) return // no auto-scroll in panel window mode
     if (hasAutoScrolledRef.current) return
     if (!competition?.routines?.length) return
     const row = nextUnrecordedRowRef.current
     if (!row) return
     row.scrollIntoView({ block: 'center', behavior: 'auto' })
     hasAutoScrolledRef.current = true
-  }, [competition?.routines?.length])
+  }, [competition?.routines?.length, isWindowMode])
 
   let routines = competition?.routines ?? []
 
-  if (dayFilter) {
+  // Window-mode slice (for overlay panels) happens BEFORE filters so prev/next
+  // stays stable regardless of the main window's day filter or search state.
+  if (isWindowMode && competition) {
+    const idx = Math.max(0, Math.min(currentIndex, routines.length - 1))
+    if (windowMode === 'previous') {
+      routines = routines.slice(Math.max(0, idx - count), idx).reverse()
+    } else {
+      routines = routines.slice(idx + 1, idx + 1 + count)
+    }
+  }
+
+  if (!isWindowMode && dayFilter) {
     routines = routines.filter((r) => r.scheduledDay === dayFilter)
   }
 
-  if (searchQuery) {
+  if (!isWindowMode && searchQuery) {
     const q = searchQuery.toLowerCase()
     routines = routines.filter(
       (r) =>
@@ -425,8 +489,10 @@ export default function RoutineTable(): React.ReactElement {
         <tbody>
           {(() => {
             const uniqueDays = Array.from(new Set(routines.map((r) => r.scheduledDay || '')))
-            const showDayHeaders = !dayFilter || uniqueDays.length > 1
-            const items = buildGroupedList(routines, { showDayHeaders })
+            const showDayHeaders = !isWindowMode && (!dayFilter || uniqueDays.length > 1)
+            const items = isWindowMode
+              ? routines.map((r) => ({ type: 'routine' as const, routine: r }))
+              : buildGroupedList(routines, { showDayHeaders })
             const firstUnrecorded = routines.find(
               (r) => r.status === 'pending' || r.status === 'queued',
             )
@@ -470,6 +536,10 @@ export default function RoutineTable(): React.ReactElement {
                 ref={routine.id === firstUnrecordedId ? nextUnrecordedRowRef : undefined}
                 className={`${isCurrent ? 'current-row' : ''}${dropTargetId === routine.id ? ' drop-target' : ''}`}
                 onClick={() => handleJumpTo(routine)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  openNoteForRoutine(routine.id)
+                }}
                 onDragOver={(e) => handleDragOver(e, routine.id)}
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, routine)}
@@ -539,7 +609,7 @@ export default function RoutineTable(): React.ReactElement {
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                    <NoteEditor routine={routine} />
+                    <NoteEditor routine={routine} externalOpen={noteOpenTarget} />
                     {(routine.status === 'uploading' || (routine.status === 'encoded' && routine.error)) && (
                       <button
                         className="view-btn"

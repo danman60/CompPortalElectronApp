@@ -291,8 +291,22 @@ app.whenReady().then(async () => {
   // Register global hotkeys
   hotkeys.register()
 
-  // Drive monitor disabled — using folder-watch mode for photos
-  // driveMonitor.startMonitoring()
+  // Drive monitor: polls for newly-inserted SD cards every few seconds.
+  // Re-enabled 2026-04-19 per operator: SD "just works" flow requires this
+  // poller. Startup-mounted SDs are silently added to knownDrives (no popup)
+  // so only FRESH insertions fire DRIVE_DETECTED. Folder-watch mode (Lumix
+  // Tether → PHOTOIMPORT) runs in parallel for camera-live workflow.
+  driveMonitor.startMonitoring()
+
+  // Remote debug HTTP server (localhost:8765) — read-only introspection for
+  // SSH-tunneled diagnostics. Started here so it's up before any SD insert
+  // or tether event fires, and Claude (remote) can immediately query state.
+  try {
+    const { startDebugServer } = require('./services/debugServer')
+    startDebugServer()
+  } catch (err) {
+    logger.app.warn(`debugServer start failed: ${err instanceof Error ? err.message : err}`)
+  }
   // WPD/MTP disabled — using folder-watch mode instead
   // tether.initWPDHandlers()
   // wpdBridge.startMonitor().catch((err) => {

@@ -2,7 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import { dialog, BrowserWindow } from 'electron'
 import ExifReader from 'exifreader'
-import sharp from 'sharp'
 import { Routine, PhotoMatch, IPC_CHANNELS } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
@@ -12,6 +11,7 @@ import { getSettings } from './settings'
 import * as uploadService from './upload'
 import * as manifest from './importManifest'
 import type { ManifestEntry } from './importManifest'
+import * as events from './events'
 
 interface RecordingWindow {
   routineId: string
@@ -253,7 +253,7 @@ export async function browseForFolder(): Promise<string | null> {
  * We use the body-level key (P1 + first digit, like "P16") for offset
  * persistence — same camera across folders gets the same offset.
  */
-function getCameraBodyKey(filePath: string): string | null {
+export function getCameraBodyKey(filePath: string): string | null {
   const base = path.basename(filePath)
   const m = base.match(/^(P\d{2})\d{5}\.(?:jpg|jpeg)$/i)
   return m ? m[1].toUpperCase() : null
@@ -305,12 +305,157 @@ async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
   }
 }
 
+// Max magnitude (ms) that will be auto-applied without operator confirmation.
+// Larger detected offsets almost always indicate aliasing (see UDC London
+// 2026-04-19 R530 incident: -201s aliased because a missing routine window
+// broke the reference set). A correctly-clocked camera produces offsets <5s.
+const MAX_AUTO_OFFSET_MS = 60_000
+
+// If offset=0 matches at least this fraction of photos, prefer zero (camera
+// likely synced). Prevents aliased offsets from winning by 1-2 extra matches.
+const ZERO_PREFERRED_RATIO = 0.80
+
+// A non-zero detected offset must beat the offset=0 score by at least this
+// multiplicative margin before being applied. Guards against aliasing when
+// a handful of extra matches accidentally score the shifted candidate higher.
+const NONZERO_REQUIRED_MARGIN = 1.10
+
+// If the reference set (recording windows) has a gap larger than this between
+// consecutive entries, treat the reference as incomplete and refuse to apply
+// any non-zero offset. Typical inter-routine gap is <5min; a gap >15min
+// usually means a routine wasn't registered (re-record chaos, missing
+// media_packages row, or pending recording). Fail closed: use zero offset
+// and let the nearest-window fallback handle orphans at copy time.
+const REFERENCE_GAP_LIMIT_MS = 15 * 60_000
+
+// Offsets with magnitude ≤ this auto-apply without operator confirmation.
+// Camera clocks drift a few seconds between dailies — prompting at 5s is
+// noise. A detected offset >15s is rare enough that a confirm toast is
+// worth the interruption.
+const OFFSET_REQUIRE_CONFIRM_ABOVE_MS = 15_000
+
+// Proposal bookkeeping. Set of camera bodies the operator has chosen to
+// skip-prompt for the rest of the session. Cleared when the main process
+// restarts. Populated when the operator clicks "Skip" on a proposal toast.
+const offsetProposalResolvers = new Map<string, (d: 'yes' | 'no' | 'skip') => void>()
+const offsetPromptSessionSkip = new Set<string>()
+let offsetProposalCounter = 0
+
+export function resolveOffsetDecision(proposalId: string, decision: 'yes' | 'no' | 'skip'): void {
+  const fn = offsetProposalResolvers.get(proposalId)
+  if (!fn) return
+  offsetProposalResolvers.delete(proposalId)
+  fn(decision)
+}
+
+async function proposeOffsetDecision(payload: {
+  cameraBody: string
+  offsetMs: number
+  matchesAt: number
+  matchesAtZero: number
+  totalPhotos: number
+}): Promise<'yes' | 'no' | 'skip'> {
+  const proposalId = `offprop-${Date.now()}-${++offsetProposalCounter}`
+  return new Promise<'yes' | 'no' | 'skip'>((resolve) => {
+    offsetProposalResolvers.set(proposalId, resolve)
+    // Safety timeout — default to 'yes' (apply) after 2 minutes so an
+    // unattended laptop never leaves an import permanently stalled.
+    const timeout = setTimeout(() => {
+      if (offsetProposalResolvers.has(proposalId)) {
+        offsetProposalResolvers.delete(proposalId)
+        logger.photos.warn(`Offset proposal ${proposalId} timed out after 120s — defaulting to 'yes' (apply)`)
+        resolve('yes')
+      }
+    }, 120_000)
+    // Release the timeout if decision arrives normally
+    const wrap = offsetProposalResolvers.get(proposalId)!
+    offsetProposalResolvers.set(proposalId, (d) => {
+      clearTimeout(timeout)
+      wrap(d)
+    })
+    sendToRenderer(IPC_CHANNELS.PHOTOS_OFFSET_PROPOSAL, { proposalId, ...payload })
+  })
+}
+
+interface ClockOffsetResult {
+  offsetMs: number
+  bestScore: number
+  zeroScore: number
+  totalPhotos: number
+}
+
 function detectClockOffset(
   photos: { path: string; captureTime: Date }[],
   windows: RecordingWindow[],
   seedOffsetMs = 0,
-): number {
-  if (photos.length === 0 || windows.length === 0) return 0
+): ClockOffsetResult {
+  if (photos.length === 0 || windows.length === 0) {
+    return { offsetMs: 0, bestScore: 0, zeroScore: 0, totalPhotos: photos.length }
+  }
+
+  const BUFFER = 30_000
+  const sortedWindows = [...windows].sort(
+    (a, b) => a.recordingStarted.getTime() - b.recordingStarted.getTime(),
+  )
+
+  function scoreOffset(offsetMs: number): number {
+    let score = 0
+    for (const photo of photos) {
+      const adjusted = photo.captureTime.getTime() + offsetMs
+      for (const w of sortedWindows) {
+        if (adjusted >= w.recordingStarted.getTime() - BUFFER &&
+            adjusted <= w.recordingStopped.getTime() + BUFFER) {
+          score++
+          break
+        }
+      }
+    }
+    return score
+  }
+
+  const zeroScore = scoreOffset(0)
+
+  // Short-circuit: if the camera appears synced (most photos land in windows
+  // at offset=0), skip the candidate search entirely. This prevents the class
+  // of bug where a missing/mis-labeled window in the reference set causes a
+  // sliding offset to score 1-2 matches higher than zero.
+  if (zeroScore / photos.length >= ZERO_PREFERRED_RATIO) {
+    logger.photos.info(
+      `Clock offset: camera appears synced — ${zeroScore}/${photos.length} photos match at zero offset (≥${Math.round(ZERO_PREFERRED_RATIO * 100)}%), using 0`,
+    )
+    return { offsetMs: 0, bestScore: zeroScore, zeroScore, totalPhotos: photos.length }
+  }
+
+  // Reference-set integrity check. If the recording windows have a gap larger
+  // than REFERENCE_GAP_LIMIT_MS between consecutive entries, the reference
+  // set is likely incomplete — a missing media_packages row, a re-record that
+  // never got its own routine, or a pending recording. Shifting the offset
+  // against that incomplete set risks aliasing (R530 incident, 2026-04-19 UDC
+  // London: no row for R530 + detector picked -201s that mis-assigned ~4,298
+  // photos one routine earlier). Fail closed: refuse non-zero here, let the
+  // nearest-window fallback route orphans. Operator can re-run after fixing
+  // the reference set.
+  for (let i = 1; i < sortedWindows.length; i++) {
+    const gap =
+      sortedWindows[i].recordingStarted.getTime() -
+      sortedWindows[i - 1].recordingStopped.getTime()
+    if (gap > REFERENCE_GAP_LIMIT_MS) {
+      logger.photos.warn(
+        `Clock offset SKIPPED (reference gap): ${Math.round(gap / 60_000)}min gap between R${sortedWindows[i - 1].entryNumber} (${sortedWindows[i - 1].recordingStopped.toISOString()}) and R${sortedWindows[i].entryNumber} (${sortedWindows[i].recordingStarted.toISOString()}). Reference set likely incomplete — using 0 offset.`,
+      )
+      events.emit('offsetDetector.decision', {
+        outcome: 'rejected-reference-gap',
+        gapMs: gap,
+        fromEntry: sortedWindows[i - 1].entryNumber,
+        toEntry: sortedWindows[i].entryNumber,
+        fromStopped: sortedWindows[i - 1].recordingStopped.toISOString(),
+        toStarted: sortedWindows[i].recordingStarted.toISOString(),
+        totalPhotos: photos.length,
+        zeroScore,
+      })
+      return { offsetMs: 0, bestScore: zeroScore, zeroScore, totalPhotos: photos.length }
+    }
+  }
 
   // Sample up to 10 evenly-spaced photos to generate candidate offsets
   const sampleCount = Math.min(10, photos.length)
@@ -320,15 +465,8 @@ function detectClockOffset(
     samplePhotos.push(photos[i])
   }
 
-  // For each sample photo, find the 3 nearest windows and generate candidate offsets.
-  // seedOffsetMs is injected at the head of candidates — when a persisted
-  // per-camera offset exists, it's evaluated first so sparse imports don't
-  // re-learn from scratch when the second SD from the same body arrives.
   const candidates: number[] = [0]
   if (seedOffsetMs !== 0) candidates.unshift(seedOffsetMs)
-  const sortedWindows = [...windows].sort(
-    (a, b) => a.recordingStarted.getTime() - b.recordingStarted.getTime(),
-  )
   for (const photo of samplePhotos) {
     const distances = sortedWindows.map((w) => ({
       w,
@@ -341,45 +479,52 @@ function detectClockOffset(
     }
   }
 
-  // Score each candidate using all photos (but deduplicate candidates first)
-  const BUFFER = 30_000
   let bestOffset = 0
-  let bestScore = 0
-
-  const tested = new Set<number>()
+  let bestScore = zeroScore
+  const tested = new Set<number>([0])
   for (const candidate of candidates) {
     const rounded = Math.round(candidate / 1000) * 1000
     if (tested.has(rounded)) continue
     tested.add(rounded)
-
-    let score = 0
-    for (const photo of photos) {
-      const adjusted = photo.captureTime.getTime() + rounded
-      // Binary search would be ideal but linear is fine for ~700 windows
-      for (const w of sortedWindows) {
-        if (adjusted >= w.recordingStarted.getTime() - BUFFER &&
-            adjusted <= w.recordingStopped.getTime() + BUFFER) {
-          score++
-          break
-        }
-      }
-    }
-
+    const score = scoreOffset(rounded)
     if (score > bestScore) {
       bestScore = score
       bestOffset = rounded
     }
   }
 
-  if (bestOffset !== 0) {
-    logger.photos.info(
-      `Clock offset detected: ${Math.round(bestOffset / 1000)}s (camera ${bestOffset > 0 ? 'behind' : 'ahead'}) — matched ${bestScore}/${photos.length} photos`,
-    )
-  } else {
+  if (bestOffset === 0) {
     logger.photos.info(`No clock offset needed — ${bestScore}/${photos.length} photos match at zero offset`)
+    events.emit('offsetDetector.decision', { outcome: 'zero', bestScore, zeroScore, totalPhotos: photos.length, candidatesTested: tested.size })
+    return { offsetMs: 0, bestScore, zeroScore, totalPhotos: photos.length }
   }
 
-  return bestOffset
+  // Magnitude cap — reject large auto-detected offsets. A camera with a true
+  // 60s+ drift is rare enough that silent auto-apply is the wrong default.
+  if (Math.abs(bestOffset) > MAX_AUTO_OFFSET_MS) {
+    logger.photos.warn(
+      `Clock offset REJECTED (magnitude cap): detected ${Math.round(bestOffset / 1000)}s, cap ±${MAX_AUTO_OFFSET_MS / 1000}s. ` +
+      `${bestScore}/${photos.length} matched at shift vs ${zeroScore}/${photos.length} at zero. Using 0 — photos outside windows will be matched by nearest-window fallback.`,
+    )
+    events.emit('offsetDetector.decision', { outcome: 'rejected-magnitude', detectedMs: bestOffset, capMs: MAX_AUTO_OFFSET_MS, bestScore, zeroScore, totalPhotos: photos.length })
+    return { offsetMs: 0, bestScore, zeroScore, totalPhotos: photos.length }
+  }
+
+  // Margin check — a detected offset must decisively beat offset=0 before
+  // being applied. Aliased offsets often score 1-5 matches above zero.
+  if (bestScore < Math.max(zeroScore * NONZERO_REQUIRED_MARGIN, zeroScore + 10)) {
+    logger.photos.warn(
+      `Clock offset REJECTED (insufficient margin): ${Math.round(bestOffset / 1000)}s scored ${bestScore} vs zero ${zeroScore} — required ≥${Math.round(zeroScore * NONZERO_REQUIRED_MARGIN)}. Using 0.`,
+    )
+    events.emit('offsetDetector.decision', { outcome: 'rejected-margin', detectedMs: bestOffset, bestScore, zeroScore, requiredScore: Math.round(zeroScore * NONZERO_REQUIRED_MARGIN), totalPhotos: photos.length })
+    return { offsetMs: 0, bestScore, zeroScore, totalPhotos: photos.length }
+  }
+
+  logger.photos.info(
+    `Clock offset detected: ${Math.round(bestOffset / 1000)}s (camera ${bestOffset > 0 ? 'behind' : 'ahead'}) — matched ${bestScore}/${photos.length} photos (vs ${zeroScore} at zero)`,
+  )
+  events.emit('offsetDetector.decision', { outcome: 'applied', detectedMs: bestOffset, bestScore, zeroScore, totalPhotos: photos.length })
+  return { offsetMs: bestOffset, bestScore, zeroScore, totalPhotos: photos.length }
 }
 
 function matchPhotosToRoutines(
@@ -458,19 +603,47 @@ function matchPhotosToRoutines(
   })
 }
 
+// FIFO queue for sequential imports — supports multi-SD insertion where the
+// operator plugs in 2+ cards at once. Each queued import waits for the
+// previous to finish so state.json writes, job queue, and offset detector
+// don't race across drives.
+const importQueue: Array<() => void> = []
+
+export interface ImportPhotosOptions {
+  previewOnly?: boolean // T-F3: dry-run; no copies, no watermarks, no enqueue
+}
+
 export async function importPhotos(
   folderPath: string,
   routines: Routine[],
   outputDir: string,
+  opts: ImportPhotosOptions = {},
 ): Promise<ImportResult | { error: string }> {
-  // ── Single-flight guard (Bug C) ──
-  // Reject parallel imports — double-clicking Photos used to race two 21k-photo
-  // imports against each other and corrupt routine folders.
-  if (currentImport) {
+  // Dedupe: if the SAME folder is already importing OR already queued,
+  // reject. Supports multi-SD by allowing DIFFERENT folders to queue up.
+  if (currentImport && currentImport.folderPath === folderPath) {
     const elapsedSec = Math.round((Date.now() - currentImport.startedAt) / 1000)
-    const msg = `Already importing ${currentImport.folderPath} (running ${elapsedSec}s). Cancel the running import before starting a new one.`
-    logger.photos.warn(`Rejected concurrent import attempt for ${folderPath}: ${msg}`)
+    const msg = `Already importing this folder (${folderPath}, running ${elapsedSec}s).`
+    logger.photos.warn(`Rejected duplicate import attempt for ${folderPath}: ${msg}`)
     return { error: msg }
+  }
+
+  events.emit('import.requested', { folderPath, queueDepth: importQueue.length, currentRunning: currentImport?.folderPath || null })
+
+  // Wait for previous imports to finish before starting this one.
+  if (currentImport) {
+    logger.photos.info(
+      `Queuing import of ${folderPath} behind ${currentImport.folderPath} (position ${importQueue.length + 1})`,
+    )
+    sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+      stage: 'queued',
+      total: 0,
+      current: 0,
+      message: `Queued behind ${importQueue.length + 1} import(s)`,
+    })
+    await new Promise<void>((resolve) => {
+      importQueue.push(resolve)
+    })
   }
 
   const abortController = new AbortController()
@@ -478,9 +651,25 @@ export async function importPhotos(
   currentImport = { abortController, folderPath, startedAt: Date.now() }
 
   try {
-    return await runImport(folderPath, routines, outputDir, signal)
+    events.emit('import.started', { folderPath, previewOnly: !!opts.previewOnly })
+    const result = await runImport(folderPath, routines, outputDir, signal, opts)
+    events.emit('import.finished', {
+      folderPath,
+      totalPhotos: 'totalPhotos' in result ? result.totalPhotos : 0,
+      matched: 'matched' in result ? result.matched : 0,
+      unmatched: 'unmatched' in result ? result.unmatched : 0,
+      clockOffsetMs: 'clockOffsetMs' in result ? result.clockOffsetMs : 0,
+      cancelled: 'cancelled' in result ? result.cancelled : false,
+    })
+    return result
+  } catch (err) {
+    events.emit('import.failed', { folderPath, error: err instanceof Error ? err.message : String(err) })
+    throw err
   } finally {
     currentImport = null
+    // Release the next queued import, if any.
+    const next = importQueue.shift()
+    if (next) next()
   }
 }
 
@@ -489,8 +678,10 @@ async function runImport(
   routines: Routine[],
   outputDir: string,
   signal: AbortSignal,
+  opts: ImportPhotosOptions = {},
 ): Promise<ImportResult> {
-  logger.photos.info(`Importing photos from: ${folderPath}`)
+  const previewOnly = !!opts.previewOnly
+  logger.photos.info(`Importing photos from: ${folderPath}${previewOnly ? ' (PREVIEW ONLY)' : ''}`)
 
   const importRunId = new Date().toISOString()
   const seenHashes = await manifest.getUploadedHashes(outputDir).catch(() => new Set<string>())
@@ -704,14 +895,50 @@ async function runImport(
   for (const [body, bodyPhotos] of photosByBody.entries()) {
     const seed = body !== '_unknown' ? (state.getCameraOffset(body)?.offsetMs ?? 0) : 0
     const detected = detectClockOffset(bodyPhotos, windows, seed)
-    offsetByBody.set(body, detected)
-    if (body !== '_unknown' && detected !== 0) {
-      state.setCameraOffset(body, detected, 'auto')
+    let finalOffset = detected.offsetMs
+
+    // Offset confirmation: large offsets (abs > threshold) prompt the
+    // operator before applying. Small offsets auto-apply — camera clocks
+    // drift a few seconds routinely. The "Skip" path remembers the body
+    // for the rest of the session to avoid nagging on multi-SD imports.
+    if (
+      finalOffset !== 0 &&
+      body !== '_unknown' &&
+      !offsetPromptSessionSkip.has(body) &&
+      Math.abs(finalOffset) > OFFSET_REQUIRE_CONFIRM_ABOVE_MS
+    ) {
+      try {
+        const decision = await proposeOffsetDecision({
+          cameraBody: body,
+          offsetMs: finalOffset,
+          matchesAt: detected.bestScore,
+          matchesAtZero: detected.zeroScore,
+          totalPhotos: detected.totalPhotos,
+        })
+        if (decision === 'no') {
+          logger.photos.info(`Operator rejected offset for ${body} — using 0`)
+          finalOffset = 0
+        } else if (decision === 'skip') {
+          logger.photos.info(`Operator skipped offset prompt for ${body} this session — using 0`)
+          finalOffset = 0
+          offsetPromptSessionSkip.add(body)
+        }
+        // 'yes' → keep detected offset
+      } catch (err) {
+        logger.photos.warn(`Offset proposal failed for ${body}: ${err instanceof Error ? err.message : String(err)} — applying detected`)
+      }
+    }
+
+    offsetByBody.set(body, finalOffset)
+    if (body !== '_unknown' && finalOffset !== 0) {
+      if (!previewOnly) {
+        state.setCameraOffset(body, finalOffset, 'auto')
+      }
       sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
         stage: 'matching',
         total: photos.length,
         current: 0,
-        message: `Camera ${body}: offset ${Math.round(detected / 1000)}s applied`,
+        message: `Camera ${body}: offset ${Math.round(finalOffset / 1000)}s${previewOnly ? ' (preview)' : ' applied'}`,
       })
     }
   }
@@ -795,58 +1022,38 @@ async function runImport(
       await fs.promises.mkdir(routineDir, { recursive: true })
     }
 
-    const destFile = path.join(routineDir, `photo_${String(copiedCount + 1).padStart(3, '0')}.jpg`)
+    // Preserve original camera filename end-to-end (operator directive
+    // 2026-04-19): local disk, R2 object name, media_photos.filename all
+    // carry the native camera basename (e.g. P2234563.JPG). Friendly rename
+    // — {entry_number}_{routine}_{studio}_{dancer}_{original}.jpg — is
+    // applied ONLY at download time in CompPortal. Benefits: grep works,
+    // burst-sequence adjacency preserved, duplicate-SD detection trivial
+    // (same camera + same filename = already imported), recovery is a LOT
+    // easier. Collision handling: if two SDs carry overlapping Lumix
+    // counters within one routine, suffix with _dup{N}.
     const sourceForCopy = match.filePath
-    await fs.promises.copyFile(sourceForCopy, destFile)
+    const originalBasename = path.basename(sourceForCopy)
+    let destFile = path.join(routineDir, originalBasename)
+    let collisionCounter = 0
+    while (fs.existsSync(destFile)) {
+      collisionCounter++
+      const parsed = path.parse(originalBasename)
+      destFile = path.join(routineDir, `${parsed.name}_dup${collisionCounter}${parsed.ext}`)
+      if (collisionCounter === 1) {
+        logger.photos.warn(`Filename collision for ${originalBasename} in ${routineDir}; suffixing as _dup${collisionCounter}`)
+      }
+    }
+    if (!previewOnly) {
+      await fs.promises.copyFile(sourceForCopy, destFile)
+    }
     match.sourcePath = sourceForCopy
     match.filePath = destFile
 
-    // Generate thumbnail (WebP — small, fast, served directly by CompPortal Media Portal)
-    // Bug E mitigation: validate the JPEG before feeding sharp. libvips throws
-    // "TypeError: A boolean was expected" on zero-byte / partial / non-JPEG inputs.
-    // Pre-flight check (isThumbnailSafe) turns those into a single info-line skip.
-    //
-    // UDC London 2026-04-19: sharp 0.33.5 in the asar runtime was throwing that
-    // same TypeError on valid JPEGs too — 3,649/3,649 failures during Sunday SD
-    // import. Root cause was an option default not propagating cleanly through
-    // the asar bundle (pipeline call at sharp/lib/output.js:1536). Setting every
-    // boolean option explicitly + failOn:'none' sidesteps the default-lookup
-    // misfire.
-    try {
-      const thumbDir = path.join(routineDir, 'thumbnails')
-      if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true })
-      const thumbPath = path.join(thumbDir, `thumb_${String(copiedCount + 1).padStart(3, '0')}.webp`)
-      if (await isThumbnailSafe(destFile)) {
-        await sharp(destFile, {
-          failOn: 'none',
-          sequentialRead: true,
-          unlimited: false,
-        })
-          .rotate()
-          .resize({
-            width: 200,
-            height: 200,
-            fit: 'cover',
-            withoutEnlargement: false,
-            withoutReduction: false,
-            fastShrinkOnLoad: true,
-          })
-          .webp({
-            quality: 80,
-            effort: 4,
-            lossless: false,
-            nearLossless: false,
-            smartSubsample: false,
-            alphaQuality: 100,
-          })
-          .toFile(thumbPath)
-        match.thumbnailPath = thumbPath
-      } else {
-        logger.photos.info(`Thumbnail skipped (not a valid JPEG): ${destFile}`)
-      }
-    } catch (err) {
-      logger.photos.warn(`Thumbnail generation failed for ${destFile}:`, err)
-    }
+    // Thumbnail generation moved to the upload worker (T-H17, 2026-04-19).
+    // Main-thread sharp calls during bulk SD imports used to starve IPC
+    // (Lumix H: incident: 1,557 photos, 0 thumbs, main thread pegged for ~2 min).
+    // Upload loop generates on demand via ffmpeg after each photo PUT.
+    // match.thumbnailPath stays undefined — upload.ts creates a temp file JIT.
 
     manifestEntries.push({
       sourcePath: match.sourcePath,
@@ -859,7 +1066,12 @@ async function runImport(
     })
 
     copiedCount++
-    if (copiedCount % 10 === 0) {
+    // Aggressive yield — every photo, not every 10. Live-show UX: operator
+    // must be able to click overlay/counter buttons WHILE import runs.
+    // (2026-04-19 freeze incident during UDC London Sunday: H:\ → F:\
+    // transition saturated main thread for ~2 min. Yielding per-photo keeps
+    // IPC responses flowing.)
+    if (copiedCount % 3 === 0) {
       await yieldToEventLoop()
     }
   }
@@ -889,12 +1101,22 @@ async function runImport(
       if (d < nearestDistMs) { nearestDistMs = d; nearestWindow = w }
     }
 
-    if (!fs.existsSync(orphanDir)) {
+    if (!previewOnly && !fs.existsSync(orphanDir)) {
       await fs.promises.mkdir(orphanDir, { recursive: true })
     }
-    const orphanName = `orphan_${String(orphanCount + 1).padStart(4, '0')}.jpg`
-    const orphanDest = path.join(orphanDir, orphanName)
-    await fs.promises.copyFile(sourceForCopy, orphanDest)
+    // Preserve original camera filename for orphans too — same rationale
+    // as matched photos. Collision handling suffixes with _dup{N}.
+    const orphanOriginal = path.basename(sourceForCopy)
+    let orphanDest = path.join(orphanDir, orphanOriginal)
+    let orphanCollisionN = 0
+    while (fs.existsSync(orphanDest)) {
+      orphanCollisionN++
+      const parsed = path.parse(orphanOriginal)
+      orphanDest = path.join(orphanDir, `${parsed.name}_dup${orphanCollisionN}${parsed.ext}`)
+    }
+    if (!previewOnly) {
+      await fs.promises.copyFile(sourceForCopy, orphanDest)
+    }
 
     const sidecar = {
       exifTime: match.captureTime,
@@ -915,7 +1137,9 @@ async function runImport(
         : null,
       reason: sortedWindows.length === 0 ? 'no-recordings' : 'outside-all-windows',
     }
-    await fs.promises.writeFile(orphanDest + '.json', JSON.stringify(sidecar, null, 2))
+    if (!previewOnly) {
+      await fs.promises.writeFile(orphanDest + '.json', JSON.stringify(sidecar, null, 2))
+    }
 
     match.sourcePath = sourceForCopy
     match.filePath = orphanDest
@@ -936,7 +1160,7 @@ async function runImport(
     }
   }
 
-  if (manifestEntries.length > 0) {
+  if (!previewOnly && manifestEntries.length > 0) {
     try {
       await manifest.appendEntries(outputDir, importRunId, folderPath, manifestEntries)
     } catch (err) {
@@ -952,7 +1176,10 @@ async function runImport(
     matches,
   }
 
-  // Update routine state with matched photos
+  // Update routine state with matched photos (skipped in preview mode —
+  // preview only computes projected match counts + offset without touching
+  // routine.photos). Still build photosByRoutine because we need the map
+  // for the summary payload.
   const photosByRoutine = new Map<string, PhotoMatch[]>()
   for (const match of matches) {
     if (match.confidence === 'unmatched' || !match.matchedRoutineId) continue
@@ -960,17 +1187,22 @@ async function runImport(
     list.push(match)
     photosByRoutine.set(match.matchedRoutineId, list)
   }
-  for (const [routineId, routinePhotos] of photosByRoutine) {
-    const routine = routines.find(r => r.id === routineId)
-    if (routine) {
-      state.updateRoutineStatus(routineId, routine.status, { photos: routinePhotos })
+  if (!previewOnly) {
+    for (const [routineId, routinePhotos] of photosByRoutine) {
+      const routine = routines.find(r => r.id === routineId)
+      if (routine) {
+        state.updateRoutineStatus(routineId, routine.status, { photos: routinePhotos })
+      }
     }
+    broadcastFullState()
   }
-  broadcastFullState()
 
-  // Auto-upload photos if enabled
+  // Auto-upload photos if enabled.
+  // Yield between routine enqueues — each enqueueRoutine() cascades into
+  // many job-queue writes. Without yields the main thread saturates for
+  // seconds and IPC from the renderer (overlay/counter clicks) stalls.
   const settings = getSettings()
-  if (settings.behavior.autoUploadAfterEncoding) {
+  if (!previewOnly && settings.behavior.autoUploadAfterEncoding) {
     const strategy = settings.upload?.strategy || 'routine-batch'
     if (strategy === 'round-robin') {
       const routinesWithPhotos: Routine[] = []
@@ -983,6 +1215,7 @@ async function runImport(
         uploadService.startUploads()
       }
     } else {
+      let enqueued = 0
       for (const [routineId] of photosByRoutine) {
         const updatedRoutine = state.getCompetition()?.routines.find(r => r.id === routineId)
         if (updatedRoutine) {
@@ -990,6 +1223,11 @@ async function runImport(
           if (result.queuedJobs > 0) {
             uploadService.startUploads()
           }
+        }
+        enqueued++
+        // Yield every 3 routines so renderer IPC gets a breath.
+        if (enqueued % 3 === 0) {
+          await yieldToEventLoop()
         }
       }
     }
@@ -1009,7 +1247,7 @@ async function runImport(
     const f = path.basename(p).toUpperCase()
     if (!maxFileByBody[body] || f > maxFileByBody[body]) maxFileByBody[body] = f
   }
-  if (Object.keys(maxFileByBody).length > 0) {
+  if (!previewOnly && Object.keys(maxFileByBody).length > 0) {
     state.setSdWatermarksBulk(maxFileByBody)
   }
 
@@ -1067,7 +1305,7 @@ async function runImport(
     for (const [body, offsetMs] of offsetByBody.entries()) {
       if (body !== '_unknown') cameraOffsetSummary[body] = offsetMs
     }
-    sendToRenderer(IPC_CHANNELS.PHOTOS_IMPORT_COMPLETE_SUMMARY, {
+    const summary = {
       runId: importRunId,
       routinesUpdated: photosByRoutine.size,
       photosUploaded: result.matched, // uploads happen async; this is "photos queued for upload"
@@ -1076,7 +1314,44 @@ async function runImport(
       routinesOverMax,
       routinesUnderMin,
       cameraOffsets: cameraOffsetSummary,
-    })
+    }
+    if (previewOnly) {
+      // T-F3: write a preview JSON with the per-routine breakdown so the
+      // operator can inspect the projected distribution before committing
+      // to a real import. Also surface the summary via a dedicated channel.
+      const perRoutine: Array<{ entryNumber: string; routineId: string; count: number }> = []
+      for (const [routineId, photos] of photosByRoutine.entries()) {
+        const r = routines.find((x) => x.id === routineId)
+        perRoutine.push({
+          entryNumber: r?.entryNumber ?? '?',
+          routineId,
+          count: photos.length,
+        })
+      }
+      perRoutine.sort((a, b) => a.entryNumber.localeCompare(b.entryNumber, undefined, { numeric: true }))
+
+      let previewJsonPath: string | null = null
+      try {
+        const importsDir = path.join(outputDir, '_imports')
+        await fs.promises.mkdir(importsDir, { recursive: true })
+        previewJsonPath = path.join(importsDir, `preview-${importRunId.replace(/[:.]/g, '-')}.json`)
+        await fs.promises.writeFile(
+          previewJsonPath,
+          JSON.stringify({ ...summary, perRoutine, folderPath, windows: windows.length }, null, 2),
+        )
+      } catch (err) {
+        logger.photos.warn('Preview JSON write failed (non-fatal):', err instanceof Error ? err.message : err)
+      }
+
+      sendToRenderer(IPC_CHANNELS.PHOTOS_PREVIEW_COMPLETE, {
+        ...summary,
+        perRoutine,
+        folderPath,
+        previewJsonPath,
+      })
+    } else {
+      sendToRenderer(IPC_CHANNELS.PHOTOS_IMPORT_COMPLETE_SUMMARY, summary)
+    }
   } catch (err) {
     logger.photos.warn('import summary broadcast failed:', err instanceof Error ? err.message : err)
   }
@@ -1106,8 +1381,18 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
     if (!fs.existsSync(photoDir)) await fs.promises.mkdir(photoDir, { recursive: true })
 
     const existing = routine.photos || []
-    const nextIdx = existing.length + 1
-    const destFile = path.join(photoDir, `photo_${String(nextIdx).padStart(3, '0')}.jpg`)
+    // Preserve original camera filename on reassign (same rationale as
+    // main import loop). `orphanPath` already carries the native camera
+    // basename under `_orphans/<runId>/`; promote it verbatim into the
+    // routine's photos dir. Collision → _dup{N} suffix.
+    const originalBasename = path.basename(orphanPath)
+    let destFile = path.join(photoDir, originalBasename)
+    let collisionN = 0
+    while (fs.existsSync(destFile)) {
+      collisionN++
+      const parsed = path.parse(originalBasename)
+      destFile = path.join(photoDir, `${parsed.name}_dup${collisionN}${parsed.ext}`)
+    }
     await fs.promises.rename(orphanPath, destFile).catch(async () => {
       // Cross-device fallback: copy + unlink.
       await fs.promises.copyFile(orphanPath, destFile)
@@ -1116,49 +1401,11 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
     // Remove sidecar (best-effort)
     await fs.promises.unlink(orphanPath + '.json').catch(() => {})
 
-    // Generate thumb for the reassigned photo to keep /complete parallel arrays consistent.
-    // Bug E mitigation: pre-flight JPEG validity check (see isThumbnailSafe).
-    let thumbnailPath: string | undefined
-    try {
-      const thumbDir = path.join(photoDir, 'thumbnails')
-      if (!fs.existsSync(thumbDir)) await fs.promises.mkdir(thumbDir, { recursive: true })
-      thumbnailPath = path.join(thumbDir, `thumb_${String(nextIdx).padStart(3, '0')}.webp`)
-      if (await isThumbnailSafe(destFile)) {
-        await sharp(destFile, {
-          failOn: 'none',
-          sequentialRead: true,
-          unlimited: false,
-        })
-          .rotate()
-          .resize({
-            width: 200,
-            height: 200,
-            fit: 'cover',
-            withoutEnlargement: false,
-            withoutReduction: false,
-            fastShrinkOnLoad: true,
-          })
-          .webp({
-            quality: 80,
-            effort: 4,
-            lossless: false,
-            nearLossless: false,
-            smartSubsample: false,
-            alphaQuality: 100,
-          })
-          .toFile(thumbnailPath)
-      } else {
-        logger.photos.info(`Thumbnail skipped (not a valid JPEG): ${destFile}`)
-        thumbnailPath = undefined
-      }
-    } catch (err) {
-      logger.photos.warn(`Thumbnail generation failed for reassigned ${destFile}:`, err)
-      thumbnailPath = undefined
-    }
-
+    // Thumbnail generation moved to upload worker (T-H17). Leave undefined
+    // so upload.ts creates one JIT via ffmpeg after the original PUT lands.
     const newPhoto: PhotoMatch = {
       filePath: destFile,
-      thumbnailPath,
+      thumbnailPath: undefined,
       captureTime: new Date().toISOString(),
       confidence: 'gap',
       uploaded: false,

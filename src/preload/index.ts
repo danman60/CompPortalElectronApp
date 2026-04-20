@@ -42,6 +42,10 @@ const api = {
   setRoutineNote: (routineId: string, note: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATE_SET_NOTE, routineId, note),
   exportReport: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_EXPORT_REPORT),
+  listCameraOffsets: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.STATE_LIST_CAMERA_OFFSETS),
+  clearCameraOffsets: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.STATE_CLEAR_CAMERA_OFFSETS),
 
   // Settings
   settingsGet: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
@@ -64,11 +68,19 @@ const api = {
   photosBrowse: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_BROWSE),
   photosImport: (folderPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_IMPORT, folderPath),
+  photosPreviewImport: (folderPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_PREVIEW_IMPORT, folderPath),
   photosCancel: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_CANCEL),
   photosReassignOrphan: (orphanPath: string, routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, orphanPath, routineId),
   photosDiscardOrphan: (orphanPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_DISCARD_ORPHAN, orphanPath),
+  photosMarkSdsProcessed: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_MARK_SDS_PROCESSED),
+  photosClearSdWatermarks: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS),
+  photosOffsetDecision: (proposalId: string, decision: 'yes' | 'no' | 'skip') =>
+    ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_OFFSET_DECISION, proposalId, decision),
 
   // Lower Third
   ltFire: () => ipcRenderer.invoke(IPC_CHANNELS.LT_FIRE),
@@ -102,6 +114,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_PATH, filePath),
   crashRecovery: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CRASH_RECOVERY),
   getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
+  appPing: () => ipcRenderer.invoke(IPC_CHANNELS.APP_PING),
   toggleDevTools: () => ipcRenderer.invoke(IPC_CHANNELS.APP_TOGGLE_DEVTOOLS),
   setZoom: (direction: string) => ipcRenderer.invoke(IPC_CHANNELS.APP_SET_ZOOM, direction),
   getZoom: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_ZOOM),

@@ -508,6 +508,60 @@ export async function handleRecordingStopped(
 
     // Check if we need to archive existing files (re-recording)
     if (fs.existsSync(routineDir) && settings.behavior.confirmBeforeOverwrite) {
+      // Capture pre-archive state for forensic visibility (UDC London 2026-04-19:
+      // R483 / R529 / R530 re-record incidents made this logging critical)
+      let preArchiveSize = 0
+      try {
+        const preStat = fs.statSync(routineDir)
+        preArchiveSize = preStat.size
+      } catch {}
+      const preArchiveFiles: Array<{ name: string; sizeBytes: number; mtime: string }> = []
+      try {
+        for (const name of fs.readdirSync(routineDir)) {
+          if (name === '_archive') continue
+          try {
+            const s = fs.statSync(path.join(routineDir, name))
+            if (s.isFile()) preArchiveFiles.push({ name, sizeBytes: s.size, mtime: s.mtime.toISOString() })
+          } catch {}
+        }
+      } catch {}
+
+      // Re-record heuristic (T-H1/F1): if the new take is > 90s AND the
+      // existing routine dir holds a non-.mkv output (typically a
+      // performance.mp4 from a finished prior encode), the operator has
+      // likely started recording a NEW routine without tapping Next. Fire
+      // an advisory IPC so the renderer can toast the operator. Default
+      // behavior (silent archive) still runs. No corrective action is
+      // taken here — purely informational — to keep this change safe for
+      // live shows. The operator can manually advance if it's indeed a
+      // new routine; otherwise the archive-as-re-record path is correct.
+      try {
+        const NEW_DURATION_THRESHOLD_SEC = 90
+        if (durationSec > NEW_DURATION_THRESHOLD_SEC) {
+          const priorEncoded = preArchiveFiles.some((f) => /\.(mp4|webm|mov)$/i.test(f.name))
+          if (priorEncoded) {
+            const priorMkv = preArchiveFiles.find((f) => /\.mkv$/i.test(f.name))
+            sendToRenderer(IPC_CHANNELS.RECORDING_REREC_SUSPECTED, {
+              currentRoutineId: routine.id,
+              currentEntryNumber: routine.entryNumber,
+              priorMkvName: priorMkv?.name ?? null,
+              priorEncodedFiles: preArchiveFiles
+                .filter((f) => /\.(mp4|webm|mov)$/i.test(f.name))
+                .map((f) => f.name),
+              newMkvPath: outputPath,
+              newDurationSec: durationSec,
+              detectedAt: new Date().toISOString(),
+            })
+            logger.app.warn(
+              `Re-record SUSPECT: routine ${routine.entryNumber} had encoded output AND new take is ${durationSec}s. ` +
+              `Advising operator via toast. Archive proceeds as normal.`,
+            )
+          }
+        }
+      } catch (err) {
+        logger.app.warn(`Re-record heuristic failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
+      }
+
       await archiveExistingFiles(routineDir)
 
       // Clear stale upload jobs and photo state from previous recording
@@ -522,6 +576,16 @@ export async function handleRecordingStopped(
         error: undefined,
       })
       logger.app.info(`Archived existing files to ${routineDir}/_archive — cleared ${oldJobs.length} old upload jobs`)
+      try {
+        const events = require('./events') as typeof import('./events')
+        events.emit('recording.archived', {
+          routineId: routine.id,
+          entryNumber: routine.entryNumber,
+          routineDir,
+          archivedFiles: preArchiveFiles,
+          cancelledUploadJobs: oldJobs.length,
+        })
+      } catch {}
     }
 
     // Create routine directory

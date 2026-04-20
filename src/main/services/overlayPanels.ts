@@ -15,6 +15,7 @@ import path from 'path'
 import fs from 'fs'
 import { app } from 'electron'
 import { logger } from '../logger'
+import * as recording from './recording'
 
 export type PanelId =
   | 'currentRoutine'
@@ -22,6 +23,8 @@ export type PanelId =
   | 'previousRoutines'
   | 'nextRoutines'
   | 'systemStats'
+  | 'overlays'
+  | 'chat'
 
 interface PanelBounds { x?: number; y?: number; width: number; height: number }
 interface PanelSpec { id: PanelId; default: PanelBounds; minWidth: number; minHeight: number }
@@ -29,9 +32,11 @@ interface PanelSpec { id: PanelId; default: PanelBounds; minWidth: number; minHe
 const PANEL_SPECS: PanelSpec[] = [
   { id: 'currentRoutine',    default: { width: 380, height: 160 }, minWidth: 240, minHeight: 100 },
   { id: 'controls',          default: { width: 300, height: 180 }, minWidth: 220, minHeight: 120 },
-  { id: 'previousRoutines',  default: { width: 500, height: 140 }, minWidth: 300, minHeight: 100 },
-  { id: 'nextRoutines',      default: { width: 500, height: 140 }, minWidth: 300, minHeight: 100 },
-  { id: 'systemStats',       default: { width: 240, height: 140 }, minWidth: 180, minHeight: 80 },
+  { id: 'previousRoutines',  default: { width: 620, height: 180 }, minWidth: 360, minHeight: 120 },
+  { id: 'nextRoutines',      default: { width: 620, height: 180 }, minWidth: 360, minHeight: 120 },
+  { id: 'systemStats',       default: { width: 260, height: 200 }, minWidth: 200, minHeight: 120 },
+  { id: 'overlays',          default: { width: 360, height: 320 }, minWidth: 280, minHeight: 200 },
+  { id: 'chat',              default: { width: 340, height: 420 }, minWidth: 260, minHeight: 200 },
 ]
 
 const panels = new Map<PanelId, BrowserWindow>()
@@ -141,12 +146,22 @@ export function openAll(mainWindow: BrowserWindow): void {
     return
   }
   mainWindowRef = mainWindow
-  logger.app.info('overlayPanels: opening 5 panels')
+  logger.app.info(`overlayPanels: opening ${PANEL_SPECS.length} panels`)
 
   for (const spec of PANEL_SPECS) {
     try {
       const win = createPanel(spec)
       panels.set(spec.id, win)
+
+      // B1: as soon as each panel's renderer is ready, push current state so
+      // it populates immediately instead of waiting for the next change tick.
+      win.webContents.once('did-finish-load', () => {
+        try {
+          recording.broadcastFullStateImmediate()
+        } catch (err) {
+          logger.app.warn('overlayPanels: broadcast-on-load failed:', err instanceof Error ? err.message : String(err))
+        }
+      })
     } catch (err) {
       logger.app.error(`overlayPanels: failed to create ${spec.id}:`, err instanceof Error ? err.message : String(err))
     }
@@ -154,6 +169,20 @@ export function openAll(mainWindow: BrowserWindow): void {
 
   try { mainWindow.hide() } catch {}
 }
+
+// B3: final-chance save if the app is quitting while panels are still open.
+// 'moved'/'resized' handle in-session updates; this handles the quit path.
+let beforeQuitHooked = false
+function ensureBeforeQuitHook(): void {
+  if (beforeQuitHooked) return
+  beforeQuitHooked = true
+  app.on('before-quit', () => {
+    for (const [id, win] of panels.entries()) {
+      try { saveBounds(id, win) } catch { /* best-effort */ }
+    }
+  })
+}
+ensureBeforeQuitHook()
 
 export function closeAll(): void {
   if (panels.size === 0 && !mainWindowRef) return

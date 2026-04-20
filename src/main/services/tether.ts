@@ -270,11 +270,21 @@ async function processNewPhoto(
     fs.mkdirSync(photosDir, { recursive: true })
   }
 
-  // Copy photo
+  // Copy photo — preserve original camera filename end-to-end (see
+  // photos.ts main-import loop for rationale). Friendly rename happens
+  // only at download-time in CompPortal. Collision → _dup{N} suffix.
   const existingPhotos = routine.photos || []
-  const photoNum = existingPhotos.length + 1
-  const ext = path.extname(filePath)
-  const destFile = path.join(photosDir, `photo_${String(photoNum).padStart(3, '0')}${ext}`)
+  const originalBasename = path.basename(filePath)
+  let destFile = path.join(photosDir, originalBasename)
+  let collisionN = 0
+  while (fs.existsSync(destFile)) {
+    collisionN++
+    const parsed = path.parse(originalBasename)
+    destFile = path.join(photosDir, `${parsed.name}_dup${collisionN}${parsed.ext}`)
+    if (collisionN === 1) {
+      logger.photos.warn(`Tether: filename collision for ${originalBasename} in ${photosDir}; suffixing as _dup${collisionN}`)
+    }
+  }
   fs.copyFileSync(filePath, destFile)
 
   // Thumbnails disabled — sharp native module crashes on Windows with "A boolean was expected"

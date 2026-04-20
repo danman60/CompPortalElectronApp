@@ -30,10 +30,19 @@ const ITEMS: ChecklistItem[] = [
   { id: 'judge-backup', label: 'Judge backup audio recording' },
 ]
 
+type CameraOffsetEntry = {
+  offsetMs: number
+  appliedAt: string
+  date: string
+  source: string
+}
+
 type RenderAPI = {
   dayChecklistGet: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
   dayChecklistSetItem: (date: string, kind: 'start' | 'end', itemId: string, value: DayChecklistItemState) => Promise<DayChecklistDayState>
   dayChecklistDismiss: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
+  listCameraOffsets?: () => Promise<Record<string, CameraOffsetEntry>>
+  clearCameraOffsets?: () => Promise<{ ok: boolean }>
   on: (channel: string, cb: (...args: unknown[]) => void) => () => void
 }
 
@@ -42,11 +51,21 @@ function getApi(): RenderAPI | null {
   return w.api ?? null
 }
 
+function localDateYMD(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export default function StartOfDayModal(): React.ReactElement | null {
   const [visible, setVisible] = useState(false)
   const [date, setDate] = useState<string>('')
   const [scheduledDay, setScheduledDay] = useState<string | null>(null)
   const [itemStates, setItemStates] = useState<Record<string, DayChecklistItemState>>({})
+  const [staleOffsets, setStaleOffsets] = useState<Record<string, CameraOffsetEntry>>({})
+  const [offsetsCleared, setOffsetsCleared] = useState<boolean>(false)
 
   // Listen for SHOW broadcasts from main.
   useEffect(() => {
@@ -57,12 +76,33 @@ export default function StartOfDayModal(): React.ReactElement | null {
       if (!ev || ev.kind !== 'start') return
       setDate(ev.date)
       setScheduledDay(ev.scheduledDay)
+      setOffsetsCleared(false)
       api.dayChecklistGet(ev.date, 'start').then((d) => {
         setItemStates(d.items || {})
       }).catch(() => {})
+      // Load camera offsets; filter to ones whose date != today.
+      if (api.listCameraOffsets) {
+        api.listCameraOffsets().then((entries) => {
+          const today = localDateYMD()
+          const stale: Record<string, CameraOffsetEntry> = {}
+          for (const [k, v] of Object.entries(entries || {})) {
+            if (v && v.date && v.date !== today) stale[k] = v
+          }
+          setStaleOffsets(stale)
+        }).catch(() => setStaleOffsets({}))
+      }
       setVisible(true)
     })
     return () => { try { off() } catch {} }
+  }, [])
+
+  const clearStaleOffsets = useCallback((): void => {
+    const api = getApi()
+    if (!api || !api.clearCameraOffsets) return
+    api.clearCameraOffsets().then(() => {
+      setStaleOffsets({})
+      setOffsetsCleared(true)
+    }).catch(() => {})
   }, [])
 
   const cycleState = useCallback((itemId: string): void => {
@@ -114,6 +154,50 @@ export default function StartOfDayModal(): React.ReactElement | null {
           Run through this before the first routine{scheduledDay ? ` of ${scheduledDay}` : ''}.
           Tap a state button to mark. Modal is dismissable — items stay saved.
         </div>
+
+        {Object.keys(staleOffsets).length > 0 && !offsetsCleared && (
+          <div
+            style={{
+              margin: '8px 0 12px',
+              padding: '10px 12px',
+              background: '#2a1e08',
+              border: '1px solid #c17f00',
+              borderLeft: '4px solid #c17f00',
+              borderRadius: 6,
+              color: '#fff',
+              fontSize: 13,
+              lineHeight: 1.4,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {'\u26A0\uFE0F'} Stale camera offsets from a prior day
+            </div>
+            <div style={{ color: '#d4c29a', marginBottom: 8 }}>
+              {Object.entries(staleOffsets)
+                .map(([body, e]) => `${body}: ${Math.round(e.offsetMs / 1000)}s (${e.date})`)
+                .join(', ')}
+            </div>
+            <button className="daychk-btn primary" onClick={clearStaleOffsets}>
+              Clear stale offsets
+            </button>
+          </div>
+        )}
+        {offsetsCleared && (
+          <div
+            style={{
+              margin: '8px 0 12px',
+              padding: '8px 12px',
+              background: '#0d2a1a',
+              border: '1px solid #2d7a4f',
+              borderLeft: '4px solid #2d7a4f',
+              borderRadius: 6,
+              color: '#a7e3bc',
+              fontSize: 12,
+            }}
+          >
+            {'\u2713'} Prior-day camera offsets cleared.
+          </div>
+        )}
 
         <div className="daychk-list">
           {ITEMS.map((item) => {

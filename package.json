@@ -29,7 +29,7 @@
     "ffmpeg-static": "^5.2.0",
     "obs-websocket-js": "^5.0.6",
     "papaparse": "^5.4.1",
-    "sharp": "^0.33.5",
+    "sharp": "^0.32.6",
     "ws": "^8.19.0",
     "xlsx": "^0.18.5",
     "zustand": "^4.5.0"
@@ -74,7 +74,12 @@
       {
         "from": "streamdeck-plugin/com.compsync.streamdeck.sdPlugin",
         "to": "streamdeck-plugin",
-        "filter": ["**/*", "!node_modules/**", "!package-lock.json", "!**/*.map"]
+        "filter": [
+          "**/*",
+          "!node_modules/**",
+          "!package-lock.json",
+          "!**/*.map"
+        ]
       },
       {
         "from": "resources/ffmpeg/ffmpeg.exe",

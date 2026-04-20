@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { DriveDetectedEvent, WPDDevice, WPDDeviceEvent, PhotoMatch, CameraClockMismatchEvent } from '../../shared/types'
+import { IPC_CHANNELS } from '../../shared/types'
 import { setOrphansFromResult, openOrphanReview } from './OrphanReview'
 import '../styles/drive-alert.css'
 
@@ -72,6 +73,19 @@ interface ImportProgress {
   uploadQueued: number
 }
 
+interface PreviewSummary {
+  runId: string
+  routinesUpdated: number
+  photosUploaded: number
+  orphaned: number
+  cameraOffsets?: Record<string, number>
+  routinesOverMax?: Array<{ entryNumber: string; count: number; sizeCategory?: string; threshold: number }>
+  routinesUnderMin?: Array<{ entryNumber: string; count: number; sizeCategory?: string; threshold: number }>
+  perRoutine?: Array<{ entryNumber: string; routineId: string; count: number }>
+  folderPath?: string
+  previewJsonPath?: string | null
+}
+
 export default function DriveAlert(): React.ReactElement | null {
   const [detected, setDetected] = useState<DriveDetectedEvent | null>(null)
   const [wpdDevice, setWpdDevice] = useState<WPDDevice | null>(null)
@@ -81,6 +95,8 @@ export default function DriveAlert(): React.ReactElement | null {
   })
   const [showResults, setShowResults] = useState(false)
   const [minimized, setMinimizedLocal] = useState(false)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const [previewSummary, setPreviewSummary] = useState<PreviewSummary | null>(null)
   const competition = useStore((s) => s.competition)
   const settings = useStore((s) => s.settings)
   const autoUpload = settings?.behavior?.autoUploadAfterEncoding ?? false
@@ -138,6 +154,11 @@ export default function DriveAlert(): React.ReactElement | null {
       setClockMismatch(data as CameraClockMismatchEvent)
     })
 
+    const unsubPreview = window.api.on(IPC_CHANNELS.PHOTOS_PREVIEW_COMPLETE, (data: unknown) => {
+      setPreviewSummary(data as PreviewSummary)
+      setPreviewBusy(false)
+    })
+
     const unsubResult = window.api.on('photos:match-result', (data: unknown) => {
       const result = data as { totalPhotos: number; matched: number; unmatched: number; clockOffsetMs: number }
       setProgress((prev) => ({
@@ -160,10 +181,25 @@ export default function DriveAlert(): React.ReactElement | null {
     })
 
     return () => {
-      unsubDrive(); unsubWPD(); unsubProgress(); unsubResult(); unsubClockMismatch()
+      unsubDrive(); unsubWPD(); unsubProgress(); unsubResult(); unsubClockMismatch(); unsubPreview()
       window.removeEventListener('drive-alert:restore', onRestore)
     }
   }, [])
+
+  function runPreview(photoPath: string): void {
+    setPreviewBusy(true)
+    setPreviewSummary(null)
+    ;(window.api as any).photosPreviewImport(photoPath).then((res: unknown) => {
+      if (res && typeof res === 'object' && 'error' in res) {
+        setPreviewBusy(false)
+        alert(`Preview failed: ${(res as { error: string }).error}`)
+      }
+      // Otherwise the PHOTOS_PREVIEW_COMPLETE event populates previewSummary.
+    }).catch((err: unknown) => {
+      setPreviewBusy(false)
+      alert(`Preview error: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
 
   function runImport(photoPath: string): void {
     if (!competition) return
@@ -317,73 +353,65 @@ export default function DriveAlert(): React.ReactElement | null {
       ? `${detected.label} (${detected.drivePath}) — ${detected.photoCount} photos${detected.isDcim ? ' in DCIM' : ''}`
       : ''
 
-  // Wrong-day camera modal. Renders standalone (above the regular drive alert)
-  // when EXIF sampling found a date mismatch. Dismissible — operator chooses
-  // to continue with the import, attempt offset correction, or manually
-  // reassign photos once imported.
-  const clockMismatchModal = clockMismatch ? (
-    <div className="drive-alert-overlay" style={{ zIndex: 9998 }}>
-      <div className="drive-alert" style={{ borderLeft: '6px solid #c17f00' }}>
-        <div className="da-header">
-          <span className="da-icon">{'\u26A0\uFE0F'}</span>
-          <div>
-            <div className="da-title">Camera clock is {clockMismatch.daysOffMax} day{clockMismatch.daysOffMax === 1 ? '' : 's'} off</div>
-            <div className="da-subtitle">
-              {clockMismatch.label} ({clockMismatch.drivePath}) — photos dated {clockMismatch.dominantDate}, today is {clockMismatch.todayDate}
-            </div>
+  // Wrong-day camera toast. Previously a blocking modal — converted to a
+  // corner toast per operator request (2026-04-19): never block the show UI,
+  // always readable at a glance. Auto-dismisses after 20s but click-to-close
+  // available. The offset detector runs on import regardless, so this is
+  // purely informational.
+  const clockMismatchToast = clockMismatch ? (
+    <div
+      style={{
+        position: 'fixed',
+        right: 12,
+        bottom: 60,
+        zIndex: 9998,
+        maxWidth: 380,
+        background: '#2a1e08',
+        border: '1px solid #c17f00',
+        borderLeft: '4px solid #c17f00',
+        borderRadius: 6,
+        padding: '10px 12px',
+        color: '#fff',
+        fontSize: 12,
+        lineHeight: 1.4,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <span style={{ fontSize: 16 }}>{'\u26A0\uFE0F'}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            Camera clock {clockMismatch.daysOffMax} day{clockMismatch.daysOffMax === 1 ? '' : 's'} off
           </div>
-          <div className="da-header-actions">
-            <button
-              className="da-close"
-              onClick={() => setClockMismatch(null)}
-              title="Dismiss"
-            >
-              {'\u2715'}
-            </button>
+          <div style={{ color: '#d4c29a' }}>
+            Photos dated {clockMismatch.dominantDate} · today {clockMismatch.todayDate}.
+            Import will still run. Large offsets (&gt;60s) are rejected; photos
+            outside every recording window fall back to nearest-window matching.
           </div>
         </div>
-        <div className="da-warning">
-          EXIF DateTimeOriginal on {clockMismatch.sampleCount} sampled photo{clockMismatch.sampleCount === 1 ? '' : 's'} does not match today.
-          Matching photos to today's recordings will fail. Options:
-          <ul style={{ margin: '8px 0 0 18px', padding: 0 }}>
-            <li><strong>Assign manually</strong> — skip auto-match, use the Orphan Review drawer after import to assign photos by eye.</li>
-            <li><strong>Attempt correction</strong> — import anyway; the matcher will detect the offset and try to correct.</li>
-            <li><strong>Dismiss</strong> — you fixed the camera clock; re-plug the SD to retry.</li>
-          </ul>
-        </div>
-        <div className="da-actions">
-          <button
-            className="da-btn"
-            onClick={() => setClockMismatch(null)}
-            title="Acknowledge and continue — orphans will land in the review drawer"
-          >
-            Assign manually
-          </button>
-          <button
-            className="da-btn primary"
-            onClick={() => setClockMismatch(null)}
-            title="Continue with the import — matcher will attempt offset correction"
-          >
-            Attempt correction
-          </button>
-          <button
-            className="da-btn dismiss"
-            onClick={() => setClockMismatch(null)}
-          >
-            Dismiss
-          </button>
-        </div>
+        <button
+          onClick={() => setClockMismatch(null)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#d4c29a',
+            cursor: 'pointer',
+            fontSize: 14,
+            padding: '0 4px',
+          }}
+          title="Dismiss"
+        >{'\u2715'}</button>
       </div>
     </div>
   ) : null
 
   if (!showPrimaryAlert) {
-    return clockMismatchModal
+    return clockMismatchToast
   }
 
   return (
     <>
-      {clockMismatchModal}
+      {clockMismatchToast}
       <div className="drive-alert-overlay">
       <div className="drive-alert">
         <div className="da-header">
@@ -462,6 +490,16 @@ export default function DriveAlert(): React.ReactElement | null {
               Match {detected.photoCount} Photos to {recordedCount} Routines
             </button>
           )}
+          {detected && progress.stage === 'idle' && hasCompetition && recordedCount > 0 && (
+            <button
+              className="da-btn"
+              disabled={previewBusy}
+              onClick={() => runPreview(detected.photoPath)}
+              title="Dry-run match without copying files or queueing uploads"
+            >
+              {previewBusy ? 'Previewing...' : 'Preview Import'}
+            </button>
+          )}
           {detected && progress.stage === 'idle' && hasCompetition && (
             <button className="da-btn" onClick={handleStartTether} title="Watch this drive for new photos in real-time">
               Watch Live
@@ -491,6 +529,108 @@ export default function DriveAlert(): React.ReactElement | null {
         )}
       </div>
     </div>
+
+    {previewSummary && (
+      <div
+        className="drive-alert-overlay"
+        style={{ zIndex: 10000 }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setPreviewSummary(null)
+        }}
+      >
+        <div
+          className="drive-alert"
+          style={{
+            maxWidth: 560,
+            background: '#1a1a24',
+            border: '1px solid #3a3a4a',
+          }}
+        >
+          <div className="da-header">
+            <span className="da-icon">{'\u{1F50D}'}</span>
+            <div>
+              <div className="da-title">Preview Import</div>
+              <div className="da-subtitle">
+                {previewSummary.photosUploaded} would match, {previewSummary.orphaned} orphans,
+                {' '}across {previewSummary.routinesUpdated} routine{previewSummary.routinesUpdated === 1 ? '' : 's'}
+              </div>
+            </div>
+            <div className="da-header-actions">
+              <button className="da-close" onClick={() => setPreviewSummary(null)}>{'\u2715'}</button>
+            </div>
+          </div>
+
+          {previewSummary.cameraOffsets && Object.keys(previewSummary.cameraOffsets).length > 0 && (
+            <div className="da-auto-note">
+              Offsets: {Object.entries(previewSummary.cameraOffsets)
+                .map(([b, ms]) => `${b} ${ms > 0 ? '+' : ''}${Math.round(ms / 1000)}s`)
+                .join(', ')}
+            </div>
+          )}
+
+          {(previewSummary.routinesOverMax?.length ?? 0) > 0 && (
+            <div className="da-warning">
+              {'\u26A0\uFE0F'} {previewSummary.routinesOverMax!.length} routine(s) over max —
+              likely mis-match: {previewSummary.routinesOverMax!.slice(0, 5).map((x) => `R${x.entryNumber}=${x.count}>${x.threshold}`).join(', ')}
+            </div>
+          )}
+          {(previewSummary.routinesUnderMin?.length ?? 0) > 0 && (
+            <div className="da-warning">
+              {'\u26A0\uFE0F'} {previewSummary.routinesUnderMin!.length} recorded routine(s) under min:
+              {' '}{previewSummary.routinesUnderMin!.slice(0, 5).map((x) => `R${x.entryNumber}=${x.count}<${x.threshold}`).join(', ')}
+            </div>
+          )}
+
+          {previewSummary.perRoutine && previewSummary.perRoutine.length > 0 && (
+            <div
+              style={{
+                maxHeight: 200,
+                overflowY: 'auto',
+                border: '1px solid #2a2a3a',
+                borderRadius: 4,
+                padding: '6px 10px',
+                margin: '10px 0',
+                fontSize: 12,
+                color: '#c0c0d0',
+              }}
+            >
+              {previewSummary.perRoutine.map((r) => (
+                <div key={r.routineId} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>R{r.entryNumber}</span>
+                  <span>{r.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {previewSummary.previewJsonPath && (
+            <div className="da-auto-note" style={{ fontSize: 11 }}>
+              Saved to {previewSummary.previewJsonPath}
+            </div>
+          )}
+
+          <div className="da-actions">
+            <button
+              className="da-btn primary"
+              onClick={() => {
+                const folder = previewSummary.folderPath
+                setPreviewSummary(null)
+                if (folder) {
+                  // Run the actual import through the same entry point as
+                  // the normal "Start Import" path.
+                  runImport(folder)
+                }
+              }}
+            >
+              Accept &amp; Import
+            </button>
+            <button className="da-btn dismiss" onClick={() => setPreviewSummary(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   )
 }

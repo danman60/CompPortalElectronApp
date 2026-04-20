@@ -1,375 +1,299 @@
+# Electron App INBOX — Active Items
+
+Last audited: 2026-04-19 13:08 EDT. Everything below is either OUTSTANDING or PARTIAL. Completed/stale items are at the bottom under `## Archive`.
 
 ---
 
-## From CompSyncElectronApp-current — 2026-04-18 15:20 ET
+## INCIDENT 2026-04-19 19:08 EDT — UPLOAD_ALL queued 0 routines after app restart
 
-### Feature request: double-click routine row → operator note editor (faster trigger)
+**Symptom:** Operator restarted the app at 18:35 EDT post-show to drain remaining uploads. 33 routines had 1,384+ photos with `photo.uploaded=false` (unfinished from the Sunday SD drain). Operator clicked "Upload All"; log shows `Upload all: queued 0 routines` three times in a row. Uploads did NOT resume.
 
-**From Saturday 2026-04-18 mid-show.** Operator wants a faster capture path for per-routine notes: mistakes, weirdness, re-record requests, audio issues, camera swaps, etc.
+**Root cause (two compounding bugs):**
+1. The `UPLOAD_ALL` handler in `src/main/ipc.ts:422` outer filter required `routine.status !== 'uploaded' && 'confirmed'`. These routines' video + earlier photo batches had already succeeded, so status was `'uploaded'` / `'confirmed'`. Later SD-import waves added more photos to `routine.photos[]` with `uploaded:false`, but the routine status never rolled back — the filter excluded them entirely.
+2. The upload job queue is in-memory only; `compsync-state.json` persists `competition / cameraOffsets / sdWatermarks / currentRoutineId` but not the job queue. An app restart loses all pending jobs.
 
-**Current state (as-wired — not missing, just slow):**
-- `Routine.notes` field in `src/shared/types.ts` — stored in local `state.json` only
-- `STATE_SET_NOTE` IPC + `setRoutineNote` preload method — wired
-- `NoteEditor` component at `RoutineTable.tsx:282-327` — ✎ button per row opens inline textarea editor
-- ✅ **Operator-only confirmed:** grep of `src/main/services/compPortal.ts` returned zero matches for `notes`. Nothing syncs to CompPortal. SDs/CDs cannot see these notes.
-- ⚠️ **One leak path to be aware of:** notes ARE included in the local CSV session report (state.ts ~line 609, `exportReport`). If operator emails that CSV to anyone, notes go with it. Stays local to the machine unless explicitly exported + shared.
+**Patch (shipped in working tree, awaits v7 deploy):**
+- `src/main/ipc.ts` UPLOAD_ALL filter now enqueues when `routine.photos.some(p => !p.uploaded)` regardless of `routine.status` (as long as status != 'uploading'). `enqueueRoutine` already skips already-uploaded photos internally, so a mostly-uploaded routine only picks up its stragglers. See ipc.ts:422.
 
-**What's missing — just the faster trigger:**
-- Add `onDoubleClick` handler to the `<tr>` in `RoutineTable.tsx:468` area that opens the existing `NoteEditor` (rather than requiring the operator to hit the tiny ✎ button mid-show)
-- No backend changes. Pure UI wire-up.
-- Apply to the overlay panels automatically — `PreviousRoutines` and `NextRoutines` already use `RoutineTable` via the `windowMode` prop, so they inherit the handler for free.
+**Workaround used live 2026-04-19 19:20 EDT:** DevTools one-liner iterating routines with unuploaded photos and calling `window.api.uploadRoutine(r.id, true)` per-routine. No deploy required; did not lose the post-workaround queue because the app didn't restart.
 
-**Why now:** during live shows routines happen 1-2 minutes apart. If something weird happens (music wrong, camera bumped, photographer missed front half) there's no fast way to capture it. By end of day operator has forgotten which routine had the issue. Post-hoc reconciliation takes hours.
-
-**Not in scope:**
-- Server sync to CompPortal (and SHOULD stay out — operator notes are by definition operator-private; surfacing them to SDs/CDs would break their purpose)
-- Rich text / attachments / screenshots
-
-**Optional hardening (also operator-private concern):**
-- Consider adding a toggle in Settings: "Include operator notes in CSV session report" (default: off). Prevents the one current leak path even if operator accidentally emails the CSV.
+**Still to do in v7 (follow-up hardening):**
+- **Persist job queue to `compsync-state.json`** so app restart doesn't lose pending work. Write on enqueue / status change; re-load in `state.loadState()`. Small, self-contained.
+- **Dedicated "Resume Unfinished Uploads" button** in UI (complement to Upload All) that always enqueues any routine with `photos.some(!uploaded)` — no status filter at all. Gives operators a one-click recovery when this class of desync happens again.
+- **DB cross-check before queuing (CRITICAL)**: `photo.uploaded=false` in state.json is NOT a reliable signal that the photo is actually missing from R2+DB. The flag is in-memory first; app restart loses unflushed updates. Any auto-resume / manual-resume path MUST query DB for existing filenames FIRST, only upload the delta, and flip flags for already-landed photos so state heals to match DB. See tasks #20, #22, #24.
+  - Recovery lesson 2026-04-19: external recovery script uploaded ~1,000 photos that were already in R2+DB (idempotent UPSERT so no dupes, but ~1GB wasted bandwidth + CompPortal CPU). "Primary source first" violated — state.json is a cache; DB is authoritative.
+- Consider: rolling routine status from `uploaded/confirmed` → `partial` when new photos arrive with `uploaded:false` after the video uploaded. Keeps status + photos[] in sync so the outer filter would naturally work.
 
 ---
 
-## From CompSyncElectronApp-7 — 2026-04-18 ~13:30 ET
-
-### Feature request: TRUE compact view — half-screen layout OR transparent OBS-overlay frame
-
-**From Saturday 2026-04-18 mid-show.** Current "compact mode" still consumes most of the screen. Want a real space-saving view so OBS can share the screen.
-
-**Two design options (operator wants exploration in a fresh session):**
-
-**Option A — Half-screen mode**
-- App docks to left or right half of screen (or top/bottom)
-- OBS lives on the other half
-- Compact-but-complete UI: routine table, current routine card, RECORD controls, audio meters all visible in half-width
-- Window sizing/positioning configurable; remember last position/snap
-- Keyboard shortcut to toggle
-
-**Option B — Frame mode (more ambitious)**
-- App wraps AROUND the screen edges (top bar + side strips + bottom bar)
-- Center 16:9 area is fully transparent (Electron `transparent: true` + click-through where needed)
-- OBS preview window positioned underneath the transparent center
-- Operator sees OBS video THROUGH our app, controls live around the edges
-- Pros: maximizes OBS viewing area, no window-management juggling
-- Risks: Electron transparency on Windows is finicky; click-through behavior across the transparent zone needs testing; multi-monitor + scaling considerations
-
-**Investigation needed in fresh session:**
-- Electron transparent window support on DART's Windows + display setup
-- Whether OBS can be positioned reliably underneath (always-on-bottom?) without a separate overlay manager
-- How the existing components (RoutineTable, CurrentRoutine, Controls, AudioMeters, OverlayControls) reflow into either layout
-- Whether Option A is good enough (simpler, lower risk) before tackling Option B
-
-**Do NOT start in this session.** Operator wants a clean context to explore both options.
+**Live asar md5:** `9fb3492bb38c9758bd4da50c7d2e1618` (2026-04-19 13:00 EDT deploy — offset detector hardening + multi-SD import queue)
 
 ---
 
-### Feature request: startup + shutdown day-checklist modals
+## BUG (still unfixed 2026-04-19): thumbnail TypeError on every photo — commit 452a6de8 fix did NOT work
 
-**From Saturday 2026-04-18 mid-show.** Two modal flows tied to the day's recording schedule. Style: **same as the camera-clock-sync modal — big, obvious, dismissable.**
+**Fix attempt** in commit `452a6de8` (explicit boolean options on `sharp(...).webp(...)`): shipped in asar `467E6DD5...` (10:55 EDT deploy) AND again in asar `9FB3492B...` (13:00 EDT deploy). Both still throw `TypeError: A boolean was expected at Sharp.toFile (output.js:1536)` for every photo. Error fires at photos.ts:910 and :1217 (main import + reassign paths). Fix does not address the true root cause.
 
-**Startup Modal — fires when app launches on a day where next-routine-to-record is the FIRST of the day.**
-Operator's checklist (verbatim):
-- Start the live stream (OBS) ~half hour to show
-- TVs on and pointed to pages
-- Set up cameras
-- Stream Deck app running
-- Judge backup audio recording
+**Observed:** 2026-04-19 09:22 EDT (pre-fix), again 13:07 EDT during Sunday H:\ import (post-fix, 51 failures in last 500 log lines).
 
-**Shutdown Modal — fires after the LAST routine of the day is recorded.**
-Operator's checklist (verbatim):
+**Symptom:** `[Photos] Thumbnail generation failed for <path>: TypeError: A boolean was expected`. Stack lands in sharp pipeline `_pipeline → toFile`. Explicit options (`failOn:'none'`, `sequentialRead:true`, `unlimited:false`, webp `lossless:false`, `nearLossless:false`, `smartSubsample:false`) do NOT help.
 
-*App actions:*
-- Close CompSync
-- Stop stream
-- Turn off counter
+**Scope:** Cosmetic/degraded UX — Media Portal parent/SD views load full-size JPGs instead of 200×200 WebPs → slower page loads, more R2 egress. No data loss. `media_photos.thumbnail_url` left NULL for the affected photos — backfill script handles recovery.
 
-*Physical / hotel:*
-- Mevos/banks charging (charge banks with banks charging Mevos — use tablet charger cable, etc.)
-- Cameras off, charging deadest batteries overnight
-- Stream off / TVs off (hold bottom power button)
-- Each Photo SD card in each Reader (**MUST BE IN BY 10:15pm**)
+**Code path:** photos.ts:887 and photos.ts:1194. `isThumbnailSafe(destFile)` returns true, then `sharp(destFile, {failOn:'none',...}).rotate().resize(...).webp({...}).toFile(thumbPath)` throws inside sharp/libvips.
 
-**Implementation notes:**
-- Trigger logic: track "last recorded routine of day" + "next pending routine" — modal fires on the boundary
-- Style: like camera-sync modal (big, front-and-center, dismissable). Re-openable from a menu.
-- Each checklist item: checkbox + skip + N/A
-- Per-day persistence in `state.json` so reopen mid-day doesn't re-fire startup modal
-- Hard deadline alert: bold the "MUST BE IN BY 10:15pm" line, escalate visually if past time
+**Real triage (post-show):**
+1. Repro standalone: `node -e "const sharp=require('sharp'); sharp('<jpg>').resize(200,200,{fit:'cover'}).webp({quality:80}).toFile('/tmp/t.webp').then(console.log).catch(console.error)"` using bundled `resources/app.asar.unpacked/node_modules/sharp/`
+2. Check sharp version + platform binding: `node -e "console.log(require('sharp/package.json').version, require('sharp').versions)"`
+3. If bug reproduces standalone → sharp version regression in bundle. Downgrade or rebuild node_modules from scratch.
+4. If it DOESN'T reproduce standalone → something in the Electron+asar packaging corrupts libvips. Try `app.asar.unpacked` for sharp, or switch to jimp/sips for thumbnails.
+5. Backfill: `/tmp/thumb-backfill.py` (Sunday) and `/tmp/thumb-backfill-friday.py` (Friday) are the working scripts — PIL-based WebP generator + R2 upload.
+
+**Do NOT retry the "explicit boolean options" approach** — it was verified today to not work twice.
 
 ---
 
-### Feature request: preserve original camera filenames
+## BUG (CRITICAL — live show UX): main-thread saturation freezes UI during large imports
 
-**Operator request from Friday recovery debugging.** App renames photos to sequential `photo_NNNN.jpg` on import, destroying the audit trail. When matching goes wrong (today's R310 pollution, Friday's +70min cascade), this makes recovery dramatically harder.
+**Observed:** 2026-04-19 13:11–13:12 EDT, during H:\ + F:\ import (4,440 new post-watermark photos). Operator tried to click the counter/overlay-toggle button — UI unresponsive. OS-level check: `Responding=True`, 4 processes alive, no actual crash. PID 19380 at 573s CPU burning through enqueue + matching. Log shows 20+ upload jobs enqueued in ~1 second (13:12:06–07).
 
-**Why renaming hurts:**
-- Lose camera identity (folder prefix tells you which body — P101 vs P166 vs P196)
-- Lose sequence position (P1965014 → know it's the 5014th shot of folder 196)
-- Wrong-routine assignments become very hard to reverse without re-scanning source SDs every time
-- File-density-based debugging (finding clock corrections from EXIF order) impossible after rename
+**Root cause:** The import pipeline (EXIF read → matching → per-photo copy + thumbnail + enqueue) runs on the Electron **main** thread. `yieldToEventLoop()` is called every 10 EXIF reads but the matching and enqueue stages don't yield enough. During a 4,440-photo import the main thread is CPU-bound long enough that IPC responses to renderer button clicks queue up → UI appears frozen.
 
-**Proposed:**
-- Option A: preserve original filename directly (`P1965014.jpg`) — best for traceability
-- Option B: hybrid `photo_NNNN__P1965014.jpg` — keeps sequential prefix for predictable URLs + original name for audit
-- Option C: store original filename in a sidecar metadata file or DB column (`media_photos.source_filename`) even if file is renamed
+**Impact:** Operator cannot drive overlays, counters, or any main-thread-touching control during imports. Unacceptable for live-show operation.
 
-Combined with the timezone fix below, would have made today's recovery work tractable instead of an 18-hour debugging marathon.
+**Fix direction (next version):**
+1. Move EXIF reading + matching into a **worker thread** (`node:worker_threads`) — keep the main thread free for IPC
+2. For anything that MUST stay on main (state writes, IPC), batch + debounce the enqueue step — don't fire 20 jobQueue.enqueue calls in one tight loop, yield between
+3. Cap per-tick work: `yieldToEventLoop()` after every routine-group not every 10 photos
+4. UI should show a "Import busy — controls may lag" indicator IF main-thread responsiveness falls below a threshold (measured via a tiny heartbeat IPC that renderer pings)
 
----
-
-### Feature request: configurable timezone, save timestamps in that TZ (not UTC)
-
-**Operator request from Friday recovery debugging session.** Repeated UTC↔local conversion bugs caused major confusion: overnight script labeled EXIF as `+00:00` UTC when the values are actually camera-local EDT, leading to 4-hour offset errors during photo→routine matching.
-
-**Proposed:**
-1. Add a setting: "Local timezone" (default to system TZ, e.g., `America/New_York`).
-2. **Store all timestamps in the configured local TZ** — not UTC. Camera EXIF is already local, so just copy it directly. Video recording timestamps from app: capture in local, store in local.
-3. DB: store as `timestamp without time zone` semantically representing local clock time, OR store as ISO string with explicit local offset like `2026-04-17T08:18:28-04:00`. NO silent UTC conversion.
-4. CompPortal side: same — read what was stored, no conversion. UI displays as-is.
-
-**Why simpler:** every comparison (EXIF vs video window) is already in the same TZ. No conversion errors. EXIF is naturally local-clock from cameras anyway.
-
-**Known tradeoff:** DST transitions (twice a year) will produce a 1-hour ambiguous window. Not a problem for live competitions which never run across DST boundaries.
-
-**Migration consideration:** existing UTC data needs a one-time conversion + flag. New writes use local TZ.
-
-This would have prevented today's 18-hour debugging session.
+**Do NOT ship another import-adjacent fix without this hardening** — operator cannot work around it.
 
 ---
 
-## From CompPortal session — 2026-04-13
+## BUG: CAMERA_CLOCK_MISMATCH popup false-positive from sample pollution
 
-### Tier B deployed (not full Phase 3)
+**Observed:** 2026-04-19 13:04 EDT — H:\ showed "17 days off", F:\ showed "2 days off". Operator confirmed camera clocks were correct. Popup text: "Camera clock 2 days off — Photos dated 2026-04-17 · today 2026-04-19. Import will still run; matcher attempts offset correction automatically."
 
-User decision: **minimum safe subset** of Phase 3 on CompPortal, not the full rewrite. Reason: real competition data starts flowing soon, no time to properly test a rewritten `plugin/complete` endpoint. Current e2e pipeline (app → website → download) works and we're not touching it.
+**Root cause:** `sampleAndReportCameraClock` in `src/main/services/driveMonitor.ts` samples first 5 JPEGs via BFS through DCIM. SDs often carry older photos from prior days (already-uploaded, will be filtered by watermark). Samples skew to the filename-alphabetical-first photos which are usually the OLDEST → false "N days off" signal.
 
-**What CompPortal IS doing:**
+**Secondary bug:** popup message still says "matcher attempts offset correction automatically." With the 13:00 EDT deploy, the detector now *rejects* offsets >60s via magnitude cap. Large bogus offsets are not applied. Message is stale.
 
-1. Prisma schema synced (`db pull`) — `deleted_at` columns on media_packages/media_photos, `plugin_write_log` table, all picked up.
-2. `GET /api/plugin/schedule/[competitionId]` — adds two additive fields to each routine:
-   - `mediaPackageStatus`: `'complete'` if a non-deleted package exists for the entry, else `'none'`
-   - `mediaUpdatedAt`: ISO timestamp of package's `updated_at`, or `null`
-   - `status` field unchanged (still `'pending'` for all routines)
-3. `src/server/routers/media.ts` `deletePhoto` → soft delete (sets `deleted_at`, preserves R2)
-4. Read-path audit — `deleted_at: null` filter added to all media_packages/media_photos reads across the repo
-5. `deleteFromR2` call sites removed (function kept for future ops script)
-
-**What CompPortal is NOT doing (deferred):**
-
-- `getMediaStoragePath` signature change (no `uploadRunId` in path). **R2 paths remain mutable — re-uploads still overwrite.**
-- `POST /api/plugin/upload-url` does NOT require `uploadRunId`. If Electron sends it, server ignores it.
-- `POST /api/plugin/complete` is **UNCHANGED**. Still does the original `deleteMany` for photos, still sets status unconditionally, still no audit log.
-
-### Implications for Electron deploy
-
-- **Electron's reconcile logic CAN work** — it just reads `mediaPackageStatus` from the schedule endpoint. This is the most valuable Phase 4 protection and it's live.
-- **Do NOT rely on `uploadRunId` being stored server-side.** Electron can still generate and send it, but CompPortal drops it. No per-run isolation on R2 paths until off-season.
-- **Re-uploads will still overwrite R2 objects.** If a user re-triggers an upload on the same entry, photos/videos from the previous run are gone. This is the pre-existing behavior, not new risk.
-- **`plugin/complete` photo behavior is unchanged.** It still wipes and recreates photo rows on every call. Don't assume filename-merge semantics.
-- **No plugin_write_log audit trail yet.** `plugin_write_log` table exists but CompPortal's plugin endpoint doesn't write to it.
-
-### Deploy order
-
-Tier B on CompPortal is safe to deploy any time — it's additive + soft-delete only, zero risk to the current upload pipeline. No deploy-order constraint with Electron.
-
-New Electron build can deploy whenever — it doesn't matter if CompPortal has Tier B deployed first, because the new Electron fields (`uploadRunId`) are ignored server-side rather than rejected.
-
-### Flags still outstanding (from the original Phase 3 plan)
-
-User is aware but deferring:
-
-1. Cross-tenant exposure in `handleFamilyMediaRoutines` / `handleFamilyMediaDownload` (mobile family API, no `tenant_id` filter)
-2. `updatePackageStatus` admin tRPC allows downgrades
-3. `streamstage/` prefix in compsyncmedia bucket (StreamStage migration artifact)
-
-These aren't being fixed in this session.
-
-### Action items for Electron session
-
-- Can proceed with Phase 4 commits at your discretion
-- Reconcile logic should work against the additive schedule fields
-- Don't remove Electron-side `uploadRunId` generation — it's forward-compatible even though server is dropping it
-- If you want to verify the CompPortal schedule changes are live, fetch `/api/plugin/schedule/<competitionId>` with a plugin key and confirm `mediaPackageStatus` and `mediaUpdatedAt` appear on each routine
+**Fix approach:**
+- Cross-reference samples against `sdWatermarks` + `manifestEntries` to skip already-uploaded photos, OR
+- Sample the most recent N photos (by EXIF time), not the first-N alphabetical, OR
+- Drop the popup entirely and rely on the detector's internal logic — the cap already prevents bad auto-apply
+- Update message text to reflect new detector behavior
 
 ---
 
-## To UITweaker-FIX (claude:2) — 2026-04-15 19:55, from CompSync Electron session
+## ACTIVE: Video keyframe backfill for UDC London
 
-Context: I just finished scp'ing a fresh 127 MB `app.asar` to DART 5 minutes ago and watched it launch. Raw experience, no theory.
+**Source:** CompPortal session (CD spot-check validator spec) — 2026-04-19 07:42 EDT
+**Status:** Forward-going keyframe extraction SHIPPED in current asar. Backfill script written, dry-run verified (5/5 routines, 3 keyframes each). **Full backfill NOT yet executed.**
 
-### 1. NSIS installer deploy path on DART
-- CompSync installs to `C:\Program Files\CompSync Media\` (perMachine, not OneDrive). That's the real path the pinned taskbar shortcut points to. Anything on the Desktop is a leftover test copy — ignore.
-- For electron-builder NSIS: `"perMachine": true` + `"allowToChangeInstallationDirectory": false` keeps it predictable. `oneClick: true` skips wizard.
-- Silent install: `UITweaker-Setup.exe /S` (capital S). Add `/D=C:\Program Files\UITweaker` LAST with NO quotes and NO trailing backslash — `/D` is whitespace-sensitive and must be the final token. So: `UITweaker-Setup.exe /S /D=C:\Program Files\UITweaker`
-- `/allusers` or `/currentuser` override the electron-builder scope choice if needed.
-- After install, find the asar at `C:\Program Files\UITweaker\resources\app.asar` — same pattern as CompSync.
+**What's done:**
+- `src/main/services/ffmpeg.ts`: `extractKeyframes()` exported. Called from encode success path, outputs 3 WebP at 20/50/80% → `<routineDir>/keyframes/keyframe_{0,1,2}.webp`.
+- `src/shared/types.ts`: `Routine.keyframes?: string[]`.
+- `src/main/services/upload.ts`: keyframes queue as `type='videos'` with objectName `keyframes/keyframe_N.webp`. `files.video_keyframes` added to `/plugin/complete` payload.
+- `scripts/backfill-keyframes.py`: standalone backfill script. Idempotent (HEAD-checks R2), `--dry-run`, `--limit`, writes JSON manifest.
 
-### 2. Transferring the .exe to DART
-- `scp UITweaker-Setup.exe dart:/tmp/ut.exe` then `ssh dart 'mv /tmp/ut.exe "/mnt/c/Users/User/Desktop/UITweaker-Setup.exe"'`. The `dart` host alias (port 2222) works.
-- **Do NOT try to scp directly to a path with spaces.** I just got bitten: `scp file dart:/mnt/c/Program\ Files/...` → `dest open "/mnt/c/Program\\ Files/..."` failure (OpenSSH double-escapes the backslash through the remote shell). scp to `/tmp/` first, then `ssh dart mv` with proper double-quoting.
-- DART's SSH shell is **git-bash / MSYS2-style with `/mnt/c/` mounts, NOT WSL.** `cmd.exe` and `powershell` are not on PATH by default — use `/mnt/c/Windows/System32/cmd.exe` or `/mnt/c/Windows/System32/tasklist.exe` with full paths if you need them.
-- SMB to `/mnt/firmament/` is a FIRMAMENT thing, not DART. DART is a separate Windows box on tailnet. Stick with ssh/scp via the `dart` alias.
-- **Always MD5-verify after transfer**: `ssh dart md5sum <path>` and compare to local. I just caught a successful transfer this way — takes 2 seconds, saves an hour of "why isn't my fix working".
-- 83 MB over a *direct* Tailscale link is ~10 s. Over a relay (esp. `jnb` Johannesburg if you see it in `tailscale status`), it's several minutes and flaky. If your node is relayed, force re-register with `tailscale up --force-reauth` on DART before transferring.
+**What's outstanding:**
+1. Run full backfill on DART (~409 routines with local MKVs, ~15 min). Needs R2 env file at `~/.env.compsync-r2` with `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME=compsyncmedia`.
+2. CompPortal sibling session is building `media_packages.video_keyframes text[]` column + `PATCH /api/plugin/entry/:entryId/keyframes` endpoint. After both ship, a second-pass script reads the manifest and registers paths. NOT Electron's job yet.
 
-### 3. First-launch gotchas
-- **SmartScreen WILL fire** on any unsigned installer. "Windows protected your PC" dialog → "More info" → "Run anyway". No workaround without real EV code signing. CompSync has lived with this for months.
-- **If your installer has a self-signed cert**, SmartScreen treats it *worse* than no cert. Strip the cert before shipping if you're not going to pay for a real one.
-- **asar unpack globs**: if UITweaker depends on any native modules (sharp, onnxruntime, canvas, serialport, etc.), the `build.asarUnpack` array must match them. Missing entries → runtime `require` from inside asar fails cryptically ("cannot find module X.node"). Check the unpacked dir post-install: `ls "C:\Program Files\UITweaker\resources\app.asar.unpacked\"` — if a native dep isn't there, add its path to `asarUnpack` and rebuild.
-- **Chromium sandbox on Windows works fine.** No WSL issue — DART's SSH shell is MSYS, not WSL. Chromium sandbox runs normally. The only thing that breaks it is running as SYSTEM (not an issue here) or custom ACLs on `%LOCALAPPDATA%\Temp` (don't touch those).
-- **If UITweaker spawns a CDP inspector child process**, make sure the port (default 9222) isn't already in use — DART has services on 9876 (overlay) and 9877 (ws hub). Pick something like 9229 or 9300.
-- **Electron window restore on multi-monitor**: if DART has 8 detected displays with most detached (VDDs from wifi-display), `electron-window-state` can restore to a detached monitor and the window vanishes. Either bound with `ensureInView`, or delete `AppData/Roaming/<appname>/window-state.json` after install so first launch is centered.
-- **Elevation**: if you add a `net session`-style elevation gate like CompSync fix #5, put the escape hatch (`settings.allowNonElevated`) in BEFORE the check, not after. Otherwise a bad build = unlaunchable without editing AppData by hand.
-
-### 4. Things I wish I'd known first time
-- **Verify `tasklist` shows no lock BEFORE overwriting.** A running Electron process keeps the asar file-locked. scp silently "succeeds" to a new inode, leaving the running process with the old asar plus a phantom copy. Always: `ssh dart '/mnt/c/Windows/System32/tasklist.exe | grep -i <app>'` first, and if non-empty, kill it.
-- **Backups need a timestamp, not `.bak`.** CompSync's backup history on DART is `.bak`, `.pre-2panel`, `.v2.7.0-stable` — a mess. Use `.bak-YYYY-MM-DD` from day 1 so you have real rollback options.
-- **Tailscale stale relay = offline node.** If `tailscale status` shows the DART node with relay `jnb` (or any relay on a Canadian box) it has NOT re-registered with the coordination server recently. Doesn't matter that the tray says connected — force-reauth on DART first, THEN transfer.
-- **Don't cross-compile native modules from scratch.** electron-builder auto-pulls prebuilt binaries for `win32-x64` (sharp has `@img/sharp-win32-x64` as an explicit dep exactly for this). If you find yourself running `npm rebuild --platform=win32`, stop — the electron-builder flow already does it correctly and 5× faster.
-- **Skip `predist` if it runs anything optional.** CompSync's `predist` script runs a `dotnet publish` for a helper exe — that failed on my Linux box because no .NET SDK. I ran `electron-builder --win --dir` directly (without the npm script wrapper) and the actual asar build worked fine; the failure was in a post-asar extraResource step and didn't affect the output.
-- **The `predist` / extraResources failure mode is deceptive.** electron-builder writes the asar early and fails on a missing extraResource LATER. If your exit code is non-zero, the asar may still be valid — check `release/win-unpacked/resources/app.asar` mtime and size before assuming the build is broken.
-- **Test the version you're deploying before you deploy it.** The local `app.asar` I almost shipped was a broken 1.4 MB partial-pack from some prior session, not a real electron-builder output. I only caught it by `npx asar list` — saw 12 entries with no `node_modules/`. Always `asar list` the file before scp'ing it.
-
-Shout if anything's unclear. — CompSync Electron session (claude:?)
-
-## From CompSyncElectronApp-5 — 2026-04-18 06:35 ET
-
-Recommendations for the Electron app from UDC London 2026 Day 1 overnight
-SD-import recovery work.
-
-### P0 — clock-sync reminder modal (operator request)
-Direct response to the Camera 2 disaster (171 photos lost, clock 15 days off).
-
-**On app start, every time:** Modal pops front-and-center with:
-  - Big, bright readout of the system clock including seconds (live-updating)
-  - Instruction: "Match every camera's clock to this time before shooting"
-  - Dismissible (operator clicks acknowledge)
-
-**Re-trigger condition:** If no recording activity for 10 minutes, the modal
-pops again automatically. Always dismissible. Catches the case where the
-operator swaps in a new camera (or switches batteries, which can reset the
-clock on some bodies) mid-day without realizing it.
-
-Why front-and-center: a passive footer indicator gets ignored. A modal forces
-acknowledgment. The 10-min idle re-trigger catches mid-day camera swaps.
-
-Implementation notes:
-  - Live clock display: `setInterval(() => setNow(new Date()), 250)` on the
-    modal component
-  - "No recording for 10 min" timer should reset whenever a routine
-    starts/stops or a manual import fires (any signal of operator activity)
-  - Modal should NOT block the app — operator can dismiss and continue
-    working immediately, the modal just nudges
-
-### P0 — wrong-day camera detection at SD insertion
-When an SD is inserted, sample 5 photos' EXIF DateTimeOriginal. If any have
-a date != today (or != system date when the operator confirms today's date),
-surface a modal: "Camera clock is N days off. Want to assign manually or
-attempt correction?" Tonight: Camera 2 in F:\DCIM\224_PANA had EXIF dates
-2 weeks ago, generated 171 unmatchable photos.
-
-### P0 — persist EXIF DateTimeOriginal in the tether path
-The in-app tether matcher reads EXIF but doesn't send `captured_at` to
-CompPortal. Result: media_photos rows have NULL captured_at, post-hoc dedup
-impossible. Fix once: pass capture times in `/api/plugin/complete` body
-(matching the CompPortal P0 in that repo's inbox).
-
-### P0 — multi-SD/multi-camera namespace awareness
-Tonight: F:\DCIM\166_PANA and H:\DCIM\166_PANA both exist with DIFFERENT
-photos that share the same filenames (P1667001.JPG on each). Any code that
-sorts photos across drives by filename is wrong. Always partition by drive
-letter (or camera serial) first, then sort within.
-
-### P1 — onboarding must NEVER clear settings
-If state.json is cleared (which happens occasionally), onboarding triggers and
-WIPES `compsync-media-settings.json` overwriting things like share code,
-output dir, behavior toggles. Tonight: had to restore from a backup. Fix:
-onboarding adds defaults only for missing keys, never overwrites existing
-configured values.
-
-### P1 — never use file mtime as a time signal in matching
-v4 of the overnight script went hard on EXIF DateTimeOriginal only (no
-fallback to file mtime / Image DateTime / DateTimeDigitized). Same rule
-should hold in the in-app tether matcher: copying or syncing files shifts
-mtime, contaminates matching. Use only DateTimeOriginal or fail loud.
-
-### P1 — first-class dry-run mode for SD imports
-v4's `--limit=N` was operator-facing for the script. Make this UI-facing too:
-"Preview SD import" → shows per-routine projected counts, orphan list,
-swap-window detection — operator confirms before commit. Would have saved
-tonight's two rollbacks.
-
-### P2 — persist scan + match manifest on every SD import
-Even on success, write `<output>/imports/<sd-uuid>-<timestamp>.json` with
-every photo's source path, EXIF, matched routine, and offset. Tonight's
-overnight script does this; the in-app tether path doesn't. Audit gold.
-
-### P2 — surface unassigned photos in the existing orphan drawer
-v2 added the orphan review drawer. Verify it consumes the overnight script's
-`overnight-orphans.json` (or a standardized manifest) so operator can triage
-the 18,325 unassigned photos from tonight's run.
-
-### Recovery script reference (this repo, scripts/overnight-sd-import.py)
-v4 lives at `scripts/overnight-sd-import.py` SHA `9662d6c0...`. Known issues:
-  - Phase 3 swap detection completely disabled (false positives on
-    session-boundary EXIF gaps were uncatchable from data alone)
-  - Wrong-day camera handling: skipped (correct — they're unsalvageable
-    via offset)
-  - Strict containment matcher is currently MISSING 34 routines that the
-    operator confirmed WERE shot — investigation in progress in fresh
-    session CompSyncElectronApp-6
+**Command pattern:**
+```
+py -3 "C:\Users\User\OneDrive\Desktop\backfill-keyframes.py" --execute \
+  --env-file C:\Users\User\.env.compsync-r2 \
+  --source-root "C:\Users\User\OneDrive\Desktop\TesterOutput\UDC London 2026" \
+  --api-key csm_f68ddeef15d7bbe8e57fa3e0606dc475ee5dc56e6249803c \
+  --ffmpeg "C:\Users\User\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe"
+```
+Set `PYTHONIOENCODING=utf-8` first.
 
 ---
 
-## From CompSyncElectronApp-bugfix — 2026-04-18 21:30 ET
+## ACTIVE: Double-click row → operator note editor
 
-### Feature request: SD card "just works" flow — auto-import, auto-offset, background processing
+**Source:** 2026-04-18 15:20 ET
+**Status:** OUTSTANDING. Trivial wire-up.
 
-**Operator context (verbatim, 2026-04-18 ~21:17 ET):** mid-session SD swaps are the primary workflow. Operator wants:
-- Plug SD mid-session → no modal, no clicking through steps
-- Photos auto-match to routines, auto-upload to CompPortal in background
-- If a known-bad offset is detected, one-line popup to confirm/correct; offset then persists for rest of day (per camera body)
-- While session continues, second SD goes in later → same silent flow
-- By end of session, all photos live in CompPortal DB, sorted by routine
+Existing pieces: `Routine.notes` field, `STATE_SET_NOTE` IPC, `NoteEditor` component at `RoutineTable.tsx:282-327` with ✎ button. Missing: `onDoubleClick` handler on the `<tr>` in `RoutineTable.tsx:468` area to open the editor without hunting for the tiny ✎ button.
 
-**What was shipped as a partial fix tonight (2026-04-18 build md5 `5fc6349546e80...`):**
-- `DriveAlert.tsx` now auto-minimizes when `settings.behavior.autoImportOnDrive === true` (the default). Operator now sees a Header progress pill instead of the full-screen modal. Existing background import + orphan review drawer + wrong-day detection all unchanged.
+No backend changes. Pure UI wire-up. Applies to overlay panels automatically (they share RoutineTable via windowMode prop).
 
-**Still to do (this is the full spec — don't build piecemeal, build as a coherent flow):**
+Optional: Settings toggle "Include operator notes in CSV session report" (default off — notes are operator-private, currently leak via CSV export at `state.ts:609 exportReport`).
 
-1. **Persistent per-camera offset**
-   - `state.json` → add `cameraOffsets: { [folderPrefix: string]: { offsetMinutes: number, appliedAt: ISO, confirmedBy: 'operator' | 'auto' } }`
-   - Keyed by folder prefix (e.g., `P166`, `P196`, `F:\DCIM\224`) since that identifies the camera body, not drive letter (drive letters rotate)
-   - Applied to all subsequent EXIF timestamps from that prefix for the rest of the day (until app restart OR operator clears)
-   - Cleared on new session day (compare `date(cameraOffsets[*].appliedAt)` to today)
+---
 
-2. **Auto-detect suggested offset**
-   - On SD insert, sample first 20 photos' EXIF
-   - If <20% match any recording window → compute candidate offset by looking for the offset value that maximizes matches
-   - If a strong candidate exists (say +X min gives >80% match), offer it: tiny one-line modal "Camera clock appears +X min off. Apply for today?" → one click Yes/No
-   - If no strong candidate → still show the modal with a manual minutes input, pre-filled with the best guess
-   - Soft modal (dismissible, reappears until addressed)
+## ACTIVE: Preserve original camera filenames
 
-3. **Re-match orphans when new recordings complete**
-   - Current: photos whose EXIF doesn't fall in any known recording window become orphans (visible in the orphan drawer)
-   - Desired: every time a routine's recording stops (recordingStoppedAt set), re-scan orphans. If any now match the new window, auto-assign them
-   - This makes the "drop SD in mid-session, later recordings pick up photos for not-yet-recorded routines" flow work naturally
+**Source:** 2026-04-18 Friday recovery debugging
+**Status:** OUTSTANDING. DB contract change required.
 
-4. **Upload ordering — raw first, thumbnails second**
-   - Currently upload.ts uploads both. Flip priority: full-res photo uploads first, thumbnail queues after
-   - Rationale: the secondary operator who culls for the on-stage slideshow views photos directly on CompPortal and needs the hi-res (they zoom / inspect). Thumbnails are only a fallback for grid rendering speed
-   - Thumbnails still get generated and uploaded — just not first
-   - Paired with CompPortal's "prefer hi-res, fall back to thumb" serving change (see CompPortal INBOX 2026-04-18 21:27)
+App currently renames photos to `photo_NNNN.jpg` on import (`photos.ts`), destroying camera identity + sequence position. Recovery required after mis-matches becomes a major pain without source filename.
 
-5. **Toast copy**
-   - Instead of current progress pill text ("Importing 45/2000"), add a clear "SD matched — X photos, importing" toast on start, and "Import complete — X matched, Y orphan" toast on finish
-   - Soft toast, dismissible, non-blocking
+**Options:**
+- A: Preserve `P1965014.jpg` directly — simplest, best for traceability
+- B: Hybrid `photo_NNNN__P1965014.jpg`
+- C: Sidecar or DB column (`media_photos.source_filename`)
 
-**Not in scope:**
-- WPD/PTP mode — still shelved
-- Thumbnails-on-CD-portal size (handled in CompPortal INBOX)
-- Photo culling UI on the app itself
+Depends on CompPortal schema change if picking C.
 
-**Known related issues from today:**
-- "Every routine WAS captured" feedback memory (`feedback_every_routine_captured.md`) — matcher bugs cause false absences, not real absence. Whatever offset detection we build must never dismiss a whole folder as "no matches" silently.
-- Friday recovery showed offset chaos (+60min post-lunch, -15 days Cam B) — per-camera offset storage is ESSENTIAL, not nice-to-have.
+---
+
+## ACTIVE: Configurable timezone storage
+
+**Source:** 2026-04-18 Friday recovery debugging
+**Status:** OUTSTANDING. Cross-project refactor spanning Electron + CompPortal + DB.
+
+Current code relies on `DART system clock = Eastern`. If DART ever boots in UTC, every EXIF parse is off by 4–5h. The Friday overnight script labeled EXIF as `+00:00` UTC when values were actually EDT → 4h offset across all matches.
+
+**Proposed:** setting "Local timezone" (default `America/New_York`); store all timestamps in that TZ explicitly, no silent UTC conversion. DB: either `timestamp without time zone` or ISO with explicit local offset like `2026-04-17T08:18:28-04:00`.
+
+**Tradeoff:** DST transitions give 1h ambiguous window — not a problem for single-day competitions.
+
+---
+
+## ACTIVE: Dry-run / preview mode for SD imports (P1)
+
+**Source:** 2026-04-18 06:35 (UDC London Day 1)
+**Status:** OUTSTANDING. UX feature.
+
+Overnight script has `--limit=N`; operator wants UI equivalent: "Preview SD import" → shows per-routine projected counts + orphan list + swap-window detection → operator confirms before commit.
+
+---
+
+## ACTIVE: Auto-detect offset confirmation modal
+
+**Source:** 2026-04-18 21:30 (SD "just works" spec item 2)
+**Status:** PARTIAL. Detection works + applies silently; no operator confirmation step built.
+
+Current behavior: `detectClockOffset` runs per-camera-body at import time, auto-applies, persists via `state.setCameraOffset`. No user-facing "apply this offset?" confirmation.
+
+Desired per spec: if detection finds a strong candidate (>80% match rate), show one-line toast/modal "Camera P16 +15min off. Apply for today?" — one-click Yes/No. If weak candidate, prompt with manual minutes input.
+
+Current implementation just auto-applies — which is fine but skips operator oversight of a potentially wrong offset.
+
+---
+
+## R2 / Credentials reference
+
+- Tenant: `00000000-0000-0000-0000-000000000004`
+- UDC London competition: `6f29f048-61f2-48c2-982f-27b542f974b2`
+- Plugin API key: `csm_f68ddeef15d7bbe8e57fa3e0606dc475ee5dc56e6249803c`
+- R2 account: `186f898742315ca57c73b8cf3f9d6917`
+- R2 endpoint: `https://186f898742315ca57c73b8cf3f9d6917.r2.cloudflarestorage.com`
+- R2 access key: `d1d5db3249b970644b60a2ccf6f7e1b4`
+- R2 secret: SHA-256 of Cloudflare API token `sc68FF5kO0OYky0Iv_mn2H-qnqLh4zllufj5uiYB`
+- R2 bucket: `compsyncmedia`
+
+---
+
+# Archive — verified shipped or stale (2026-04-19 audit)
+
+Items below are completed or superseded. Kept for historical context only — **do NOT act on these**.
+
+## Shipped in current live asar
+
+| Item | Shipped as | Verified |
+|---|---|---|
+| Auto-SD import on insertion (no modal) | `DriveAlert.tsx` auto-minimizes; silent-at-boot in `driveMonitor.ts:startMonitoring` | 2026-04-19 |
+| SD watermark filter — skip already-processed photos | `photos.ts` + `state.ts sdWatermarks` | 2026-04-19 |
+| Per-camera-body offset persistence | `state.ts cameraOffsets`, `photos.ts detectClockOffset` per-body + seed | 2026-04-19 |
+| Orphan rematch on recording stop | `photos.ts rematchOrphansForWindow` wired from `recording.ts` | 2026-04-18 |
+| Drive+DCIM folder partitioning (multi-SD namespace) | `photos.ts` runImport partition key `{drive}::{DCIM/NNN_PANA}` | 2026-04-19 |
+| Wrong-day EXIF detection | `driveMonitor.ts sampleAndReportCameraClock` + non-blocking toast | 2026-04-19 |
+| Clock-sync reminder modal on app start | `ClockSyncReminder.tsx` | 2026-04-18 |
+| Startup + shutdown day-checklist modals | `dayChecklist.ts` + `StartOfDayModal.tsx` | 2026-04-18 |
+| Never use mtime — EXIF only | `photos.ts getPhotoCaptureTime` reads `DateTimeOriginal` only | commit e3fff3e |
+| Onboarding never clears settings | `settings.ts` fix | commit 447533f |
+| EXIF `captured_at` persisted via `/plugin/complete` | `upload.ts photo_captured_at` parallel array | commit 0fa6e9e |
+| Import manifest per-run audit | `importManifest.ts` | 2026-04-18 |
+| Orphan review drawer | `OrphanReview.tsx` | 2026-04-17 |
+| Distribution sanity toast (>300, recorded <10) | `photos.ts` + App.tsx ImportSummaryToast | 2026-04-19 |
+| Phantom-instance hard-exit | `index.ts whenReady hasSingleInstanceLock` | 2026-04-18 |
+| window-all-closed guard during recording | `index.ts` | 2026-04-18 |
+| Boot log `pid/ppid/argv` | `index.ts whenReady` | 2026-04-18 |
+| No auto-R100 on RECORD — explicit click required | `state.ts setCompetition` + `recording.ts canStartRecording` | 2026-04-19 |
+| Longest-take selector + skip-encode-on-short-rerec | `recording.ts pickLongestMkv` | 2026-04-18 |
+| LIVE CHAT panel grows to fill left panel | `overlay-controls.css` | 2026-04-18 |
+| Overlay-mode progress pill | `PanelChrome.tsx OverlayImportPill` | 2026-04-18 |
+| Forward-going video keyframe extraction | `ffmpeg.ts extractKeyframes` | 2026-04-19 |
+
+## Superseded / stale
+
+| Item | Why stale |
+|---|---|
+| TRUE compact view (half-screen OR transparent OBS-overlay frame) (2026-04-18 13:30) | Superseded by Overlay Mode v2 — 7 always-on-top panels deliver the "controls around edges, OBS visible" outcome. Literal transparent-frame not built, functional goal met. |
+
+## Historical context (not actionable)
+
+- CompPortal Tier B deploy notes (2026-04-13) — context about what the portal is / isn't doing; reference only
+- UITweaker deploy notes (2026-04-15) — cross-project NSIS/scp lessons; reference only
+- Recovery script reference (`scripts/overnight-sd-import.py`, 2026-04-18) — Friday recovery tooling; superseded by in-app flow, kept for audit
+
+---
+
+# Handoff note for fresh session
+
+Current state (2026-04-19 08:35 EDT):
+- **App on DART:** launched, SDs already plugged, operator actively testing SD flow
+- **state.json patched:** Fri+Sat routines = `uploaded`, R433 = `skipped`, currentRoutineId cleared, 10 `sdWatermarks` pre-seeded per body key
+- **Deploy in flight:** asar `d16b49b3c5eee2e138c6c4ce8e1304ac` is live
+- **Next action pending:** operator approval to run full keyframe backfill (409 routines, ~15 min). Script staged on DART at `C:\Users\User\OneDrive\Desktop\backfill-keyframes.py`. Needs `--env-file` with R2 creds.
+
+Three idle tmux sessions loaded with Electron + CompPortal context: `CSE-dual-1`, `CSE-dual-2`, `CSE-dual-3`. Available for brand-new tasks.
+
+Rollback path: `app.asar.bak-2026-04-18-1442-SAFE-overlayModeV1` (md5 `fc83d2d820c713b1982d6f2849bd2b52`).
+
+
+## From CompPortal-1 — 2026-04-19 10:20 ET — Non-urgent, pick up after the current lockstep clears
+
+**Subject:** `photos.ts` distribution-sanity validator should normalize thresholds by size category
+
+### The bug
+
+`src/main/services/photos.ts:1016-1040` (your distribution-sanity validator) currently uses two hardcoded thresholds: `>300 photos = flag`, `<10 photos = flag`. These were set to UDC London expectations on 2026-04-18.
+
+- **False positive:** Entry 410 MAGICAL MYSTERY TOUR is a legit 7.7-min Production with 27 dancers and 970 photos — a real production, not a mixup. It'd trigger the `>300` warning today.
+- **Silent miss:** Entry 117 RECALLED is a SOLO (1 dancer) with **692 photos**. That's 4–5× expected for a solo and is almost certainly contaminated with photos from another routine. Today's threshold doesn't flag it because 692 > 300 catches 410 first and tiny-solos never hit the `<10` branch.
+
+We verified with the live DB — 4 UDC London solos have 500+ photos, invisible to today's heuristic.
+
+### The fix (5 lines)
+
+Replace the two hardcoded constants with a size-category-aware lookup. The CSE `Routine` type already has `sizeCategory` (`src/shared/types.ts:37`), so no data plumbing needed.
+
+```typescript
+// Expected photo-count ranges per size category (tunable)
+const SIZE_BOUNDS: Record<string, { min: number; max: number }> = {
+  'Solo':        { min: 30,  max: 300 },
+  'Duet':        { min: 30,  max: 350 },
+  'Trio':        { min: 30,  max: 400 },
+  'SmallGroup':  { min: 30,  max: 450 },
+  'LargeGroup':  { min: 50,  max: 700 },
+  'Production':  { min: 80,  max: 1500 },
+}
+const DEFAULT_BOUNDS = { min: 10, max: 500 }
+
+// In the loop at photos.ts:1023:
+const bounds = SIZE_BOUNDS[r?.sizeCategory ?? ''] ?? DEFAULT_BOUNDS
+if (list.length > bounds.max) routinesOverMax.push({ entryNumber, count: list.length, sizeCategory: r?.sizeCategory, threshold: bounds.max })
+if (list.length > 0 && list.length < bounds.min && r?.recordingStartedAt) {
+  routinesUnderMin.push({ entryNumber, count: list.length, sizeCategory: r?.sizeCategory, threshold: bounds.min })
+}
+```
+
+Also update the log strings / toast payload to include the applied threshold so operators understand why a large-group was not flagged.
+
+### Why this timing
+
+- We're building the same rule into CompPortal's new Verify Media audit (`docs/plans/2026-04-19-media-integrity-system.md` Rule 4) and noticed CSE has the same class of bug.
+- No live-event impact — CSE still flags via same toast surface, just with smarter thresholds.
+- Daniel said "give the update, it knows not to fire" — so pick this up in your NEXT release cycle after the `latest-photos` lockstep clears. Do not interrupt the migration + merge flow.
+
+### No action required from this inbox item today
+
+Just park it. Address when the current keyframe-backfill / migration lockstep is fully closed out.
