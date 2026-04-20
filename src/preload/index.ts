@@ -59,6 +59,8 @@ const api = {
   uploadStart: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_START),
   uploadStop: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_STOP),
   uploadAll: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ALL),
+  uploadResumeUnfinished: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED),
+  uploadCountUnfinished: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_COUNT_UNFINISHED),
   uploadRoutine: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ROUTINE, routineId),
   uploadCancelRoutine: (routineId: string) =>
@@ -70,6 +72,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_IMPORT, folderPath),
   photosPreviewImport: (folderPath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_PREVIEW_IMPORT, folderPath),
+  driveImportMissingOnly: (folderPath: string, filenames: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DRIVE_IMPORT_MISSING_ONLY, folderPath, filenames),
   photosCancel: () => ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_CANCEL),
   photosReassignOrphan: (orphanPath: string, routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_REASSIGN_ORPHAN, orphanPath, routineId),

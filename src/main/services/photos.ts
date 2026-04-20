@@ -611,6 +611,12 @@ const importQueue: Array<() => void> = []
 
 export interface ImportPhotosOptions {
   previewOnly?: boolean // T-F3: dry-run; no copies, no watermarks, no enqueue
+  // T-V7-25: scope the import to ONLY these basenames (case-insensitive).
+  // Used for "Import Missing Only" from the missing-photos recovery toast.
+  // When set, the scan also bypasses the SD watermark filter for included
+  // files so a previously-watermarked card can have specific frames
+  // backfilled without disturbing the rest of the card.
+  filenameAllowlist?: Set<string>
 }
 
 export async function importPhotos(
@@ -770,20 +776,37 @@ async function runImport(
   // potential mis-match against today's routines).
   const partitionedPaths: string[] = []
   let skippedByWatermark = 0
+  let skippedByAllowlist = 0
+  // T-V7-25: allowlist (case-insensitive) filters the scan to ONLY the
+  // requested basenames. When set, also bypasses the watermark filter for
+  // allowlisted files so a watermarked SD can be backfilled without having
+  // to clear its watermark first.
+  const allowlistUpper = opts.filenameAllowlist
+    ? new Set(Array.from(opts.filenameAllowlist).map((s) => s.toUpperCase()))
+    : null
   for (const fp of partitionedPathsRaw) {
+    const bn = path.basename(fp).toUpperCase()
+    if (allowlistUpper && !allowlistUpper.has(bn)) {
+      skippedByAllowlist++
+      continue
+    }
     const bodyKey = getCameraBodyKey(fp)
     if (!bodyKey) {
       partitionedPaths.push(fp)
       continue
     }
-    const wm = state.getSdWatermark(bodyKey)
-    if (wm) {
-      const fileName = path.basename(fp).toUpperCase()
-      // String comparison: "P1678123.JPG" > "P1668050.JPG" — valid because
-      // Panasonic filenames are fixed-width and monotonically increasing.
-      if (fileName <= wm.lastFilename.toUpperCase()) {
-        skippedByWatermark++
-        continue
+    // Watermark filter is skipped when the file is on the allowlist —
+    // scoped backfill must not be blocked by an older watermark.
+    if (!allowlistUpper) {
+      const wm = state.getSdWatermark(bodyKey)
+      if (wm) {
+        const fileName = bn
+        // String comparison: "P1678123.JPG" > "P1668050.JPG" — valid because
+        // Panasonic filenames are fixed-width and monotonically increasing.
+        if (fileName <= wm.lastFilename.toUpperCase()) {
+          skippedByWatermark++
+          continue
+        }
       }
     }
     partitionedPaths.push(fp)
@@ -791,6 +814,11 @@ async function runImport(
   if (skippedByWatermark > 0) {
     logger.photos.info(
       `SD watermark filter: skipped ${skippedByWatermark}/${partitionedPathsRaw.length} photos (already processed in prior sessions)`,
+    )
+  }
+  if (skippedByAllowlist > 0) {
+    logger.photos.info(
+      `Allowlist filter (scoped import): skipped ${skippedByAllowlist}/${partitionedPathsRaw.length} photos not on recovery list; kept ${partitionedPaths.length}`,
     )
   }
 

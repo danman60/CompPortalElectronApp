@@ -419,6 +419,28 @@ export function registerAllHandlers(): void {
     uploadService.cancelRoutineUpload(routineId as string)
   })
 
+  // T-V7-22: manual "Resume Unfinished Uploads" — ignores routine.status
+  // filter and runs the DB-cross-checked resume path. Idempotent — re-clicks
+  // never double-enqueue (enqueueRoutine de-dupes by objectName).
+  safeHandle(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED, async () => {
+    logIPC(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED)
+    return await uploadService.resumeUnfinishedUploads()
+  })
+
+  // T-V7-22: count routines with pending photos/encodedFiles (for the button
+  // label "Resume Unfinished Uploads (N)"). Purely a read; no enqueue.
+  safeHandle(IPC_CHANNELS.UPLOAD_COUNT_UNFINISHED, async () => {
+    const comp = stateService.getCompetition()
+    if (!comp) return { count: 0 }
+    let count = 0
+    for (const r of comp.routines) {
+      const pendingPhotos = (r.photos || []).some((p) => !p.uploaded)
+      const pendingVideos = (r.encodedFiles || []).some((f) => !f.uploaded)
+      if (pendingPhotos || pendingVideos) count++
+    }
+    return { count }
+  })
+
   safeHandle(IPC_CHANNELS.UPLOAD_ALL, () => {
     logIPC(IPC_CHANNELS.UPLOAD_ALL)
     const comp = stateService.getCompetition()
@@ -481,6 +503,27 @@ export function registerAllHandlers(): void {
     const s = settings.getSettings()
     if (!comp) return { error: 'No competition loaded' }
     return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
+  })
+
+  // T-V7-25: scoped recovery import — given a drive path + allowlist of
+  // basenames, run the normal pipeline but filter the scan to those files
+  // and bypass the watermark filter for them. Used by the missing-photos
+  // recovery toast's "Import Missing Only" action.
+  safeHandle(IPC_CHANNELS.DRIVE_IMPORT_MISSING_ONLY, async (folderPath: unknown, filenames: unknown) => {
+    logIPC(IPC_CHANNELS.DRIVE_IMPORT_MISSING_ONLY, { folderPath, count: Array.isArray(filenames) ? (filenames as unknown[]).length : 0 })
+    const comp = stateService.getCompetition()
+    const s = settings.getSettings()
+    if (!comp) return { error: 'No competition loaded' }
+    if (!Array.isArray(filenames) || (filenames as unknown[]).length === 0) {
+      return { error: 'No filenames provided' }
+    }
+    const allowlist = new Set((filenames as unknown[]).filter((x): x is string => typeof x === 'string'))
+    return await photoService.importPhotos(
+      folderPath as string,
+      comp.routines,
+      s.fileNaming.outputDirectory,
+      { filenameAllowlist: allowlist },
+    )
   })
 
   safeHandle(IPC_CHANNELS.PHOTOS_PREVIEW_IMPORT, async (folderPath: unknown) => {

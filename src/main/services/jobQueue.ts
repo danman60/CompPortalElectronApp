@@ -136,7 +136,13 @@ export function enqueue(
   jobs.push(job)
   indexAdd(job)
   logger.app.info(`Job queue: enqueued ${type} job ${job.id} for routine ${routineId}`)
-  flushSync()  // Critical: enqueued jobs must survive crash
+  // T-V7-21: debounced save instead of flushSync. Bulk-enqueue bursts (SD
+  // imports of 10k+ photos) used to hit the disk 10k+ times and thrash the
+  // main thread. 500ms debounce coalesces the burst into a single write
+  // while preserving crash-survival for the trailing edge. Critical
+  // transitions (enqueue→running, running→done, running→failed) still
+  // flushSync via updateStatus.
+  save()
   return job
 }
 

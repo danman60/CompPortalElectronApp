@@ -80,6 +80,9 @@ export default function Settings(): React.ReactElement {
   const [cpuCount, setCpuCount] = useState<number>(8)
   const [watermarkStatus, setWatermarkStatus] = useState<string>('')
   const [watermarkBusy, setWatermarkBusy] = useState<boolean>(false)
+  const [resumeBusy, setResumeBusy] = useState<boolean>(false)
+  const [resumeStatus, setResumeStatus] = useState<string>('')
+  const [resumeUnfinishedCount, setResumeUnfinishedCount] = useState<number>(0)
 
   useEffect(() => {
     if (currentSettings) {
@@ -90,6 +93,10 @@ export default function Settings(): React.ReactElement {
     window.api?.wifiDisplayGetMonitors().then((m: MonitorInfo[]) => setMonitors(m || [])).catch(() => {})
     ;(window.api as any)?.getSystemInfo?.().then((info: { cpuCount: number } | undefined) => {
       if (info?.cpuCount && info.cpuCount > 0) setCpuCount(info.cpuCount)
+    }).catch(() => {})
+    // Poll the unfinished-routine count so the button label stays accurate.
+    ;(window.api as any)?.uploadCountUnfinished?.().then((r: { count: number } | undefined) => {
+      if (r && typeof r.count === 'number') setResumeUnfinishedCount(r.count)
     }).catch(() => {})
   }, [currentSettings])
 
@@ -861,6 +868,87 @@ export default function Settings(): React.ReactElement {
               </div>
               {watermarkStatus && (
                 <span className="hint" style={{ marginTop: 6 }}>{watermarkStatus}</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Upload Recovery — T-V7-22 */}
+        <div className="settings-section">
+          <div className="settings-section-title">Upload Recovery</div>
+          <p className="section-desc">
+            Re-scan all routines with pending photos or video files and queue only what&apos;s
+            truly missing from R2+DB. Safe to re-click — the DB cross-check prevents double-uploads.
+            Use this when the status column looks wrong or an earlier import didn&apos;t fully land.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.upload?.autoResumeOnBoot !== false}
+                  onChange={(e) => update('upload', { autoResumeOnBoot: e.target.checked } as Partial<AppSettings['upload']>)}
+                />
+                {' '}Auto-resume unfinished uploads on app boot
+              </label>
+              <span className="hint">
+                When enabled (default), the app DB-cross-checks every pending routine after the
+                share code resolves and queues only the truly-missing delta. Disable if you want
+                to trigger resume manually only.
+              </span>
+            </div>
+            <div className="field">
+              <div className="field-row" style={{ gap: 8 }}>
+                <button
+                  className="back-btn"
+                  disabled={resumeBusy}
+                  onClick={async () => {
+                    setResumeBusy(true)
+                    setResumeStatus('Scanning routines + cross-checking DB...')
+                    try {
+                      const res = await (window.api as any).uploadResumeUnfinished() as {
+                        routinesScanned: number
+                        photosRepaired: number
+                        photosQueued: number
+                        jobsQueued: number
+                        endpointAvailable: boolean
+                        error?: string
+                      }
+                      if (res?.error) {
+                        setResumeStatus(`Error: ${res.error}`)
+                      } else if (!res.endpointAvailable) {
+                        setResumeStatus(
+                          `Endpoint unavailable — queued based on local state only: ${res.jobsQueued} jobs across ${res.routinesScanned} routines.`,
+                        )
+                      } else if (res.routinesScanned === 0) {
+                        setResumeStatus('Everything up to date.')
+                      } else {
+                        setResumeStatus(
+                          `Resumed ${res.routinesScanned} routine${res.routinesScanned === 1 ? '' : 's'}, ` +
+                          `${res.photosRepaired} photo${res.photosRepaired === 1 ? '' : 's'} repaired (already in DB), ` +
+                          `${res.jobsQueued} job${res.jobsQueued === 1 ? '' : 's'} queued.`,
+                        )
+                      }
+                      // Refresh count after action
+                      ;(window.api as any)?.uploadCountUnfinished?.().then((r: { count: number }) => {
+                        if (r && typeof r.count === 'number') setResumeUnfinishedCount(r.count)
+                      }).catch(() => {})
+                    } catch (err) {
+                      setResumeStatus(`Error: ${err instanceof Error ? err.message : String(err)}`)
+                    } finally {
+                      setResumeBusy(false)
+                    }
+                  }}
+                >
+                  {resumeBusy
+                    ? 'Resuming...'
+                    : resumeUnfinishedCount > 0
+                      ? `Resume Unfinished Uploads (${resumeUnfinishedCount})`
+                      : 'Resume Unfinished Uploads'}
+                </button>
+              </div>
+              {resumeStatus && (
+                <span className="hint" style={{ marginTop: 6 }}>{resumeStatus}</span>
               )}
             </div>
           </div>

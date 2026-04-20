@@ -1255,6 +1255,195 @@ export function retryIncompletePhotoUploads(): number {
   return retried
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Recovery-resume cluster (T-V7-20 / T-V7-22)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Rationale: compsync-state.json's `photo.uploaded` flag is an in-memory
+// first-write surface; a crash or hard restart can lose unflushed updates.
+// The 2026-04-19 UDC London post-restart stall re-uploaded ~1,000 photos
+// that were already in R2+DB because the recovery path trusted the local
+// `uploaded:false` flag without DB verification. The helpers below always
+// cross-check against CompPortal before enqueueing so recovery is safe to
+// re-run and cannot double-upload.
+//
+// Contract assumption (endpoint is CompPortal side, T-V7-24):
+//   GET /api/plugin/list-photos?competitionId=X&entryIds=id1,id2,...
+//   → { [entryId]: { filenames: string[] } }
+// When the endpoint is unavailable, we FALL BACK to the pre-T-V7-20
+// behavior: enqueue everything state says is pending. That preserves the
+// status quo and makes the cross-check a pure safety net.
+
+export interface ResumeUnfinishedReport {
+  routinesScanned: number
+  photosRepaired: number
+  photosQueued: number
+  jobsQueued: number
+  endpointAvailable: boolean
+  error?: string
+}
+
+// Contract locked with CompPortal hybrid session (2026-04-20 09:28 EDT):
+//   GET /api/plugin/list-photos?competitionId=X&entryIds=id1,id2,...
+//   Auth: Bearer plugin key (same as /api/plugin/complete)
+//   200:  { ok: true, results: { [entryId]: { filenames: string[] } } }
+//   400:  > 100 entryIds
+//   401:  bad auth
+//   500:  server error
+// Any non-200 → degrade to state-only enqueue.
+interface FilenameListResponse {
+  ok?: boolean
+  results?: { [entryId: string]: { filenames?: string[] } | undefined }
+}
+
+export async function fetchExistingFilenames(
+  entryIds: string[],
+): Promise<{ map: Record<string, Set<string>>; endpointAvailable: boolean }> {
+  const out: Record<string, Set<string>> = {}
+  if (entryIds.length === 0) return { map: out, endpointAvailable: true }
+
+  const conn = getResolvedConnection()
+  if (!conn) return { map: out, endpointAvailable: false }
+
+  // Max 100 entryIds per request (per plan). Batch to respect that.
+  const BATCH = 100
+  let endpointAvailable = true
+  for (let i = 0; i < entryIds.length; i += BATCH) {
+    const batch = entryIds.slice(i, i + BATCH)
+    const url = `${conn.apiBase}/api/plugin/list-photos?competitionId=${encodeURIComponent(conn.competitionId)}&entryIds=${batch.map(encodeURIComponent).join(',')}`
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${conn.apiKey}` },
+        signal: abort.signal,
+      })
+      if (response.status === 404 || response.status === 405) {
+        logger.upload.warn(`list-photos endpoint unavailable (HTTP ${response.status}) — falling back to state-based enqueue`)
+        endpointAvailable = false
+        break
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        logger.upload.warn(`list-photos batch ${i / BATCH}: HTTP ${response.status} ${text.slice(0, 120)} — treating endpoint as unavailable`)
+        endpointAvailable = false
+        break
+      }
+      const body = (await response.json()) as FilenameListResponse
+      const results = body.results ?? {}
+      for (const id of batch) {
+        const entry = results[id]
+        const names = entry?.filenames ?? []
+        out[id] = new Set(names)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.upload.warn(`list-photos fetch failed: ${msg} — falling back to state-based enqueue`)
+      endpointAvailable = false
+      break
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  return { map: out, endpointAvailable }
+}
+
+/**
+ * Core resume path. Used by both autoResumeUnfinished (boot path) and the
+ * manual "Resume Unfinished Uploads" button (T-V7-22). Idempotent: re-runs
+ * never double-enqueue because enqueueRoutine de-dupes by objectName against
+ * the existing job queue.
+ *
+ * Scans ALL routines (ignores routine.status — T-V7-22 requirement) for any
+ * with pending photos or encodedFiles. For each, DB cross-check and:
+ *   - photos present in DB → flip uploaded=true locally (heal stale flag)
+ *   - photos missing from DB → enqueue
+ *   - endpoint unavailable → fall back to state-based enqueue (degrade gracefully)
+ */
+export async function resumeUnfinishedUploads(): Promise<ResumeUnfinishedReport> {
+  const comp = state.getCompetition()
+  if (!comp) {
+    return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: false, error: 'no-competition' }
+  }
+  if (!hasResolvedUploadConnection()) {
+    return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: false, error: 'no-connection' }
+  }
+
+  const unfinished: Routine[] = []
+  for (const r of comp.routines) {
+    const hasPendingPhotos = (r.photos || []).some((p) => !p.uploaded)
+    const hasPendingVideos = (r.encodedFiles || []).some((f) => !f.uploaded)
+    if (hasPendingPhotos || hasPendingVideos) unfinished.push(r)
+  }
+  if (unfinished.length === 0) {
+    return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: true }
+  }
+
+  const { map: existingByEntry, endpointAvailable } = await fetchExistingFilenames(
+    unfinished.map((r) => r.id),
+  )
+
+  let photosRepaired = 0
+  let photosQueued = 0
+  let jobsQueued = 0
+
+  for (const routine of unfinished) {
+    const remoteNames = existingByEntry[routine.id] ?? new Set<string>()
+    const photos = routine.photos || []
+    let routineTouched = false
+    const healedPhotos: PhotoMatch[] = photos.map((p) => {
+      if (p.uploaded) return p
+      const basename = path.basename(p.filePath)
+      if (endpointAvailable && remoteNames.has(basename)) {
+        photosRepaired++
+        routineTouched = true
+        return { ...p, uploaded: true }
+      }
+      photosQueued++
+      return p
+    })
+    if (routineTouched) {
+      state.updateRoutineStatus(routine.id, routine.status, { photos: healedPhotos })
+    }
+    // Re-read after heal so enqueueRoutine sees the updated flags.
+    const fresh = state.getCompetition()?.routines.find((r) => r.id === routine.id) ?? routine
+    const result = enqueueRoutine(fresh)
+    jobsQueued += result.queuedJobs
+  }
+
+  if (jobsQueued > 0) startUploads()
+
+  logger.upload.info(
+    `Resume unfinished: ${unfinished.length} routines scanned, ${photosRepaired} photos repaired (already in DB), ${photosQueued} photos pending, ${jobsQueued} jobs queued. Endpoint=${endpointAvailable ? 'available' : 'unavailable (state-only fallback)'}`,
+  )
+
+  return {
+    routinesScanned: unfinished.length,
+    photosRepaired,
+    photosQueued,
+    jobsQueued,
+    endpointAvailable,
+  }
+}
+
+/**
+ * Boot-path entry. Gated by settings.upload.autoResumeOnBoot (default true).
+ * Fire-and-forget: callers can ignore the returned promise. Safe to call
+ * before share-code resolves — returns quickly with endpointAvailable=false
+ * and no side effects. Main should wait for hasResolvedUploadConnection().
+ */
+export async function autoResumeUnfinished(): Promise<ResumeUnfinishedReport> {
+  const settings = getSettings()
+  const enabled = settings.upload?.autoResumeOnBoot !== false
+  if (!enabled) {
+    logger.upload.info('Auto-resume on boot disabled via setting — skipping')
+    return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: false, error: 'disabled' }
+  }
+  return resumeUnfinishedUploads()
+}
+
 export function getQueueLength(): number {
   return jobQueue.getPending('upload').length + jobQueue.getRunning('upload').length
 }

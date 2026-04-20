@@ -130,6 +130,153 @@ function RecordingOverrunWarning(): React.ReactElement | null {
   )
 }
 
+// T-V7-25: Missing-photo recovery toast. Fired when an inserted SD covers
+// zero-photo / below-size-minimum routines AND those photos aren't already
+// in R2+DB. Offers scoped "Import Missing Only" (just those files, bypasses
+// watermark filter), full import (normal pipeline), or cancel.
+interface MissingPhotosEvent {
+  drivePath: string
+  photoPath: string
+  routinesAffected: Array<{
+    entryNumber: string
+    routineId: string
+    sizeCategory?: string
+    photoCount: number
+    minExpected: number
+    missing: string[]
+  }>
+  totalMissing: number
+}
+
+function MissingPhotosToast(): React.ReactElement | null {
+  const [event, setEvent] = useState<MissingPhotosEvent | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!window.api) return
+    const off = window.api.on(IPC_CHANNELS.DRIVE_MISSING_PHOTOS_DETECTED, (data: unknown) => {
+      setEvent(data as MissingPhotosEvent)
+    })
+    return () => { try { off() } catch {} }
+  }, [])
+
+  if (!event) return null
+
+  const nRoutines = event.routinesAffected.length
+  const entries = event.routinesAffected.map((r) => r.entryNumber)
+  const rangeLabel = entries.length <= 3
+    ? entries.map((e) => `R${e}`).join(', ')
+    : `R${entries[0]}-R${entries[entries.length - 1]} (${entries.length} routines)`
+
+  async function doImportMissingOnly(): Promise<void> {
+    if (!event) return
+    setBusy(true)
+    try {
+      // Flatten the per-routine missing arrays to a single allowlist. The
+      // matcher will re-assign each photo to its correct routine by EXIF
+      // time; the allowlist just scopes which files are included in the
+      // scan. Duplicates collapse naturally (Set semantics in main).
+      const all = event.routinesAffected.flatMap((r) => r.missing)
+      await (window.api as any).driveImportMissingOnly(event.photoPath, all)
+    } catch {
+      // Errors surface via normal import progress channel / alert
+    } finally {
+      setBusy(false)
+      setEvent(null)
+    }
+  }
+
+  function doFullImport(): void {
+    if (!event) return
+    // Fall through to the standard drive-detected flow — just dismiss this
+    // toast. DriveAlert still has the normal Start Import / Watch Live
+    // buttons. Operator can also trigger via header Photos button.
+    setEvent(null)
+  }
+
+  function doCancel(): void {
+    setEvent(null)
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 120,
+        zIndex: 9999,
+        maxWidth: 440,
+        background: '#1a2438',
+        border: '1px solid #4169e1',
+        borderLeft: '4px solid #4169e1',
+        borderRadius: 6,
+        padding: '12px 14px',
+        color: '#fff',
+        fontSize: 12,
+        lineHeight: 1.5,
+        boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>
+        {'\u{1F4BE}'} SD has {event.totalMissing} photo{event.totalMissing === 1 ? '' : 's'} covering {nRoutines} gap routine{nRoutines === 1 ? '' : 's'}
+      </div>
+      <div style={{ color: '#bdd1f2', marginBottom: 10 }}>
+        Affected: {rangeLabel}. These routines are below their expected photo minimum and
+        the SD has matching files that aren&apos;t in R2+DB yet. Import them now?
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button
+          onClick={doImportMissingOnly}
+          disabled={busy}
+          style={{
+            flex: 1,
+            minWidth: 140,
+            background: '#2d5da8',
+            color: '#fff',
+            border: 'none',
+            padding: '6px 10px',
+            borderRadius: 4,
+            cursor: busy ? 'wait' : 'pointer',
+            fontWeight: 600,
+          }}
+        >
+          {busy ? 'Importing...' : `Import Missing Only (${event.totalMissing})`}
+        </button>
+        <button
+          onClick={doFullImport}
+          disabled={busy}
+          style={{
+            background: '#433',
+            color: '#fff',
+            border: '1px solid #666',
+            padding: '6px 10px',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontWeight: 600,
+          }}
+        >
+          Full Import
+        </button>
+        <button
+          onClick={doCancel}
+          disabled={busy}
+          style={{
+            background: 'transparent',
+            color: '#9db4d8',
+            border: '1px solid #4169e1',
+            padding: '6px 10px',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontWeight: 600,
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // Re-record advisory toast: fired when main detects a suspect re-record
 // (new take > 90s AND prior routine dir had an encoded output). Purely
 // advisory — archive still proceeds as normal. Auto-dismisses after 60s.
@@ -637,6 +784,7 @@ export default function App(): React.ReactElement {
       <ImportBusyBanner />
       <OffsetConfirmToast />
       <RerecordToast />
+      <MissingPhotosToast />
       <StartupToast />
       <ImportSummaryToast />
       <HardeningBanners />

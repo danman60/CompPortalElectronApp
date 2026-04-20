@@ -460,6 +460,7 @@ export interface AppSettings {
     strategy: 'routine-batch' | 'round-robin' // default 'round-robin' — interleave photos across routines for slideshow breadth
     incrementalPublish: boolean // default true — fire plugin/complete progressively during an upload
     incrementalPublishEvery: number // default 20 — fire every N photos per routine
+    autoResumeOnBoot?: boolean // default true — on app boot after share-code resolve, DB cross-check + enqueue only truly-missing photos
   }
   hotkeys: {
     toggleRecording: string
@@ -585,6 +586,8 @@ export const IPC_CHANNELS = {
   UPLOAD_STOP: 'upload:stop',
   UPLOAD_PROGRESS: 'upload:progress',
   UPLOAD_ROUTINE: 'upload:routine',
+  UPLOAD_RESUME_UNFINISHED: 'upload:resume-unfinished',
+  UPLOAD_COUNT_UNFINISHED: 'upload:count-unfinished',
 
   // Photos
   PHOTOS_IMPORT: 'photos:import',
@@ -606,6 +609,8 @@ export const IPC_CHANNELS = {
   DRIVE_DETECTED: 'drive:detected',
   DRIVE_DISMISS: 'drive:dismiss',
   DRIVE_CAMERA_CLOCK_MISMATCH: 'drive:camera-clock-mismatch',
+  DRIVE_MISSING_PHOTOS_DETECTED: 'drive:missing-photos-detected',
+  DRIVE_IMPORT_MISSING_ONLY: 'drive:import-missing-only',
 
   // CLIP Verification
   CLIP_VERIFY_IMPORT: 'clip:verify-import',
@@ -1064,6 +1069,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     strategy: 'round-robin',
     incrementalPublish: true,
     incrementalPublishEvery: 20,
+    autoResumeOnBoot: true,
   },
   hotkeys: {
     toggleRecording: 'F5',

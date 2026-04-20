@@ -264,6 +264,257 @@ async function sampleAndReportCameraClock(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// T-V7-25 — Missing-photo detection on SD plug-in
+// ─────────────────────────────────────────────────────────────────────────
+//
+// App-integrated version of scripts/upload-sat-evening-gap.py. On drive-detect:
+// enumerate SD JPEGs by body prefix, bracket each body's shot-time range via
+// mtime (EXIF fallback when mtime-ambiguous, see gotcha list), cross-reference
+// against competition routines that are zero-photo or below size-category
+// minimum AND whose recording window falls inside any body's shot-time range.
+// If a gap is found, DB cross-check and emit DRIVE_MISSING_PHOTOS_DETECTED with
+// the delta. Renderer offers "Import Missing Only" / "Full Import" / "Cancel".
+//
+// Gotchas (from 2026-04-19 retrospective — encoded in the pure function):
+//   1. Body rollover is real (P22→P23 at Sat 21:02 EDT). Walk ALL prefixes.
+//   2. Watermarks for retired bodies are harmless — do NOT use body presence
+//      in watermarks as a signal.
+//   3. EXIF read is slow (~10ms/photo) — use mtime for routine mapping; fall
+//      back to EXIF only when mtime-match is ambiguous (not implemented in
+//      this first pass; mtime-only is the documented baseline).
+
+// Keep in sync with photos.ts distribution-sanity thresholds.
+const SIZE_BOUNDS_PRODUCTION_MIN = 100
+const SIZE_BOUNDS_DEFAULT_MIN = 10
+
+export interface SdPhotoSample {
+  filename: string
+  body: string | null
+  mtimeMs: number
+}
+
+export interface RoutineSurveyRow {
+  routineId: string
+  entryNumber: string
+  sizeCategory?: string
+  videoStartMs: number | null
+  videoEndMs: number | null
+  photoCount: number
+}
+
+export interface RecoveryPlanRoutine {
+  routineId: string
+  entryNumber: string
+  sizeCategory?: string
+  photoCount: number
+  minExpected: number
+  missing: string[] // filenames on SD within window, NOT yet in DB
+}
+
+export interface RecoveryPlan {
+  routines: RecoveryPlanRoutine[]
+  totalMissing: number
+}
+
+/**
+ * Pure: given the SD's JPEG inventory (filename + mtime + body), the routine
+ * survey (windows + current photo counts), and the per-routine DB filename
+ * sets, produce a recovery plan listing ONLY truly-missing photos per routine.
+ *
+ * This is the unit-testable core. The live driver (surveyAndReportMissingPhotos)
+ * handles filesystem/EXIF/DB I/O and calls this.
+ */
+export function computeMissingPhotosPlan(
+  samples: SdPhotoSample[],
+  routines: RoutineSurveyRow[],
+  dbFilenamesByRoutine: Record<string, Set<string>>,
+  opts: { nowMs?: number; bufferMs?: number } = {},
+): RecoveryPlan {
+  const bufferMs = opts.bufferMs ?? 30_000 // mirror the photos.ts window buffer
+
+  const plan: RecoveryPlanRoutine[] = []
+  let totalMissing = 0
+
+  for (const r of routines) {
+    if (r.videoStartMs == null || r.videoEndMs == null) continue
+
+    const isProd = (r.sizeCategory ?? '').toUpperCase().startsWith('PRODUCTION')
+    const minExpected = isProd ? SIZE_BOUNDS_PRODUCTION_MIN : SIZE_BOUNDS_DEFAULT_MIN
+
+    // Only surface routines that are zero OR below expected minimum.
+    if (r.photoCount >= minExpected) continue
+
+    const windowStart = r.videoStartMs - bufferMs
+    const windowEnd = r.videoEndMs + bufferMs
+
+    const sdInWindow = samples.filter(
+      (s) => s.mtimeMs >= windowStart && s.mtimeMs <= windowEnd,
+    )
+    if (sdInWindow.length === 0) continue
+
+    const dbSet = dbFilenamesByRoutine[r.routineId] ?? new Set<string>()
+    const missing = sdInWindow
+      .map((s) => s.filename)
+      .filter((f) => !dbSet.has(f))
+
+    if (missing.length === 0) continue
+
+    plan.push({
+      routineId: r.routineId,
+      entryNumber: r.entryNumber,
+      sizeCategory: r.sizeCategory,
+      photoCount: r.photoCount,
+      minExpected,
+      missing,
+    })
+    totalMissing += missing.length
+  }
+
+  return { routines: plan, totalMissing }
+}
+
+/** Walk SD tree (bounded depth) collecting ALL JPEGs with mtime + body prefix. */
+function enumerateSdSamples(photoPath: string, maxDepth = 4): SdPhotoSample[] {
+  const out: SdPhotoSample[] = []
+  const pending: Array<{ dir: string; depth: number }> = [{ dir: photoPath, depth: 0 }]
+  while (pending.length > 0) {
+    const cur = pending.shift()!
+    if (cur.depth > maxDepth) continue
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(cur.dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      const full = path.join(cur.dir, e.name)
+      if (e.isDirectory()) {
+        pending.push({ dir: full, depth: cur.depth + 1 })
+        continue
+      }
+      if (!e.isFile()) continue
+      if (!/\.(jpg|jpeg)$/i.test(e.name)) continue
+      try {
+        const st = fs.statSync(full)
+        out.push({
+          filename: e.name,
+          body: getCameraBodyKey(full) ?? null,
+          mtimeMs: st.mtimeMs,
+        })
+      } catch {
+        // skip unreadable files
+      }
+    }
+    // Safety cap so a pathological SD can't block main thread.
+    if (out.length > 50000) break
+  }
+  return out
+}
+
+/**
+ * Fire the missing-photos survey for a newly-detected SD. Fire-and-forget;
+ * errors are logged, never thrown. Only fires when:
+ *   - competition is loaded
+ *   - CompPortal /api/plugin/list-photos reachable (else skip — no point
+ *     raising recovery UI we can't stand behind)
+ * Runs in parallel with the existing clock-mismatch sampler; the two are
+ * independent signals.
+ */
+async function surveyAndReportMissingPhotos(
+  drivePath: string,
+  photoPath: string,
+): Promise<void> {
+  try {
+    const comp = state.getCompetition()
+    if (!comp) return
+
+    const samples = enumerateSdSamples(photoPath)
+    if (samples.length === 0) return
+
+    // Build routine survey — only routines with a recording window + a
+    // photo count (zero or below size-bound min).
+    const survey: RoutineSurveyRow[] = []
+    const candidateIds: string[] = []
+    for (const r of comp.routines) {
+      const startIso = r.recordingStartedAt
+      const stopIso = r.recordingStoppedAt
+      if (!startIso || !stopIso) continue
+      const startMs = new Date(startIso).getTime()
+      const stopMs = new Date(stopIso).getTime()
+      if (!Number.isFinite(startMs) || !Number.isFinite(stopMs)) continue
+
+      const isProd = (r.sizeCategory ?? '').toUpperCase().startsWith('PRODUCTION')
+      const minExpected = isProd ? SIZE_BOUNDS_PRODUCTION_MIN : SIZE_BOUNDS_DEFAULT_MIN
+      const photoCount = (r.photos || []).length
+      if (photoCount >= minExpected) continue
+
+      survey.push({
+        routineId: r.id,
+        entryNumber: r.entryNumber,
+        sizeCategory: r.sizeCategory,
+        videoStartMs: startMs,
+        videoEndMs: stopMs,
+        photoCount,
+      })
+      candidateIds.push(r.id)
+    }
+    if (survey.length === 0) {
+      logger.photos.info(
+        `Missing-photo survey (${drivePath}): no routines below size-bounds minimum — skipping`,
+      )
+      return
+    }
+
+    // DB cross-check — lazy import of upload.ts to avoid module-cycle risk.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const upload = require('./upload') as typeof import('./upload')
+    const { map: dbFilenamesByRoutine, endpointAvailable } = await (upload as any)
+      .fetchExistingFilenames?.(candidateIds) ?? { map: {}, endpointAvailable: false }
+    if (!endpointAvailable) {
+      logger.photos.info(
+        `Missing-photo survey (${drivePath}): list-photos endpoint unavailable — skipping recovery toast (degrade to normal import flow)`,
+      )
+      return
+    }
+
+    const plan = computeMissingPhotosPlan(samples, survey, dbFilenamesByRoutine)
+    if (plan.totalMissing === 0) {
+      logger.photos.info(
+        `Missing-photo survey (${drivePath}): ${survey.length} candidate routines, 0 missing photos — no recovery needed`,
+      )
+      return
+    }
+
+    logger.photos.warn(
+      `MISSING_PHOTOS_DETECTED: ${drivePath} covers ${plan.routines.length} below-min routine(s), ${plan.totalMissing} missing photos`,
+    )
+    sendToRenderer(IPC_CHANNELS.DRIVE_MISSING_PHOTOS_DETECTED, {
+      drivePath,
+      photoPath,
+      routinesAffected: plan.routines.map((r) => ({
+        entryNumber: r.entryNumber,
+        routineId: r.routineId,
+        sizeCategory: r.sizeCategory,
+        photoCount: r.photoCount,
+        minExpected: r.minExpected,
+        missing: r.missing,
+      })),
+      totalMissing: plan.totalMissing,
+    })
+    events.emit('drive.missingPhotos', {
+      drivePath,
+      totalMissing: plan.totalMissing,
+      routinesAffected: plan.routines.length,
+    })
+  } catch (err) {
+    logger.photos.warn(
+      `surveyAndReportMissingPhotos failed for ${drivePath}:`,
+      err instanceof Error ? err.message : err,
+    )
+  }
+}
+
 /** Get drive label via Windows vol command */
 function getDriveLabel(drivePath: string): string {
   try {
@@ -303,6 +554,10 @@ function poll(): void {
         // disaster: 15 days off, 171 unmatchable photos). Fire-and-forget so
         // the regular drive-detected flow isn't blocked.
         sampleAndReportCameraClock(drive, camera.photoPath, label).catch(() => {})
+        // T-V7-25: also probe for below-min / zero-photo routines whose
+        // windows fall inside this SD's shot-time range. Independent of the
+        // clock-mismatch sampler; both fire in parallel.
+        surveyAndReportMissingPhotos(drive, camera.photoPath).catch(() => {})
       }
     }
   }

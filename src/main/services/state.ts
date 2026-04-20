@@ -581,6 +581,25 @@ export function updateRoutineStatus(
     Object.assign(routine, extra)
   }
 
+  // T-V7-23 — Auto-rollback: if photos just got appended to a routine whose
+  // status was 'uploaded' or 'confirmed' and the incoming photo list has any
+  // `uploaded:false` entries, demote to 'encoded' so the standard UPLOAD_ALL
+  // + auto-resume filters pick it up on the next pass. Without this, an SD
+  // import adding 40 new photos to R528 (already `uploaded`) would leave
+  // R528's status unchanged and those 40 photos would sit unqueued until the
+  // operator manually clicked Resume. `extra.photos` is the freshly-written
+  // photos list — SD import / reassignOrphan / photoWorker all pass it.
+  if (extra && Array.isArray(extra.photos)) {
+    const anyPending = extra.photos.some((p) => !p.uploaded)
+    if (anyPending && (routine.status === 'uploaded' || routine.status === 'confirmed')) {
+      const newCount = extra.photos.filter((p) => !p.uploaded).length
+      logger.app.info(
+        `Routine ${routine.entryNumber} status demoted ${routine.status} → encoded: ${newCount} new photos pending upload`,
+      )
+      routine.status = 'encoded'
+    }
+  }
+
   // Fix 8: Update cached counts incrementally
   if (oldStatus === 'skipped' && status !== 'skipped') {
     cachedSkippedCount--

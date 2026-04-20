@@ -400,6 +400,24 @@ app.whenReady().then(async () => {
         const photoRetried = uploadService.retryIncompletePhotoUploads()
         if (photoRetried > 0) logger.app.info(`Retrying incomplete photo uploads for ${photoRetried} routines`)
 
+        // T-V7-20: DB cross-checked auto-resume. Heals stale `uploaded=false`
+        // flags for photos already in R2+DB (crash-lost writes) and enqueues
+        // only the truly-missing delta. Falls back to state-based enqueue
+        // when the endpoint is unavailable. Gated by settings.upload.autoResumeOnBoot.
+        uploadService.autoResumeUnfinished().then((report) => {
+          if (report.error && report.error !== 'disabled') {
+            logger.app.warn(`Auto-resume skipped: ${report.error}`)
+            return
+          }
+          if (report.routinesScanned > 0 || report.jobsQueued > 0) {
+            logger.app.info(
+              `Auto-resume: ${report.routinesScanned} routines scanned, ${report.photosRepaired} photos repaired, ${report.jobsQueued} jobs queued (endpoint ${report.endpointAvailable ? 'ok' : 'unavailable'})`,
+            )
+          }
+        }).catch((err) => {
+          logger.app.warn(`autoResumeUnfinished failed: ${err instanceof Error ? err.message : err}`)
+        })
+
         // Start-of-day checklist: fire after the fresh schedule is loaded and
         // reconcile has finished. Wait a moment for the renderer to mount so
         // the IPC listener is registered.
