@@ -751,6 +751,18 @@ async function processLoop(): Promise<void> {
             filesTotal: updatedJobs.length,
           })
           logger.upload.info(`All uploads complete for routine ${payload.routineId}`)
+          // T-V7-26: fire-and-forget post-record reconcile for this routine
+          // to catch plugin/complete partial failures or any drift the
+          // server-side ingest introduced. Silent — log-only.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
+            void reconciler.reconcileMedia({
+              scope: 'post-record',
+              routineIds: [payload.routineId],
+              silent: true,
+            }).catch(() => {})
+          } catch {}
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err)
           logger.upload.error(`Plugin complete failed for ${payload.routineId}:`, errMsg)
@@ -1283,29 +1295,69 @@ export interface ResumeUnfinishedReport {
   error?: string
 }
 
-// Contract locked with CompPortal hybrid session (2026-04-20 09:28 EDT):
+// Contract locked with CompPortal hybrid session (2026-04-20 09:28 EDT),
+// widened 2026-04-20 11:05 EDT for T-V7-26 unified reconciler:
 //   GET /api/plugin/list-photos?competitionId=X&entryIds=id1,id2,...
 //   Auth: Bearer plugin key (same as /api/plugin/complete)
-//   200:  { ok: true, results: { [entryId]: { filenames: string[] } } }
+//   200:  { ok: true, results: { [entryId]: {
+//           filenames: string[],                                         // v1 field — kept
+//           photos?: { filename: string, thumbnail_present: boolean }[], // v2
+//           videos?: { role: 'performance'|'judge1'|'judge2'|'judge3'|'judge4', present: boolean }[],
+//           video_keyframes?: { index: 0|1|2, present: boolean }[],
+//         } } }
 //   400:  > 100 entryIds
 //   401:  bad auth
 //   500:  server error
 // Any non-200 → degrade to state-only enqueue.
-interface FilenameListResponse {
-  ok?: boolean
-  results?: { [entryId: string]: { filenames?: string[] } | undefined }
+// If the v2 fields (photos/videos/video_keyframes) are absent, the reconciler
+// falls back to photo-only behavior (v1 shape) — see mediaReconciler.ts.
+interface RemoteVideoEntry {
+  role: 'performance' | 'judge1' | 'judge2' | 'judge3' | 'judge4'
+  present: boolean
+}
+interface RemoteKeyframeEntry {
+  index: 0 | 1 | 2
+  present: boolean
+}
+interface RemotePhotoEntry {
+  filename: string
+  thumbnail_present: boolean
+}
+export interface RemoteRoutineInventory {
+  filenames: Set<string>                    // v1 photo names (always present when endpoint available)
+  photos?: Map<string, RemotePhotoEntry>    // v2 per-photo record keyed by filename
+  videos?: Map<string, RemoteVideoEntry>    // v2 keyed by role
+  keyframes?: Map<number, RemoteKeyframeEntry> // v2 keyed by index 0..2
 }
 
-export async function fetchExistingFilenames(
+interface FilenameListResponse {
+  ok?: boolean
+  results?: { [entryId: string]: {
+    filenames?: string[]
+    photos?: RemotePhotoEntry[]
+    videos?: RemoteVideoEntry[]
+    video_keyframes?: RemoteKeyframeEntry[]
+  } | undefined }
+}
+
+/**
+ * Widened reconciler fetch. Returns the full per-routine inventory parsed
+ * into maps the reconciler can diff. `endpointAvailable=false` when any
+ * non-200 or network error — caller must fall back to state-only behavior.
+ *
+ * Back-compat: if the server returns the v1 shape (no photos/videos/video_keyframes),
+ * the maps on the result entry are undefined and the reconciler skips those
+ * axes. `filenames` is always populated when the endpoint answers.
+ */
+export async function fetchMediaInventory(
   entryIds: string[],
-): Promise<{ map: Record<string, Set<string>>; endpointAvailable: boolean }> {
-  const out: Record<string, Set<string>> = {}
+): Promise<{ map: Record<string, RemoteRoutineInventory>; endpointAvailable: boolean }> {
+  const out: Record<string, RemoteRoutineInventory> = {}
   if (entryIds.length === 0) return { map: out, endpointAvailable: true }
 
   const conn = getResolvedConnection()
   if (!conn) return { map: out, endpointAvailable: false }
 
-  // Max 100 entryIds per request (per plan). Batch to respect that.
   const BATCH = 100
   let endpointAvailable = true
   for (let i = 0; i < entryIds.length; i += BATCH) {
@@ -1320,7 +1372,7 @@ export async function fetchExistingFilenames(
         signal: abort.signal,
       })
       if (response.status === 404 || response.status === 405) {
-        logger.upload.warn(`list-photos endpoint unavailable (HTTP ${response.status}) — falling back to state-based enqueue`)
+        logger.upload.warn(`list-photos endpoint unavailable (HTTP ${response.status}) — reconciler degrades to state-only`)
         endpointAvailable = false
         break
       }
@@ -1334,12 +1386,24 @@ export async function fetchExistingFilenames(
       const results = body.results ?? {}
       for (const id of batch) {
         const entry = results[id]
-        const names = entry?.filenames ?? []
-        out[id] = new Set(names)
+        if (!entry) { out[id] = { filenames: new Set<string>() }; continue }
+        const inv: RemoteRoutineInventory = {
+          filenames: new Set(entry.filenames ?? []),
+        }
+        if (Array.isArray(entry.photos)) {
+          inv.photos = new Map(entry.photos.map((p) => [p.filename, p]))
+        }
+        if (Array.isArray(entry.videos)) {
+          inv.videos = new Map(entry.videos.map((v) => [v.role, v]))
+        }
+        if (Array.isArray(entry.video_keyframes)) {
+          inv.keyframes = new Map(entry.video_keyframes.map((k) => [k.index, k]))
+        }
+        out[id] = inv
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      logger.upload.warn(`list-photos fetch failed: ${msg} — falling back to state-based enqueue`)
+      logger.upload.warn(`list-photos fetch failed: ${msg} — reconciler degrades to state-only`)
       endpointAvailable = false
       break
     } finally {
@@ -1347,6 +1411,22 @@ export async function fetchExistingFilenames(
     }
   }
 
+  return { map: out, endpointAvailable }
+}
+
+/**
+ * Back-compat shim. Callers (driveMonitor, resumeUnfinishedUploads) only need
+ * the filename set — this flattens fetchMediaInventory back to the original
+ * v1 shape. Do NOT add new callers; use fetchMediaInventory for richer diffs.
+ */
+export async function fetchExistingFilenames(
+  entryIds: string[],
+): Promise<{ map: Record<string, Set<string>>; endpointAvailable: boolean }> {
+  const { map, endpointAvailable } = await fetchMediaInventory(entryIds)
+  const out: Record<string, Set<string>> = {}
+  for (const [k, v] of Object.entries(map)) {
+    out[k] = v.filenames
+  }
   return { map: out, endpointAvailable }
 }
 
@@ -1430,9 +1510,13 @@ export async function resumeUnfinishedUploads(): Promise<ResumeUnfinishedReport>
 
 /**
  * Boot-path entry. Gated by settings.upload.autoResumeOnBoot (default true).
- * Fire-and-forget: callers can ignore the returned promise. Safe to call
- * before share-code resolves — returns quickly with endpointAvailable=false
- * and no side effects. Main should wait for hasResolvedUploadConnection().
+ * Fire-and-forget: callers can ignore the returned promise.
+ *
+ * T-V7-26: now a thin wrapper around reconcileMedia({scope:'boot'}). The
+ * reconciler subsumes the resumeUnfinishedUploads logic AND also reconciles
+ * videos/thumbs/keyframes. ResumeUnfinishedReport shape preserved for any
+ * external callers (log/telemetry consumers); values mapped from
+ * ReconcileResult. Lazy-require to dodge circular import with mediaReconciler.
  */
 export async function autoResumeUnfinished(): Promise<ResumeUnfinishedReport> {
   const settings = getSettings()
@@ -1441,7 +1525,17 @@ export async function autoResumeUnfinished(): Promise<ResumeUnfinishedReport> {
     logger.upload.info('Auto-resume on boot disabled via setting — skipping')
     return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: false, error: 'disabled' }
   }
-  return resumeUnfinishedUploads()
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
+  const r = await reconciler.reconcileMedia({ scope: 'boot' })
+  return {
+    routinesScanned: r.scanned,
+    photosRepaired: r.repaired,
+    photosQueued: 0,
+    jobsQueued: r.queued,
+    endpointAvailable: r.endpointAvailable,
+    error: r.skippedReason,
+  }
 }
 
 export function getQueueLength(): number {

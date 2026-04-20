@@ -507,6 +507,22 @@ async function surveyAndReportMissingPhotos(
       totalMissing: plan.totalMissing,
       routinesAffected: plan.routines.length,
     })
+    // T-V7-26: also run a scoped reconcile through the unified engine for
+    // just the affected routines. Silent=false so the ReconcileToast can
+    // surface the queued count. The MissingPhotosToast (from batch 2) still
+    // drives the operator-facing recovery action; this runs in parallel to
+    // heal any drift the reconciler can catch without an import (stale
+    // uploaded:false flags for photos already in DB, etc).
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
+      const routineIds = plan.routines.map((r) => r.routineId)
+      void reconciler.reconcileMedia({
+        scope: 'sd-plugin',
+        routineIds,
+        silent: false,
+      }).catch(() => {})
+    } catch {}
   } catch (err) {
     logger.photos.warn(
       `surveyAndReportMissingPhotos failed for ${drivePath}:`,

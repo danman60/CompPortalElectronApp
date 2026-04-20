@@ -130,6 +130,88 @@ function RecordingOverrunWarning(): React.ReactElement | null {
   )
 }
 
+// T-V7-26: Unified reconciler result toast. Fired when reconcileMedia runs
+// non-silent AND queued or errored. Ambient ticks are silent by default; the
+// toast surfaces manual button / SD-plugin / explicit runs. Auto-dismiss 10s.
+interface ReconcileResultEvent {
+  scanned: number
+  repaired: number
+  queued: number
+  errors: string[]
+  scope: string
+  tookMs: number
+  endpointAvailable: boolean
+  skippedReason?: string
+}
+
+function ReconcileToast(): React.ReactElement | null {
+  const [event, setEvent] = useState<ReconcileResultEvent | null>(null)
+
+  useEffect(() => {
+    if (!window.api) return
+    const off = window.api.on(IPC_CHANNELS.MEDIA_RECONCILE_RESULT, (data: unknown) => {
+      const e = data as ReconcileResultEvent
+      setEvent(e)
+      setTimeout(() => setEvent((cur) => (cur === e ? null : cur)), 10_000)
+    })
+    return () => { try { off() } catch {} }
+  }, [])
+
+  if (!event) return null
+
+  const hasErrors = event.errors.length > 0
+  const bg = hasErrors ? '#2a1e08' : '#0d2a1a'
+  const border = hasErrors ? '#c17f00' : '#2d7a4f'
+  const msg = hasErrors
+    ? `Reconcile encountered ${event.errors.length} error${event.errors.length === 1 ? '' : 's'}. Check logs.`
+    : `Found ${event.queued} media item${event.queued === 1 ? '' : 's'} to sync. Uploading now.`
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 240,
+        zIndex: 9998,
+        maxWidth: 380,
+        background: bg,
+        border: `1px solid ${border}`,
+        borderLeft: `4px solid ${border}`,
+        borderRadius: 6,
+        padding: '10px 12px',
+        color: '#fff',
+        fontSize: 12,
+        lineHeight: 1.4,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <span style={{ fontSize: 16 }}>{hasErrors ? '\u26A0\uFE0F' : '\u{1F501}'}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            Media sync — {event.scope}
+          </div>
+          <div style={{ color: hasErrors ? '#d4c29a' : '#a7e3bc' }}>
+            {msg}
+          </div>
+        </div>
+        <button
+          onClick={() => setEvent(null)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#9db4d8',
+            cursor: 'pointer',
+            fontSize: 14,
+            padding: '0 4px',
+          }}
+          title="Dismiss"
+        >{'\u2715'}</button>
+      </div>
+    </div>
+  )
+}
+
 // T-V7-25: Missing-photo recovery toast. Fired when an inserted SD covers
 // zero-photo / below-size-minimum routines AND those photos aren't already
 // in R2+DB. Offers scoped "Import Missing Only" (just those files, bypasses
@@ -785,6 +867,7 @@ export default function App(): React.ReactElement {
       <OffsetConfirmToast />
       <RerecordToast />
       <MissingPhotosToast />
+      <ReconcileToast />
       <StartupToast />
       <ImportSummaryToast />
       <HardeningBanners />

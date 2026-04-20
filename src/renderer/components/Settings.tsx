@@ -954,6 +954,69 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
+        {/* Automatic Sync — T-V7-26 ambient reconciler */}
+        <div className="settings-section">
+          <div className="settings-section-title">Automatic Sync</div>
+          <p className="section-desc">
+            Continuously heal drift between local state and CompPortal while
+            the app runs. Every N minutes the app quietly DB-cross-checks its
+            pending uploads and enqueues anything missing. No operator clicks
+            needed.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={(draft.upload?.reconcileCadenceMinutes ?? 15) > 0}
+                  onChange={(e) => update('upload', {
+                    reconcileCadenceMinutes: e.target.checked ? 15 : 0,
+                  } as Partial<AppSettings['upload']>)}
+                />
+                {' '}Continuously check for missing uploads while app is open
+              </label>
+              <span className="hint">
+                When off, only explicit actions (boot, SD plug-in, manual Resume
+                button) trigger reconcile. When on, drift is healed on a timer.
+              </span>
+            </div>
+            <div className="field">
+              <label>Check every</label>
+              <div className="field-row" style={{ gap: 8, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={draft.upload?.reconcileCadenceMinutes ?? 15}
+                  onChange={(e) => update('upload', {
+                    reconcileCadenceMinutes: Math.max(0, Math.min(1440, parseInt(e.target.value || '0', 10))),
+                  } as Partial<AppSettings['upload']>)}
+                  min={0}
+                  max={1440}
+                  step={1}
+                  style={{ width: 90 }}
+                  disabled={(draft.upload?.reconcileCadenceMinutes ?? 15) === 0}
+                />
+                <span className="hint">minutes (2-1440; 0 disables)</span>
+              </div>
+            </div>
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.upload?.reconcileSilent === false}
+                  onChange={(e) => update('upload', {
+                    reconcileSilent: !e.target.checked,
+                  } as Partial<AppSettings['upload']>)}
+                />
+                {' '}Notify me when drift is found
+              </label>
+              <span className="hint">
+                Off by default — ambient ticks log only. Turn on to see a toast
+                whenever a cycle queues new uploads or hits errors.
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Tablet Display */}
         <div className="settings-section">
           <div className="settings-section-title">Tablet Display</div>

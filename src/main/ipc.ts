@@ -293,6 +293,18 @@ export function registerAllHandlers(): void {
       }
     }
 
+    // T-V7-26: re-apply ambient reconciler cadence when upload settings change.
+    if (p.upload) {
+      const u = p.upload as Record<string, unknown>
+      if ('reconcileCadenceMinutes' in u || 'reconcileSilent' in u) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
+          reconciler.restartAmbientReconciler()
+        } catch {}
+      }
+    }
+
     return result
   })
 
@@ -422,9 +434,22 @@ export function registerAllHandlers(): void {
   // T-V7-22: manual "Resume Unfinished Uploads" — ignores routine.status
   // filter and runs the DB-cross-checked resume path. Idempotent — re-clicks
   // never double-enqueue (enqueueRoutine de-dupes by objectName).
+  // T-V7-26: now routes through the unified reconciler (scope:'manual').
   safeHandle(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED, async () => {
     logIPC(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED)
-    return await uploadService.resumeUnfinishedUploads()
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
+    const r = await reconciler.reconcileMedia({ scope: 'manual' })
+    // Return the legacy ResumeUnfinishedReport shape so the Settings.tsx
+    // button UI (which expects it) keeps working unchanged.
+    return {
+      routinesScanned: r.scanned,
+      photosRepaired: r.repaired,
+      photosQueued: 0,
+      jobsQueued: r.queued,
+      endpointAvailable: r.endpointAvailable,
+      error: r.skippedReason,
+    }
   })
 
   // T-V7-22: count routines with pending photos/encodedFiles (for the button
@@ -472,6 +497,20 @@ export function registerAllHandlers(): void {
     if (queued > 0) uploadService.startUploads()
     logger.ipc.info(`Upload all: queued ${queued} routines`)
     return { queued }
+  })
+
+  // T-V7-26: direct handle on the unified reconciler — callable from renderer
+  // if ever needed (e.g. debug button). Ambient timer + batch-2 surface
+  // already invoke internally.
+  safeHandle(IPC_CHANNELS.MEDIA_RECONCILE_RUN, async (scope: unknown) => {
+    logIPC(IPC_CHANNELS.MEDIA_RECONCILE_RUN, { scope })
+    const scopeStr = typeof scope === 'string' ? scope : 'manual'
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
+    return await reconciler.reconcileMedia({
+      scope: (scopeStr === 'boot' || scopeStr === 'ambient' || scopeStr === 'post-record' ||
+              scopeStr === 'sd-plugin' || scopeStr === 'tether-error') ? scopeStr : 'manual',
+    })
   })
 
   safeHandle(IPC_CHANNELS.UPLOAD_ROUTINE, (routineId: unknown, force: unknown) => {

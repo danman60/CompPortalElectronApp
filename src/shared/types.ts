@@ -461,6 +461,11 @@ export interface AppSettings {
     incrementalPublish: boolean // default true — fire plugin/complete progressively during an upload
     incrementalPublishEvery: number // default 20 — fire every N photos per routine
     autoResumeOnBoot?: boolean // default true — on app boot after share-code resolve, DB cross-check + enqueue only truly-missing photos
+    // T-V7-26 — Unified reconciler ambient timer. 0 = disabled. Min 2, max 1440.
+    // Fires reconcileMedia({scope:'ambient'}) every N minutes while the share
+    // code is resolved. Self-heals state ↔ DB drift without operator clicks.
+    reconcileCadenceMinutes?: number
+    reconcileSilent?: boolean // default true — ambient ticks log only, no toast
   }
   hotkeys: {
     toggleRecording: string
@@ -588,6 +593,8 @@ export const IPC_CHANNELS = {
   UPLOAD_ROUTINE: 'upload:routine',
   UPLOAD_RESUME_UNFINISHED: 'upload:resume-unfinished',
   UPLOAD_COUNT_UNFINISHED: 'upload:count-unfinished',
+  MEDIA_RECONCILE_RUN: 'media:reconcile-run',
+  MEDIA_RECONCILE_RESULT: 'media:reconcile-result',
 
   // Photos
   PHOTOS_IMPORT: 'photos:import',
@@ -1070,6 +1077,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     incrementalPublish: true,
     incrementalPublishEvery: 20,
     autoResumeOnBoot: true,
+    reconcileCadenceMinutes: 15,
+    reconcileSilent: true,
   },
   hotkeys: {
     toggleRecording: 'F5',

@@ -400,10 +400,12 @@ app.whenReady().then(async () => {
         const photoRetried = uploadService.retryIncompletePhotoUploads()
         if (photoRetried > 0) logger.app.info(`Retrying incomplete photo uploads for ${photoRetried} routines`)
 
-        // T-V7-20: DB cross-checked auto-resume. Heals stale `uploaded=false`
-        // flags for photos already in R2+DB (crash-lost writes) and enqueues
-        // only the truly-missing delta. Falls back to state-based enqueue
-        // when the endpoint is unavailable. Gated by settings.upload.autoResumeOnBoot.
+        // T-V7-20 / T-V7-26: DB cross-checked auto-resume. Heals stale
+        // `uploaded=false` flags for photos already in R2+DB (crash-lost
+        // writes) and enqueues only the truly-missing delta. Falls back to
+        // state-based enqueue when the endpoint is unavailable. Gated by
+        // settings.upload.autoResumeOnBoot. Routes through the unified
+        // reconciler (scope: 'boot').
         uploadService.autoResumeUnfinished().then((report) => {
           if (report.error && report.error !== 'disabled') {
             logger.app.warn(`Auto-resume skipped: ${report.error}`)
@@ -417,6 +419,17 @@ app.whenReady().then(async () => {
         }).catch((err) => {
           logger.app.warn(`autoResumeUnfinished failed: ${err instanceof Error ? err.message : err}`)
         })
+
+        // T-V7-26: start the ambient reconciler to auto-heal drift while
+        // the app is running. Cadence + silent governed by settings.upload.
+        // No-op if cadence=0 (disabled) or connection not resolved.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
+          reconciler.startAmbientReconciler()
+        } catch (err) {
+          logger.app.warn(`startAmbientReconciler failed: ${err instanceof Error ? err.message : err}`)
+        }
 
         // Start-of-day checklist: fire after the fresh schedule is loaded and
         // reconcile has finished. Wait a moment for the renderer to mount so
@@ -528,6 +541,12 @@ app.on('before-quit', async (event) => {
   perf.stop()
   systemMonitor.stopMonitoring()
   driveMonitor.stopMonitoring()
+  // T-V7-26: stop ambient reconciler cleanly on shutdown.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
+    reconciler.stopAmbientReconciler()
+  } catch {}
   chatBridge.stopChatBridge()
   // await wpdBridge.stop() // WPD disabled
   wsHub.stop()
