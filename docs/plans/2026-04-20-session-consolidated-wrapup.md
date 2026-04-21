@@ -43,8 +43,13 @@
 | 15:42 | `cab59f4a` | feat(media-visibility): granular per-comp × audience × type matrix | Concurrent (not this session) |
 | 19:30 | `f0e00185` | fix(media-visibility): dark-styled Listbox replaces native select | Concurrent (not this session) |
 | 19:45 | `28717cca` | feat(media): render display_name in parent/SD/CD photo tiles | **FLIP Task 1**. Swap `{filename}` → `{display_name ?? filename}` in photo tiles. 5 files, +28/-3. |
-
-**Still in-flight (tmux 6 working)**: FLIP Task 2 — ZIP friendly-rename in `/api/media/download/[packageId]`, `/api/media/bulk-manifest`, `/api/media/photo-download`. Template: `{entry_number}_{routine_title}_{studio_code}_{dancer_name}_{original}.jpg` with Windows-safe sanitization. Not yet committed.
+| 19:48 | `345d2527` | feat(media): friendly-rename photos at download time (ZIP + single-photo) | **FLIP Task 2 — SHIPPED.** Template applied to `/api/media/bulk-manifest`, `/api/media/download/[packageId]`, `/api/media/photo-download`. Prisma includes `competition_entries.studios.code`. Parent flow passes dancer as `contextName`; SD flow omits. |
+| 20:02 | `aec95594` | perf(latest-photos): 11.5s → 0.4s on UDC London (29× speedup) | Post-flip perf pass |
+| 20:05 | `166d934c` | fix(media): bulk-manifest multi-parent 403, tenant-picker disclosure, video filenames | Multi-parent auth + video filename template fix |
+| 20:18 | `85e72f3d` | fix(media): zip-based Download All + blob photo downloads, eliminate popup-queue chaos | Client downloader rewrite — no more browser popup blocker conflicts |
+| 20:23 | `7e16ae01` | fix(media): bulk-manifest 500 — access_type CHECK constraint violation | Data integrity fix after 85e72f3d |
+| 20:33 | `3b023063` | **fix(media): drop camera P-name from download filename template** | **Template simplified**: now `{entry}_{routine}_{studio}_{dancer}.jpg` (no `{original}`). Operator-directed. Legacy `photo_NN` rows + P-format rows both produce identical clean names. |
+| 20:47 | `f627df04` | fix(media): fewer zip parts + multi-part guidance banner | Reduces zip chunking + adds UI banner for multi-part downloads |
 
 ---
 
@@ -103,8 +108,8 @@ Move-Item "C:\Users\User\Desktop\app.asar.v7-2026-04-20-0906" app.asar
 | 6. `/plugin/complete` payload | storage paths carry original | ✅ shipped v7 |
 | 7. `media_photos.filename` INSERT | verbatim from storage path | ✅ CompPortal `plugin/complete:177` (unchanged since Feb, verified in naming audit) |
 | 8. Portal display (parent/SD/CD tiles) | `{display_name ?? filename}` → shows `138_1` | ✅ shipped CompPortal commit `28717cca` 15:45 EDT |
-| 9. ZIP download | `{entry}_{routine}_{studio}_{dancer}_{original}.jpg` | ⏳ **IN-FLIGHT in tmux 6** (Task 2 of flip) |
-| 10. Single-photo download | to match template | ⏳ **IN-FLIGHT in tmux 6** |
+| 9. ZIP download | `{entry}_{routine}_{studio}_{dancer}.jpg` (P-serial intentionally dropped at 20:33 EDT per operator) | ✅ shipped CompPortal commits `345d2527` + `3b023063` |
+| 10. Single-photo download | matches above template | ✅ shipped `345d2527` |
 
 **Legacy DB state** (audit 10:58 EDT): UDC London has 73,436 P-format filenames + 36,053 `photo_NNN.jpg` + 0 other. Legacy originals are **not recoverable from DB** (would need SD re-scan). 1,328 UDC London rows have `filename` ≠ `basename(storage_url)` from non-plugin/complete writes (historical artifact).
 
@@ -124,7 +129,9 @@ Move-Item "C:\Users\User\Desktop\app.asar.v7-2026-04-20-0906" app.asar
 
 | Task | Status | Notes |
 |---|---|---|
-| FLIP Task 2 — ZIP friendly-rename | **IN-FLIGHT** | tmux 6 currently working. Expected commits in next ~10 min. |
+| FLIP Task 2 — ZIP friendly-rename | ✅ shipped `345d2527` + simplified `3b023063` | Tmux 6 completed 19:48 EDT; then 5 follow-up fixes/perf commits through 20:47 EDT |
+| Latest Photos perf optimization | ✅ shipped `aec95594` | 29× speedup on UDC London |
+| Bulk download infrastructure fixes | ✅ shipped `166d934c`, `85e72f3d`, `7e16ae01`, `f627df04` | Multi-parent auth, blob-based downloads, CHECK constraint, zip-parts UX |
 
 ### Cross-repo (not started)
 
