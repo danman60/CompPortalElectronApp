@@ -53,7 +53,16 @@ export interface Routine {
   notes?: string // operator notes (e.g. "wrong music", "re-do requested")
   // Media loss prevention (Phase 4)
   uploadRunId?: string // set when an upload attempt starts; passed to /upload-url and /complete
-  mediaPackageStatus?: 'none' | 'complete' // populated by server schedule endpoint; drives reconcile pass
+  // Populated by CompPortal's plugin schedule endpoint. Current Electron
+  // reconcile logic only treats 'none' as authoritative for demotion; any
+  // other value means "a server package exists".
+  mediaPackageStatus?:
+    | 'none'
+    | 'pending'
+    | 'processing'
+    | 'ready'
+    | 'complete'
+    | 'published'
   mediaUpdatedAt?: string // ISO — media_packages.updated_at from server, or null
 }
 

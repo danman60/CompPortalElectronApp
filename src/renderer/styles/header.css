@@ -1,11 +1,34 @@
-.app-header {
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  padding: 6px 12px;
+.topband {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  background:
+    linear-gradient(180deg, rgba(19, 28, 42, 0.98), rgba(12, 18, 28, 0.98));
   flex-shrink: 0;
+}
+
+.topband-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topband-meta {
+  align-items: center;
+}
+
+.topband-live {
+  align-items: stretch;
+}
+
+.topband-brand {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .app-logo {
@@ -13,8 +36,15 @@
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  font-size: 13px;
-  color: var(--accent);
+  font-size: 14px;
+  color: #dbeafe;
+}
+
+.topband-version {
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-left: 6px;
 }
 
 .header-right {
@@ -28,6 +58,7 @@
   gap: 10px;
   font-size: 10px;
   color: var(--text-muted);
+  flex-wrap: wrap;
 }
 
 .header-status .si {
@@ -113,6 +144,20 @@
   transition: all 0.15s;
 }
 
+.compact-toggle-btn {
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: #dbeafe;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.compact-toggle-btn:hover {
+  background: rgba(59, 130, 246, 0.24);
+}
+
 .settings-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
@@ -144,6 +189,58 @@
   border-radius: 6px;
   padding: 2px;
   position: relative;
+}
+
+.topband-actions {
+  margin-left: auto;
+  flex-wrap: nowrap;
+}
+
+.topband-actions .action-bar {
+  flex-shrink: 0;
+}
+
+.topband-current,
+.topband-controls {
+  min-width: 0;
+  display: flex;
+}
+
+.topband-current {
+  flex: 1.35;
+}
+
+.topband-controls {
+  flex: 1;
+}
+
+.topband-current .section,
+.topband-controls .section {
+  width: 100%;
+  margin: 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  padding: 10px 12px;
+}
+
+.topband-current .section-title,
+.topband-controls .section-title {
+  margin-bottom: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.topband-current .routine-card {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.topband-controls .controls-section {
+  justify-content: center;
 }
 
 .ab-divider {

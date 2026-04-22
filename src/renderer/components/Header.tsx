@@ -1,5 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useImportMinimizedState, restoreMinimizedImport, setImportPillActiveFromHeader } from './DriveAlert'
+import { useStore } from '../store/useStore'
+import CurrentRoutine from './CurrentRoutine'
+import Controls from './Controls'
+import LoadCompetition from './LoadCompetition'
+import '../styles/header.css'
 
 function useAppVersion(): string {
   const [version, setVersion] = useState('')
@@ -8,10 +13,6 @@ function useAppVersion(): string {
   }, [])
   return version
 }
-
-// ── Unified Action Bar ─────────────────────────────────────────────
-// Consolidates: Load Competition, Process Video, Upload All, Import Video, Import Photos
-// Each button shows an "AUTO" badge when auto mode is enabled for that function
 
 function ActionBar(): React.ReactElement {
   const settings = useStore((s) => s.settings)
@@ -88,12 +89,16 @@ function ActionBar(): React.ReactElement {
   async function handleImportPhotos(): Promise<void> {
     const folder = await window.api.photosBrowse()
     if (!folder) return
-    // Bug B: activate the import pill so the operator sees progress. Without
-    // this the Header import was silent until completion (Saturday 2026-04-18:
-    // 21k-photo scan looked frozen → operator clicked again → parallel run).
     setImportPillActiveFromHeader(folder)
     try {
-      const result = await window.api.photosImport(folder) as { matched?: number; unmatched?: number; total?: number; clockOffsetMs?: number; error?: string; cancelled?: boolean } | undefined
+      const result = await window.api.photosImport(folder) as {
+        matched?: number
+        unmatched?: number
+        total?: number
+        clockOffsetMs?: number
+        error?: string
+        cancelled?: boolean
+      } | undefined
       if (!result) return
       if (result.cancelled) {
         alert('Photo import cancelled.')
@@ -105,13 +110,12 @@ function ActionBar(): React.ReactElement {
       }
       const total = (result.matched ?? 0) + (result.unmatched ?? 0)
       if (total === 0) {
-        alert(`No JPEG photos found in the selected folder or its subfolders.`)
+        alert('No JPEG photos found in the selected folder or its subfolders.')
         return
       }
       const offset = result.clockOffsetMs ? ` (clock offset: ${Math.round(result.clockOffsetMs / 1000)}s)` : ''
       alert(`Photo import complete:\n\n${result.matched ?? 0} matched to routines\n${result.unmatched ?? 0} unmatched${offset}`)
     } finally {
-      // Always clear the pill — even on error/cancel — so it doesn't get stuck.
       setImportPillActiveFromHeader(null)
     }
   }
@@ -131,7 +135,7 @@ function ActionBar(): React.ReactElement {
         setWifiDisplayRunning(!!result?.running)
       }
     } catch {
-      // ignore errors
+      // ignore
     }
   }
 
@@ -143,18 +147,14 @@ function ActionBar(): React.ReactElement {
     if (!settings) return
 
     if (autoWatchActive) {
-      // Stop watching
       await window.api.tetherStop()
       return
     }
 
-    // If we have a saved folder, start watching it
     let folder = autoWatchFolder
     if (!folder) {
-      // No folder saved — prompt to pick one
       folder = await window.api.photosBrowse()
       if (!folder) return
-      // Save it to settings
       const updated = { ...settings, tether: { ...settings.tether, autoWatchFolder: folder } }
       await window.api.settingsSet(updated)
       useStore.getState().setSettings(updated)
@@ -186,7 +186,6 @@ function ActionBar(): React.ReactElement {
 
   return (
     <div className="action-bar">
-      {/* Load Competition */}
       <div className="action-bar-item" ref={popoverRef} style={{ position: 'relative' }}>
         <button
           className={`ab-btn load${competition ? ' has-data' : ''}`}
@@ -201,7 +200,6 @@ function ActionBar(): React.ReactElement {
 
       <div className="ab-divider" />
 
-      {/* Process Video (FFmpeg encode) */}
       <button
         className="ab-btn encode"
         onClick={handleProcessVideo}
@@ -213,7 +211,6 @@ function ActionBar(): React.ReactElement {
         {autoEncode && <span className="ab-auto-badge">AUTO</span>}
       </button>
 
-      {/* Upload All */}
       <button
         className={`ab-btn upload${uploadDisabled ? ' disabled' : ''}`}
         onClick={handleUploadAll}
@@ -234,7 +231,6 @@ function ActionBar(): React.ReactElement {
 
       <div className="ab-divider" />
 
-      {/* Import Video */}
       <button
         className="ab-btn import-vid"
         onClick={handleImportVideo}
@@ -244,7 +240,6 @@ function ActionBar(): React.ReactElement {
         <span className="ab-label">Video</span>
       </button>
 
-      {/* Import Photos */}
       <button
         className={`ab-btn import-photo${autoWatchActive ? ' watching' : ''}`}
         onClick={handleImportPhotos}
@@ -262,7 +257,6 @@ function ActionBar(): React.ReactElement {
 
       <div className="ab-divider" />
 
-      {/* Post-Event Recovery */}
       <button
         className="ab-btn recovery"
         onClick={() => useStore.getState().setRecoveryOpen(true)}
@@ -272,7 +266,6 @@ function ActionBar(): React.ReactElement {
         <span className="ab-label">Recovery</span>
       </button>
 
-      {/* Tablet Display */}
       <button
         className={`ab-btn tablet${wifiDisplayRunning ? ' streaming' : ''}`}
         onClick={handleTabletToggle}
@@ -312,33 +305,24 @@ function ActionBar(): React.ReactElement {
           {uploadingCount > 0 && <span className="ab-count">{uploadingCount}</span>}
         </button>
       </div>
-      {/* Helper text moved to button titles — right-click = toggle auto */}
     </div>
   )
 }
-import { useStore } from '../store/useStore'
-import LoadCompetition from './LoadCompetition'
-import '../styles/header.css'
 
 function SystemMonitor(): React.ReactElement | null {
   const stats = useStore((s) => s.systemStats)
   const obsStats = useStore((s) => s.obsStats)
   if (!stats && !obsStats) return null
 
-  // CPU: higher is worse (usage), so fill shows utilization
   const cpuPercent = Math.min(100, Math.max(0, stats?.cpuPercent ?? 0))
   const cpuColor = cpuPercent > 85 ? 'var(--danger)' : cpuPercent > 60 ? 'var(--warning)' : 'var(--success)'
-
   const memPercent = Math.min(100, Math.max(0, stats?.memPercent ?? 0))
   const memColor = memPercent > 85 ? 'var(--danger)' : memPercent > 60 ? 'var(--warning)' : 'var(--success)'
-
-  // Disk: show used percentage (inverse of free)
   const diskUsedPercent = stats && stats.diskTotalGB > 0
     ? Math.min(100, Math.max(0, ((stats.diskTotalGB - stats.diskFreeGB) / stats.diskTotalGB) * 100))
     : 0
   const diskColor = stats && stats.diskFreeGB < 2 ? 'var(--danger)' : stats && stats.diskFreeGB < 10 ? 'var(--warning)' : 'var(--success)'
 
-  // OBS pills
   let obsFpsLabel: string | null = null
   let obsFpsColor = 'var(--text-muted)'
   let dropCount: number | null = null
@@ -348,7 +332,6 @@ function SystemMonitor(): React.ReactElement | null {
   if (obsStats) {
     if (!obsStats.connected) {
       obsFpsLabel = 'OFF'
-      obsFpsColor = 'var(--text-muted)'
     } else {
       const fps = obsStats.fps || 0
       const tgt = obsStats.targetFps || 60
@@ -370,7 +353,7 @@ function SystemMonitor(): React.ReactElement | null {
   }
 
   return (
-    <div className="header-status" style={{ gap: '10px' }}>
+    <div className="header-status topband-system">
       {stats && (
         <div className="meter-bar" title={`CPU: ${cpuPercent.toFixed(0)}%`}>
           <span className="meter-label">CPU</span>
@@ -399,19 +382,13 @@ function SystemMonitor(): React.ReactElement | null {
         </div>
       )}
       {obsStats && obsFpsLabel !== null && (
-        <span className="si" style={{ color: obsFpsColor }} title={`OBS FPS (commit 3)`}>
-          OBS {obsFpsLabel}
-        </span>
+        <span className="si" style={{ color: obsFpsColor }}>OBS {obsFpsLabel}</span>
       )}
       {obsStats && obsStats.connected && dropCount !== null && (
-        <span className="si" style={{ color: dropColor }} title={`Dropped frames this tick`}>
-          Drop {dropCount}
-        </span>
+        <span className="si" style={{ color: dropColor }}>Drop {dropCount}</span>
       )}
       {obsStats && obsStats.connected && obsStats.streaming && congLabel && (
-        <span className="si" style={{ color: congColor }} title={`Stream output congestion`}>
-          Cong {congLabel}
-        </span>
+        <span className="si" style={{ color: congColor }}>Cong {congLabel}</span>
       )}
     </div>
   )
@@ -508,40 +485,47 @@ export default function Header(): React.ReactElement {
         : 'var(--text-muted)'
 
   return (
-    <div className="app-header">
-      <div className="app-logo">
-        CompSync Media
-        {appVersion && <span style={{ fontSize: '9px', color: 'var(--text-muted)', opacity: 0.5, marginLeft: '6px' }}>v{appVersion}</span>}
+    <header className="topband">
+      <div className="topband-row topband-meta">
+        <div className="topband-brand">
+          <div className="app-logo">
+            CompSync Media
+            {appVersion && <span className="topband-version">v{appVersion}</span>}
+          </div>
+          <div className="header-status">
+            <span className="si" style={{ color: obsColor }}>
+              OBS {obsState.connectionStatus === 'connected' ? 'ON' : 'OFF'}
+            </span>
+            {competition && <span className="si">{competition.routines.length} routines</span>}
+            <ImportPill />
+          </div>
+        </div>
+
+        <SystemMonitor />
+
+        <div className="header-right topband-actions">
+          <ActionBar />
+          <button
+            className="compact-toggle-btn"
+            onClick={handleOverlayMode}
+            title="Hide main window and show floating always-on-top panels over OBS"
+          >
+            Overlay
+          </button>
+          <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
+            Settings
+          </button>
+        </div>
       </div>
 
-      <div className="header-status">
-        <span className="si" style={{ color: obsColor }}>
-          OBS {obsState.connectionStatus === 'connected' ? 'ON' : 'OFF'}
-        </span>
-        {competition && (
-          <span className="si">
-            {competition.routines.length} routines
-          </span>
-        )}
-        <ImportPill />
+      <div className="topband-row topband-live">
+        <div className="topband-current">
+          <CurrentRoutine />
+        </div>
+        <div className="topband-controls">
+          <Controls />
+        </div>
       </div>
-
-      <SystemMonitor />
-
-      <ActionBar />
-
-      <div className="header-right">
-        <button
-          className="compact-toggle-btn"
-          onClick={handleOverlayMode}
-          title="Hide main window and show floating always-on-top panels over OBS"
-        >
-          Overlay
-        </button>
-        <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
-          Settings
-        </button>
-      </div>
-    </div>
+    </header>
   )
 }

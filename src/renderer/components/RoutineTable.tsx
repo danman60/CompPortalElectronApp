@@ -27,6 +27,8 @@ interface MediaUploadSummary {
   allMediaUploaded: boolean
 }
 
+type PortalPackageStatus = NonNullable<Routine['mediaPackageStatus']>
+
 function getMediaUploadSummary(routine: Routine, judgeCount: number): MediaUploadSummary {
   const totalVideos = judgeCount + 1
   const uploadedVideos = routine.encodedFiles?.filter((f) => f.uploaded).length ?? 0
@@ -50,12 +52,35 @@ function getMediaUploadSummary(routine: Routine, judgeCount: number): MediaUploa
   }
 }
 
+function getPortalStatusMeta(
+  routine: Routine,
+): { text: string; className: string } | null {
+  const status = routine.mediaPackageStatus
+  switch (status) {
+    case 'none':
+      return { text: 'Portal None', className: 'portal-none' }
+    case 'pending':
+      return { text: 'Portal Pending', className: 'portal-pending' }
+    case 'processing':
+      return { text: 'Portal Processing', className: 'portal-processing' }
+    case 'ready':
+      return { text: 'Portal Ready', className: 'portal-ready' }
+    case 'complete':
+      return { text: 'Portal Complete', className: 'portal-complete' }
+    case 'published':
+      return { text: 'Portal Published', className: 'portal-published' }
+    default:
+      return null
+  }
+}
+
 function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
   const media = getMediaUploadSummary(routine, judgeCount)
   const total = media.totalVideos
   const encoded = routine.encodedFiles?.length ?? 0
   const photoCount = media.totalPhotos
   const photosUploaded = media.uploadedPhotos
+  const portalStatus = routine.mediaPackageStatus
 
   // Stage 1: Record
   const rec: PipelineStage = { label: 'REC', state: 'inactive' }
@@ -112,9 +137,11 @@ function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
   } else if (routine.status === 'uploaded' || routine.status === 'confirmed') {
     upload.state = 'done'
     if (routine.status === 'confirmed') {
-      upload.detail = media.allMediaUploaded
-        ? 'All media confirmed by server'
-        : `Videos confirmed, photos ${photosUploaded}/${photoCount}`
+      upload.detail = portalStatus === 'published'
+        ? 'Portal package is published'
+        : media.allMediaUploaded
+          ? 'Server package acknowledged'
+          : `Server package present, photos ${photosUploaded}/${photoCount}`
     } else if (media.allMediaUploaded) {
       upload.detail = `Videos ${media.uploadedVideos}/${total}, photos ${photosUploaded}/${photoCount}`
     } else {
@@ -159,6 +186,7 @@ function stageClass(state: StageState): string {
 function statusToLabel(routine: Routine, judgeCount: number): { text: string; className: string } {
   const status = routine.status
   const media = getMediaUploadSummary(routine, judgeCount)
+  const portalStatus = routine.mediaPackageStatus
   switch (status) {
     case 'pending':
       return { text: 'Waiting', className: 'waiting' }
@@ -183,9 +211,12 @@ function statusToLabel(routine: Routine, judgeCount: number): { text: string; cl
       return { text: 'Videos Uploaded', className: 'video-only' }
     }
     case 'confirmed':
+      if (portalStatus === 'published') {
+        return { text: 'Portal Published', className: 'complete' }
+      }
       return media.allMediaUploaded
-        ? { text: 'All Media Confirmed', className: 'complete' }
-        : { text: 'Videos Confirmed', className: 'video-only' }
+        ? { text: 'Server Package Present', className: 'complete' }
+        : { text: 'Videos Synced', className: 'video-only' }
     case 'failed':
       return { text: 'Failed', className: 'failed' }
     default:
@@ -583,6 +614,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             const progress = getProgressPercent(routine, judgeCount)
             const barClass = getBarClass(routine.status, routine, judgeCount)
             const pipeline = getPipeline(routine, judgeCount)
+            const portalStatus = getPortalStatusMeta(routine)
 
             return (
               <tr
@@ -630,6 +662,9 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                     {routine.routineTitle}
                     {isLive && <span className="live-badge">LIVE</span>}
                   </div>
+                  <div className="r-sub">
+                    {routine.studioName} · {routine.ageGroup} {routine.category} · {routine.classification}
+                  </div>
                 </td>
                 {!compactMode && pipeline.map((stage, i) => (
                   <td key={i} className="td-pipeline" title={stage.detail || stage.label}>
@@ -643,21 +678,27 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                 ))}
                 <td>
                   {isNotRecorded ? (
-                    <span className={`status-label ${statusInfo.className}`}>{statusInfo.text}</span>
+                    <div className="status-stack">
+                      <span className={`status-label ${statusInfo.className}`}>{statusInfo.text}</span>
+                      {portalStatus && <span className={`portal-pill ${portalStatus.className}`}>{portalStatus.text}</span>}
+                    </div>
                   ) : (
-                    <div className="status-progress">
-                      <div className="bar-track">
-                        <div
-                          className={`bar-fill ${barClass}`}
-                          style={{ width: `${progress}%` }}
-                        />
+                    <div className="status-stack">
+                      <div className="status-progress">
+                        <div className="bar-track">
+                          <div
+                            className={`bar-fill ${barClass}`}
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                        <span className={`status-label ${statusInfo.className}`}>
+                          {statusInfo.text}
+                          {routine.status === 'uploading' && routine.uploadProgress?.percent !== undefined
+                            ? ` \u2014 ${routine.uploadProgress.percent}%`
+                            : ''}
+                        </span>
                       </div>
-                      <span className={`status-label ${statusInfo.className}`}>
-                        {statusInfo.text}
-                        {routine.status === 'uploading' && routine.uploadProgress?.percent !== undefined
-                          ? ` \u2014 ${routine.uploadProgress.percent}%`
-                          : ''}
-                      </span>
+                      {portalStatus && <span className={`portal-pill ${portalStatus.className}`}>{portalStatus.text}</span>}
                     </div>
                   )}
                 </td>

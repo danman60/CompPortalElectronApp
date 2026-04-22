@@ -1,0 +1,53 @@
+.show-rail {
+  width: 360px;
+  min-width: 360px;
+  max-width: 360px;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  background: rgba(10, 17, 28, 0.96);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.show-rail-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.show-rail-section {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  overflow: hidden;
+}
+
+.show-rail-title {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.show-rail .oc-panel,
+.show-rail .oc-module,
+.show-rail .job-queue-panel {
+  border: none;
+  background: transparent;
+}
+
+.show-rail .tether-status {
+  border-radius: 0;
+  border: none;
+  background: transparent;
+}
+
+.show-rail .job-queue-list {
+  max-height: 160px;
+}

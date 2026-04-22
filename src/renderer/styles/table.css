@@ -2,13 +2,19 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
+  padding: 0 14px 14px;
 }
 
 .upload-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 11px;
   table-layout: auto;
+  background: rgba(9, 15, 24, 0.45);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .upload-table th {
@@ -19,20 +25,20 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
   position: sticky;
   top: 0;
-  background: var(--bg-primary);
+  background: rgba(12, 18, 28, 0.98);
   z-index: 1;
 }
 
 .upload-table td {
-  padding: 3px 6px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
   vertical-align: middle;
 }
 
-.upload-table tbody tr:hover td { background: var(--bg-hover); }
+.upload-table tbody tr:hover td { background: rgba(255,255,255,0.04); }
 .upload-table tbody tr.current-row:hover td { background: rgba(99,102,241,0.12); }
 
 .entry-num { font-weight: 700; color: var(--accent); font-size: 11px; }
@@ -51,7 +57,7 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
-.r-sub { font-size: 9px; color: #b5b5d0; }
+.r-sub { font-size: 9px; color: #9aa8bc; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .live-indicator {
   display: inline-block;
@@ -68,6 +74,13 @@
   color: var(--recording);
   font-weight: 700;
   letter-spacing: 0.5px;
+}
+
+.status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
 }
 
 .status-progress { min-width: 100px; }
@@ -101,6 +114,45 @@
 .status-label.waiting { color: var(--text-muted); }
 .status-label.recording { color: var(--recording); font-weight: 700; }
 .status-label.failed { color: var(--danger); }
+
+.portal-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+  line-height: 1.1;
+}
+
+.portal-pill.portal-none {
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.04);
+}
+
+.portal-pill.portal-pending,
+.portal-pill.portal-processing {
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.26);
+}
+
+.portal-pill.portal-ready,
+.portal-pill.portal-complete {
+  color: var(--upload-blue);
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.24);
+}
+
+.portal-pill.portal-published {
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.24);
+}
 
 /* ===== Pipeline stage indicators ===== */
 .th-pipeline {

@@ -4,7 +4,7 @@ import RoutineTable from './RoutineTable'
 import type { JobRecord } from '../../shared/types'
 import '../styles/rightpanel.css'
 
-function JobQueuePanel(): React.ReactElement | null {
+export function JobQueuePanel(): React.ReactElement | null {
   const jobQueue = useStore((s) => s.jobQueue)
   const jobQueuePanelOpen = useStore((s) => s.jobQueuePanelOpen)
   const setJobQueuePanelOpen = useStore((s) => s.setJobQueuePanelOpen)
@@ -62,50 +62,67 @@ function JobQueuePanel(): React.ReactElement | null {
   )
 }
 
-export default function RightPanel(): React.ReactElement {
+function HealthStrip(): React.ReactElement {
   const competition = useStore((s) => s.competition)
-  const settings = useStore((s) => s.settings)
   const encodingCount = useStore((s) => s.encodingCount)
   const uploadingCount = useStore((s) => s.uploadingCount)
   const completeCount = useStore((s) => s.completeCount)
   const photosPendingCount = useStore((s) => s.photosPendingCount)
-  const searchQuery = useStore((s) => s.searchQuery)
-  const setSearchQuery = useStore.getState().setSearchQuery
 
   const total = competition?.routines.length ?? 0
   const recorded = competition?.routines.filter(
     (r) => r.status !== 'pending' && r.status !== 'skipped' && r.status !== 'scratched',
   ).length ?? 0
   const remaining = total - recorded
-  const outputDir = settings?.fileNaming.outputDirectory || ''
-
-  async function handleOpenOutputDir(): Promise<void> {
-    if (outputDir) {
-      await window.api.openPath(outputDir)
-    }
-  }
-
-  async function handleChangeOutputDir(): Promise<void> {
-    const dir = await window.api.settingsBrowseDir()
-    if (dir && settings) {
-      await window.api.settingsSet({
-        ...settings,
-        fileNaming: { ...settings.fileNaming, outputDirectory: dir },
-      })
-      useStore.getState().setSettings({
-        ...settings,
-        fileNaming: { ...settings.fileNaming, outputDirectory: dir },
-      })
-    }
-  }
 
   async function handleExportReport(): Promise<void> {
     await window.api.exportReport()
   }
 
   return (
+    <div className="health-strip">
+      <div className="health-tile">
+        <span className="health-label">Processing</span>
+        <strong>{encodingCount}</strong>
+      </div>
+      <div className="health-tile">
+        <span className="health-label">Uploading</span>
+        <strong>{uploadingCount}</strong>
+      </div>
+      <div className="health-tile">
+        <span className="health-label">Complete</span>
+        <strong>{completeCount}</strong>
+      </div>
+      <div className="health-tile">
+        <span className="health-label">Photos</span>
+        <strong>{photosPendingCount}</strong>
+      </div>
+      <div className="health-tile">
+        <span className="health-label">Recorded</span>
+        <strong>{recorded} / {total}</strong>
+      </div>
+      <div className="health-tile">
+        <span className="health-label">Remaining</span>
+        <strong>{remaining}</strong>
+      </div>
+      <button
+        className="output-dir-change health-export"
+        onClick={handleExportReport}
+        title="Export session report (CSV)"
+      >
+        Export Report
+      </button>
+    </div>
+  )
+}
+
+export default function RightPanel(): React.ReactElement {
+  const searchQuery = useStore((s) => s.searchQuery)
+  const setSearchQuery = useStore.getState().setSearchQuery
+
+  return (
     <div className="right-panel">
-      <div className="right-header">
+      <div className="right-header schedule-header">
         <div className="section-title" style={{ marginBottom: 0 }}>
           Schedule
         </div>
@@ -128,45 +145,9 @@ export default function RightPanel(): React.ReactElement {
         />
       </div>
 
+      <HealthStrip />
+
       <RoutineTable />
-
-      <JobQueuePanel />
-
-      <div className="stats-bar">
-        <button
-          className="output-dir-change"
-          onClick={handleExportReport}
-          title="Export session report (CSV)"
-          style={{ fontSize: '9px' }}
-        >
-          Export
-        </button>
-        {encodingCount > 0 && (
-          <div className="stat">
-            <span className="stat-num" style={{ color: 'var(--warning)' }}>{encodingCount}</span> Processing
-          </div>
-        )}
-        {uploadingCount > 0 && (
-          <div className="stat">
-            <span className="stat-num" style={{ color: 'var(--upload-blue)' }}>{uploadingCount}</span> Uploading
-          </div>
-        )}
-        <div className="stat">
-          <span className="stat-num" style={{ color: 'var(--success)' }}>{completeCount}</span> Complete
-        </div>
-        {photosPendingCount > 0 && (
-          <div className="stat">
-            <span className="stat-num" style={{ color: '#c084fc' }}>{photosPendingCount}</span> Photos
-          </div>
-        )}
-        <div className="stat">
-          <span className="stat-num" style={{ color: 'var(--accent)' }}>{total}</span> Total
-          &nbsp;&bull;&nbsp;
-          <span className="stat-num" style={{ color: 'var(--success)' }}>{recorded}</span> Rec
-          &nbsp;&bull;&nbsp;
-          <span className="stat-num" style={{ color: 'var(--warning)' }}>{remaining}</span> Left
-        </div>
-      </div>
     </div>
   )
 }

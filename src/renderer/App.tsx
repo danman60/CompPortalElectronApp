@@ -2,9 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore, initIPCListeners } from './store/useStore'
 import { IPC_CHANNELS } from '../shared/types'
 import Header from './components/Header'
-import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
-import MediaAuditPanel from './components/MediaAuditPanel'
+import ShowControlRail from './components/ShowControlRail'
 import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
@@ -864,10 +863,9 @@ export default function App(): React.ReactElement {
   return (
     <div className={`app-layout${compactMode ? ' compact' : ''}`}>
       <Header />
-      <div className="main-stack">
-        <LeftPanel />
+      <div className="workspace">
         <RightPanel />
-        {!compactMode && <MediaAuditPanel />}
+        {!compactMode && <ShowControlRail />}
       </div>
       {settingsOpen && <Settings />}
       {photoSorterOpen && <PhotoSorter />}

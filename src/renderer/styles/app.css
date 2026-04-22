@@ -5,21 +5,18 @@
   height: 100vh;
 }
 
-.main-stack {
+.workspace {
   display: flex;
-  flex-direction: column;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(7, 12, 22, 1));
 }
 
-.main-stack > .left-panel {
-  width: 100%;
+.workspace > .right-panel {
   min-width: 0;
-  flex: 0 0 auto;
-}
-
-.main-stack > .right-panel {
-  min-height: 260px;
   flex: 1 1 auto;
 }
 
