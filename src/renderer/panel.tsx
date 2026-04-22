@@ -14,8 +14,21 @@ if (window.api) {
   window.api.settingsGet().then((settings) => {
     useStore.getState().setSettings(settings)
   }).catch(() => {})
-  window.api.scheduleGet().then((comp) => {
-    if (comp) useStore.getState().setCompetition(comp)
+  window.api.stateGet().then((snapshot) => {
+    if (!snapshot || typeof snapshot !== 'object') return
+    const s = snapshot as {
+      competition: unknown
+      currentRoutine: unknown
+      nextRoutine: unknown
+      currentIndex: unknown
+    }
+    useStore.setState({
+      competition: (s.competition as any) ?? null,
+      currentRoutine: (s.currentRoutine as any) ?? null,
+      nextRoutine: (s.nextRoutine as any) ?? null,
+      currentIndex: typeof s.currentIndex === 'number' ? s.currentIndex : 0,
+    })
+    useStore.getState().recalcCounts()
   }).catch(() => {})
 }
 

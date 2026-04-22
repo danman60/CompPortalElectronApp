@@ -895,7 +895,7 @@ async function runImport(
 
   // Build recording windows from routines
   const windows: RecordingWindow[] = routines
-    .filter((r) => r.recordingStartedAt && r.recordingStoppedAt)
+    .filter((r) => r.status !== 'scratched' && r.recordingStartedAt && r.recordingStoppedAt)
     .map((r) => ({
       routineId: r.id,
       entryNumber: r.entryNumber,

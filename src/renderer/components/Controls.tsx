@@ -45,9 +45,15 @@ export default function Controls(): React.ReactElement {
     try { await window.api.obsSaveReplay() } catch { /* handled server-side */ }
   }
 
-  async function handleSkip(): Promise<void> {
+  async function handleScratch(): Promise<void> {
     if (currentRoutine) {
-      try { await window.api.recordingSkip(currentRoutine.id) } catch { /* handled server-side */ }
+      try {
+        if (currentRoutine.status === 'scratched') {
+          await window.api.recordingUnscratch(currentRoutine.id)
+        } else {
+          await window.api.recordingScratch(currentRoutine.id)
+        }
+      } catch { /* handled server-side */ }
     }
   }
 
@@ -117,8 +123,8 @@ export default function Controls(): React.ReactElement {
         >
           Save Replay
         </button>
-        <button className="ctrl-btn" onClick={handleSkip}>
-          Skip
+        <button className="ctrl-btn" onClick={handleScratch}>
+          {currentRoutine?.status === 'scratched' ? 'Unscratch' : 'Scratch'}
         </button>
       </div>
     </div>

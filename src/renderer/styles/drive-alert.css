@@ -80,12 +80,34 @@
   transition: all 0.15s;
 }
 .import-pill:hover { border-color: var(--accent); background: var(--bg-hover); }
+.import-pill.complete {
+  background: rgba(45, 168, 85, 0.14);
+  border-color: rgba(45, 168, 85, 0.55);
+  color: #dff7e7;
+  animation: importCompleteFlash 1s ease-in-out infinite;
+}
 .import-pill-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
   animation: progressPulse 1.5s ease-in-out infinite;
+}
+.import-pill-remove-icon {
+  font-size: 12px;
+  line-height: 1;
+  color: #8df0a8;
+}
+
+@keyframes importCompleteFlash {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(45, 168, 85, 0);
+    transform: translateY(0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(45, 168, 85, 0.35);
+    transform: translateY(-1px);
+  }
 }
 
 .da-warning {

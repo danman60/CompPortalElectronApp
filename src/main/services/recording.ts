@@ -187,7 +187,7 @@ function scheduleAutoFire(): void {
 const MIN_FREE_GB_TO_RECORD = 5
 
 /** Fix 2 + Fix 8: Validate that recording can start. Returns null if OK, or a blocked reason. */
-export function canStartRecording(): { blocked: true; reason: 'no-output-dir' | 'dir-not-accessible' | 'disk-space-low' | 'no-routine-selected'; detail?: string } | null {
+export function canStartRecording(): { blocked: true; reason: 'no-output-dir' | 'dir-not-accessible' | 'disk-space-low' | 'no-routine-selected' | 'routine-scratched'; detail?: string } | null {
   // Block if the operator hasn't explicitly selected a routine. Prior behavior
   // silently bound recordings to whatever getCurrentRoutine returned — if that
   // fell through to the first visible routine (R100), the operator would think
@@ -198,6 +198,11 @@ export function canStartRecording(): { blocked: true; reason: 'no-output-dir' | 
     logger.app.error('No routine selected — recording blocked')
     sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'no-routine-selected' })
     return { blocked: true, reason: 'no-routine-selected', detail: 'Click a routine row before pressing RECORD.' }
+  }
+  if (routine.status === 'scratched') {
+    logger.app.error(`Routine ${routine.entryNumber} is scratched — recording blocked`)
+    sendToRenderer(IPC_CHANNELS.RECORDING_BLOCKED, { reason: 'routine-scratched', detail: routine.entryNumber })
+    return { blocked: true, reason: 'routine-scratched', detail: `Routine #${routine.entryNumber} is marked scratched. Advance first.` }
   }
 
   const settings = getSettings()
@@ -239,7 +244,7 @@ export async function confirmReRecordIfNeeded(): Promise<boolean> {
   const routine = state.getCurrentRoutine()
   if (!routine) return true
   // Only prompt if routine has already been recorded/encoded/uploaded
-  if (routine.status === 'pending' || routine.status === 'skipped') return true
+  if (routine.status === 'pending' || routine.status === 'skipped' || routine.status === 'scratched') return true
 
   const win = BrowserWindow.getAllWindows()[0]
   if (!win) return true
@@ -747,7 +752,7 @@ export async function next(): Promise<void> {
     // Update overlay data
     if (settings.behavior.syncLowerThird) {
       const comp = state.getCompetition()
-      const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
+      const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped' && r.status !== 'scratched').length : 0
       overlay.updateRoutineData({
         entryNumber: nextRoutine.entryNumber,
         routineTitle: nextRoutine.routineTitle,
@@ -862,7 +867,7 @@ function syncOverlayFromCurrent(): void {
   const current = state.getCurrentRoutine()
   if (!current) return
   const comp = state.getCompetition()
-  const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped').length : 0
+  const visibleCount = comp ? comp.routines.filter(r => r.status !== 'skipped' && r.status !== 'scratched').length : 0
   overlay.updateRoutineData({
     entryNumber: current.entryNumber,
     routineTitle: current.routineTitle,

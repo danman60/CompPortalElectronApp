@@ -89,12 +89,15 @@
 .bar-fill.processing { background: var(--warning); }
 .bar-fill.uploading { background: var(--upload-blue); }
 .bar-fill.complete { background: var(--success); }
+.bar-fill.video-only { background: var(--upload-blue); }
+.bar-fill.scratched { background: #f59e0b; opacity: 0.7; }
 
 .status-label { font-size: 9px; font-weight: 500; }
 .status-label.processing { color: var(--warning); }
 .status-label.uploading { color: var(--upload-blue); }
 .status-label.complete { color: var(--success); }
 .status-label.video-only { color: var(--upload-blue); }
+.status-label.scratched { color: #f59e0b; font-weight: 700; }
 .status-label.waiting { color: var(--text-muted); }
 .status-label.recording { color: var(--recording); font-weight: 700; }
 .status-label.failed { color: var(--danger); }

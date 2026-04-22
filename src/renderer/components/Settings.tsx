@@ -463,6 +463,21 @@ export default function Settings(): React.ReactElement {
               </select>
               <span className="hint">Limit upload speed to leave headroom for livestream. Applies to next file upload.</span>
             </div>
+            <div className="field">
+              <label>Photo upload priority</label>
+              <select
+                value={draft.upload?.photoPriority ?? 'newest-first'}
+                onChange={(e) => update('upload', {
+                  photoPriority: e.target.value as AppSettings['upload']['photoPriority'],
+                })}
+              >
+                <option value="newest-first">Newest photos first</option>
+                <option value="oldest-first">Oldest photos first</option>
+              </select>
+              <span className="hint">
+                Controls which pending photo gets picked next when uploads are active. Use newest-first on event day so the latest imported photos surface fastest.
+              </span>
+            </div>
           </div>
         </div>
 
@@ -961,7 +976,7 @@ export default function Settings(): React.ReactElement {
             Continuously heal drift between local state and CompPortal while
             the app runs. Every N minutes the app quietly DB-cross-checks its
             pending uploads and enqueues anything missing. No operator clicks
-            needed.
+            needed. This only runs when Auto-upload after processing is on.
           </p>
           <div className="settings-grid single">
             <div className="field">
@@ -978,6 +993,8 @@ export default function Settings(): React.ReactElement {
               <span className="hint">
                 When off, only explicit actions (boot, SD plug-in, manual Resume
                 button) trigger reconcile. When on, drift is healed on a timer.
+                Auto-upload after processing is the master switch for background
+                reconcile/upload work.
               </span>
             </div>
             <div className="field">

@@ -32,6 +32,9 @@ interface UploadPayload {
   // `type === 'videos'` by default path convention.
   isKeyframe?: boolean
   keyframeIndex?: number // 0, 1, 2
+  isPhotoThumbRepair?: boolean
+  sourcePhotoStoragePath?: string
+  photoCaptureTime?: string
 }
 
 export interface EnqueueRoutineResult {
@@ -138,6 +141,7 @@ let isUploading = false
 let isPaused = false
 let currentAbortController: AbortController | null = null
 let currentAbortRoutineId: string | null = null
+let idleReconcileTimer: NodeJS.Timeout | null = null
 
 // Tracks photos already included in a plugin/complete call per routine,
 // so incremental mode knows when the threshold has been crossed again.
@@ -278,6 +282,7 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
         objectName: photoObjectName,
         contentType: 'image/jpeg',
         type: 'photos',
+        photoCaptureTime: photo.captureTime,
         // Carry the local thumb path (if any) so the upload loop can PUT it next
         // to the original. Only SD-import photos have this; tether-flow photos
         // skip the thumb upload (thumbnailPath undefined).
@@ -299,6 +304,51 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
   })
 
   return { queuedJobs: jobCount }
+}
+
+export function enqueuePhotoThumbRepair(
+  routine: Routine,
+  photo: PhotoMatch,
+): EnqueueRoutineResult {
+  const conn = getResolvedConnection()
+  if (!conn) {
+    logger.upload.warn(`Skipping thumb repair for routine ${routine.entryNumber}: no resolved upload connection`)
+    return { queuedJobs: 0, skippedReason: 'no-connection' }
+  }
+  if (!photo.uploaded || !photo.storagePath) {
+    return { queuedJobs: 0, skippedReason: 'no-files' }
+  }
+
+  const existing = jobQueue.getByRoutine(routine.id)
+  const alreadyQueued = existing.some((j) => {
+    if (j.type !== 'upload') return false
+    const payload = j.payload as Record<string, unknown>
+    return (
+      payload.isPhotoThumbRepair === true &&
+      payload.sourcePhotoStoragePath === photo.storagePath &&
+      (j.status === 'pending' || j.status === 'running' || j.status === 'done')
+    )
+  })
+  if (alreadyQueued) return { queuedJobs: 0, skippedReason: 'already-queued' }
+
+  const thumbObjectName = deriveThumbObjectName(path.basename(photo.filePath))
+  jobQueue.enqueue('upload', routine.id, {
+    routineId: routine.id,
+    entryId: routine.id,
+    competitionId: conn.competitionId,
+    filePath: photo.filePath,
+    objectName: thumbObjectName,
+    contentType: 'image/webp',
+    type: 'photos',
+    thumbnailPath: photo.thumbnailPath,
+    isPhotoThumbRepair: true,
+    sourcePhotoStoragePath: photo.storagePath,
+  } satisfies UploadPayload as unknown as Record<string, unknown>)
+
+  logger.upload.info(
+    `Queued thumb repair for routine ${routine.entryNumber}: ${path.basename(photo.filePath)} -> ${thumbObjectName}`,
+  )
+  return { queuedJobs: 1 }
 }
 
 /**
@@ -372,6 +422,7 @@ export function enqueueRoundRobin(routines: Routine[]): EnqueueRoutineResult {
         objectName,
         contentType: 'image/jpeg',
         type: 'photos',
+        photoCaptureTime: photo.captureTime,
         thumbnailPath: photo.thumbnailPath,
       } satisfies UploadPayload as unknown as Record<string, unknown>)
       photoJobs++
@@ -401,6 +452,27 @@ export function startUploads(): void {
     logger.upload.error('Upload process loop crashed:', err)
     isUploading = false
   })
+}
+
+function scheduleIdleSelfHeal(): void {
+  if (idleReconcileTimer) return
+  idleReconcileTimer = setTimeout(() => {
+    idleReconcileTimer = null
+    if (isPaused || isUploading || !hasResolvedUploadConnection()) return
+    if (getSettings().behavior.autoUploadAfterEncoding === false) return
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
+      void reconciler.reconcileMedia({
+        scope: 'ambient',
+        silent: true,
+      }).catch((err: unknown) => {
+        logger.upload.warn(`idle self-heal reconcile failed: ${err instanceof Error ? err.message : err}`)
+      })
+    } catch (err) {
+      logger.upload.warn(`idle self-heal reconcile bootstrap failed: ${err instanceof Error ? err.message : err}`)
+    }
+  }, 2000)
 }
 
 export function stopUploads(): void {
@@ -527,20 +599,52 @@ async function processLoop(): Promise<void> {
         throw statErr
       }
 
-      // Step 1: Get signed upload URL
-      const { signedUrl, storagePath } = await getSignedUploadUrl(
-        payload.entryId,
-        payload.competitionId,
-        payload.type,
-        payload.objectName,
-        payload.contentType,
-        uploadRunId,
-      )
+      let storagePath: string | undefined
+      let thumbStoragePath: string | undefined
 
-      // Step 2: Upload file with timeout
-      await uploadFileToSignedUrl(signedUrl, payload)
+      if (payload.isPhotoThumbRepair) {
+        if (!payload.sourcePhotoStoragePath) {
+          throw new Error(`Thumb repair missing sourcePhotoStoragePath for ${payload.objectName}`)
+        }
+        if (!payload.thumbnailPath || !fs.existsSync(payload.thumbnailPath)) {
+          const jit = await ensurePhotoThumbnail(payload.filePath)
+          if (jit) payload.thumbnailPath = jit
+        }
+        if (!payload.thumbnailPath || !fs.existsSync(payload.thumbnailPath)) {
+          throw new Error(`Thumb repair could not generate thumbnail for ${payload.filePath}`)
+        }
 
-      // Step 2b (SD-import photos only): upload the 200×200 WebP thumb as a sibling
+        const repair = await getSignedUploadUrl(
+          payload.entryId,
+          payload.competitionId,
+          payload.type,
+          payload.objectName,
+          'image/webp',
+          uploadRunId,
+        )
+        await uploadFileToSignedUrl(repair.signedUrl, {
+          ...payload,
+          filePath: payload.thumbnailPath,
+          contentType: 'image/webp',
+        })
+        thumbStoragePath = repair.storagePath
+        logger.upload.info(`Uploaded thumb repair: ${payload.objectName} for routine ${payload.routineId}`)
+      } else {
+        // Step 1: Get signed upload URL
+        const signed = await getSignedUploadUrl(
+          payload.entryId,
+          payload.competitionId,
+          payload.type,
+          payload.objectName,
+          payload.contentType,
+          uploadRunId,
+        )
+        storagePath = signed.storagePath
+
+        // Step 2: Upload file with timeout
+        await uploadFileToSignedUrl(signed.signedUrl, payload)
+
+        // Step 2b (SD-import photos only): upload the 200×200 WebP thumb as a sibling
       // of the original. Thumb R2 key mirrors `storagePath` but with the extension
       // swapped to `_thumb.webp` (e.g. `photos/photo_001.jpg` → `photos/photo_001_thumb.webp`).
       // If the thumb PUT fails, we log + continue — the original already landed, so the
@@ -549,51 +653,46 @@ async function processLoop(): Promise<void> {
       // T-H17 (2026-04-19): if the upload payload didn't ship a pre-generated
       // thumb path (import loop no longer creates them), generate one now
       // via ffmpeg. Keeps main thread free during bulk SD imports.
-      let thumbStoragePath: string | undefined
-      if (
-        payload.type === 'photos' &&
-        (!payload.thumbnailPath || !fs.existsSync(payload.thumbnailPath))
-      ) {
-        const jit = await ensurePhotoThumbnail(payload.filePath)
-        if (jit) {
-          payload.thumbnailPath = jit
-        }
-      }
-      if (payload.type === 'photos' && payload.thumbnailPath && fs.existsSync(payload.thumbnailPath)) {
-        try {
-          const thumbObjectName = deriveThumbObjectName(payload.objectName)
-          const { signedUrl: thumbSignedUrl, storagePath: tsp } = await getSignedUploadUrl(
-            payload.entryId,
-            payload.competitionId,
-            payload.type,
-            thumbObjectName,
-            'image/webp',
-            uploadRunId,
-          )
-          // HEAD pre-check: if R2 already has this thumb at `tsp`, skip the PUT but
-          // still record `thumbStoragePath` so /complete's parallel array carries the
-          // R2 key for this photo. Safe by construction — `tsp` is the sibling path
-          // CompPortal minted; if the HEAD says it exists there, the original-photo
-          // PUT above just succeeded, so the sibling (same prefix) is the right target.
-          const headStatus = await checkR2ObjectExists(thumbSignedUrl)
-          if (headStatus === 'exists') {
-            thumbStoragePath = tsp
-            logger.upload.info(`Thumb HEAD-hit, skipping PUT: ${thumbObjectName} for routine ${payload.routineId}`)
-          } else {
-            await uploadFileToSignedUrl(thumbSignedUrl, {
-              ...payload,
-              filePath: payload.thumbnailPath,
-              objectName: thumbObjectName,
-              contentType: 'image/webp',
-            })
-            thumbStoragePath = tsp
-            logger.upload.info(`Uploaded thumb: ${thumbObjectName} for routine ${payload.routineId}`)
+        if (
+          payload.type === 'photos' &&
+          (!payload.thumbnailPath || !fs.existsSync(payload.thumbnailPath))
+        ) {
+          const jit = await ensurePhotoThumbnail(payload.filePath)
+          if (jit) {
+            payload.thumbnailPath = jit
           }
-        } catch (thumbErr) {
-          logger.upload.warn(
-            `Thumb upload failed for ${payload.objectName} (non-fatal):`,
-            thumbErr instanceof Error ? thumbErr.message : thumbErr,
-          )
+        }
+        if (payload.type === 'photos' && payload.thumbnailPath && fs.existsSync(payload.thumbnailPath)) {
+          try {
+            const thumbObjectName = deriveThumbObjectName(payload.objectName)
+            const { signedUrl: thumbSignedUrl, storagePath: tsp } = await getSignedUploadUrl(
+              payload.entryId,
+              payload.competitionId,
+              payload.type,
+              thumbObjectName,
+              'image/webp',
+              uploadRunId,
+            )
+            const headStatus = await checkR2ObjectExists(thumbSignedUrl)
+            if (headStatus === 'exists') {
+              thumbStoragePath = tsp
+              logger.upload.info(`Thumb HEAD-hit, skipping PUT: ${thumbObjectName} for routine ${payload.routineId}`)
+            } else {
+              await uploadFileToSignedUrl(thumbSignedUrl, {
+                ...payload,
+                filePath: payload.thumbnailPath,
+                objectName: thumbObjectName,
+                contentType: 'image/webp',
+              })
+              thumbStoragePath = tsp
+              logger.upload.info(`Uploaded thumb: ${thumbObjectName} for routine ${payload.routineId}`)
+            }
+          } catch (thumbErr) {
+            logger.upload.warn(
+              `Thumb upload failed for ${payload.objectName} (non-fatal):`,
+              thumbErr instanceof Error ? thumbErr.message : thumbErr,
+            )
+          }
         }
       }
 
@@ -659,6 +758,16 @@ async function processLoop(): Promise<void> {
             const jp = doneJob.payload as unknown as UploadPayload
             const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
             const tsp = (doneJob.payload as Record<string, unknown>).thumbStoragePath as string | undefined
+            if (jp.isPhotoThumbRepair) {
+              const sourcePhotoStoragePath = jp.sourcePhotoStoragePath
+              if (sourcePhotoStoragePath && tsp) {
+                const idx = photoStoragePaths.indexOf(sourcePhotoStoragePath)
+                if (idx !== -1) {
+                  photoThumbnailStoragePaths[idx] = tsp
+                }
+              }
+              continue
+            }
             if (!sp) continue
             if (jp.isKeyframe && typeof jp.keyframeIndex === 'number') {
               // Keyframes are indexed by `keyframeIndex` (0..2) — slot in at that position.
@@ -1004,6 +1113,14 @@ async function callPluginCompletePartial(routineId: string, uploadRunId: string)
     const jp = doneJob.payload as unknown as UploadPayload
     const sp = (doneJob.payload as Record<string, unknown>).storagePath as string | undefined
     const tsp = (doneJob.payload as Record<string, unknown>).thumbStoragePath as string | undefined
+    if (jp.isPhotoThumbRepair) {
+      const sourcePhotoStoragePath = jp.sourcePhotoStoragePath
+      if (sourcePhotoStoragePath && tsp) {
+        const idx = photoStoragePaths.indexOf(sourcePhotoStoragePath)
+        if (idx !== -1) photoThumbnailStoragePaths[idx] = tsp
+      }
+      continue
+    }
     if (!sp) continue
     if (jp.isKeyframe && typeof jp.keyframeIndex === 'number') {
       while (videoKeyframeStoragePaths.length <= jp.keyframeIndex) videoKeyframeStoragePaths.push('')
@@ -1150,12 +1267,28 @@ export async function retryOrphanedCompletions(): Promise<number> {
       const photoStoragePaths: string[] = []
       const photoThumbnailStoragePaths: string[] = []
       const photoCapturedAt: string[] = []
+      const videoKeyframeStoragePaths: string[] = []
       for (const job of activeJobs) {
         const jp = job.payload as unknown as UploadPayload
         const sp = (job.payload as Record<string, unknown>).storagePath as string | undefined
         const tsp = (job.payload as Record<string, unknown>).thumbStoragePath as string | undefined
+        if (jp.isPhotoThumbRepair) {
+          const sourcePhotoStoragePath = jp.sourcePhotoStoragePath
+          if (sourcePhotoStoragePath && tsp) {
+            const idx = photoStoragePaths.indexOf(sourcePhotoStoragePath)
+            if (idx !== -1) {
+              photoThumbnailStoragePaths[idx] = tsp
+            }
+          }
+          continue
+        }
         if (!sp) continue
-        if (jp.type === 'photos') {
+        if (jp.isKeyframe && typeof jp.keyframeIndex === 'number') {
+          while (videoKeyframeStoragePaths.length <= jp.keyframeIndex) {
+            videoKeyframeStoragePaths.push('')
+          }
+          videoKeyframeStoragePaths[jp.keyframeIndex] = sp
+        } else if (jp.type === 'photos') {
           photoStoragePaths.push(sp)
           photoThumbnailStoragePaths.push(tsp || '')
           const photo = routine.photos?.find(
@@ -1187,6 +1320,7 @@ export async function retryOrphanedCompletions(): Promise<number> {
         photoStoragePaths,
         photoThumbnailStoragePaths,
         photoCapturedAt,
+        videoKeyframeStoragePaths,
       })
 
       state.updateRoutineStatus(routineId, 'uploaded')
@@ -1322,6 +1456,8 @@ interface RemoteKeyframeEntry {
 interface RemotePhotoEntry {
   filename: string
   thumbnail_present: boolean
+  storage_url?: string | null
+  thumbnail_url?: string | null
 }
 export interface RemoteRoutineInventory {
   filenames: Set<string>                    // v1 photo names (always present when endpoint available)
@@ -1520,6 +1656,10 @@ export async function resumeUnfinishedUploads(): Promise<ResumeUnfinishedReport>
  */
 export async function autoResumeUnfinished(): Promise<ResumeUnfinishedReport> {
   const settings = getSettings()
+  if (settings.behavior.autoUploadAfterEncoding === false) {
+    logger.upload.info('Auto-resume on boot skipped because auto-upload is disabled')
+    return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: false, error: 'disabled' }
+  }
   const enabled = settings.upload?.autoResumeOnBoot !== false
   if (!enabled) {
     logger.upload.info('Auto-resume on boot disabled via setting — skipping')

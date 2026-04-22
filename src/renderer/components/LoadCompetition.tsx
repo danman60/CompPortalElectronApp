@@ -64,7 +64,7 @@ export default function LoadCompetition(): React.ReactElement {
     const currentCode = settings?.compsync.shareCode || ''
     if (competition && currentCode && currentCode !== code) {
       const recordedCount = competition.routines.filter(
-        (r) => r.status !== 'pending' && r.status !== 'skipped',
+        (r) => r.status !== 'pending' && r.status !== 'skipped' && r.status !== 'scratched',
       ).length
       const confirmed = window.confirm(
         `Load '${code}' and unload '${competition.name}' (${competition.routines.length} routines, ${recordedCount} recorded)? This cannot be undone.`,

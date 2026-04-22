@@ -15,19 +15,54 @@ interface PipelineStage {
   detail?: string // tooltip or sub-text
 }
 
+interface MediaUploadSummary {
+  totalVideos: number
+  uploadedVideos: number
+  totalPhotos: number
+  uploadedPhotos: number
+  hasVideos: boolean
+  hasPhotos: boolean
+  allVideosUploaded: boolean
+  allPhotosUploaded: boolean
+  allMediaUploaded: boolean
+}
+
+function getMediaUploadSummary(routine: Routine, judgeCount: number): MediaUploadSummary {
+  const totalVideos = judgeCount + 1
+  const uploadedVideos = routine.encodedFiles?.filter((f) => f.uploaded).length ?? 0
+  const totalPhotos = routine.photos?.length ?? 0
+  const uploadedPhotos = routine.photos?.filter((p) => p.uploaded).length ?? 0
+  const hasVideos = (routine.encodedFiles?.length ?? 0) > 0
+  const hasPhotos = totalPhotos > 0
+  const allVideosUploaded = !hasVideos || uploadedVideos >= totalVideos
+  const allPhotosUploaded = !hasPhotos || uploadedPhotos >= totalPhotos
+
+  return {
+    totalVideos,
+    uploadedVideos,
+    totalPhotos,
+    uploadedPhotos,
+    hasVideos,
+    hasPhotos,
+    allVideosUploaded,
+    allPhotosUploaded,
+    allMediaUploaded: allVideosUploaded && allPhotosUploaded,
+  }
+}
+
 function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
-  const total = judgeCount + 1
+  const media = getMediaUploadSummary(routine, judgeCount)
+  const total = media.totalVideos
   const encoded = routine.encodedFiles?.length ?? 0
-  const videosUploaded = routine.encodedFiles?.filter(f => f.uploaded).length ?? 0
-  const photoCount = routine.photos?.length ?? 0
-  const photosUploaded = routine.photos?.filter(p => p.uploaded).length ?? 0
+  const photoCount = media.totalPhotos
+  const photosUploaded = media.uploadedPhotos
 
   // Stage 1: Record
   const rec: PipelineStage = { label: 'REC', state: 'inactive' }
   if (routine.status === 'recording') {
     rec.state = 'active'
     rec.detail = 'Recording now'
-  } else if (routine.status !== 'pending' && routine.status !== 'skipped') {
+  } else if (routine.status !== 'pending' && routine.status !== 'skipped' && routine.status !== 'scratched') {
     rec.state = 'done'
     rec.detail = routine.outputPath ? 'MKV saved' : 'Recorded'
   }
@@ -76,7 +111,15 @@ function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
     upload.detail = routine.error || 'Upload failed'
   } else if (routine.status === 'uploaded' || routine.status === 'confirmed') {
     upload.state = 'done'
-    upload.detail = routine.status === 'confirmed' ? 'Confirmed by server' : `${videosUploaded}/${total} videos`
+    if (routine.status === 'confirmed') {
+      upload.detail = media.allMediaUploaded
+        ? 'All media confirmed by server'
+        : `Videos confirmed, photos ${photosUploaded}/${photoCount}`
+    } else if (media.allMediaUploaded) {
+      upload.detail = `Videos ${media.uploadedVideos}/${total}, photos ${photosUploaded}/${photoCount}`
+    } else {
+      upload.detail = `Videos ${media.uploadedVideos}/${total}, photos ${photosUploaded}/${photoCount}`
+    }
   } else if (routine.status === 'uploading') {
     upload.state = 'active'
     const pct = routine.uploadProgress?.percent
@@ -86,9 +129,9 @@ function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
     upload.detail = pct !== undefined
       ? `${done}/${tot} files — ${pct}%${cur ? ` (${cur})` : ''}`
       : `${done}/${tot} files`
-  } else if (videosUploaded > 0) {
+  } else if (media.uploadedVideos > 0 || photosUploaded > 0) {
     upload.state = 'active'
-    upload.detail = `${videosUploaded}/${total} videos sent`
+    upload.detail = `Videos ${media.uploadedVideos}/${total}, photos ${photosUploaded}/${photoCount}`
   }
 
   return [rec, split, photos, upload]
@@ -113,13 +156,16 @@ function stageClass(state: StageState): string {
 }
 
 // Overall status text for the primary label
-function statusToLabel(routine: Routine): { text: string; className: string } {
+function statusToLabel(routine: Routine, judgeCount: number): { text: string; className: string } {
   const status = routine.status
+  const media = getMediaUploadSummary(routine, judgeCount)
   switch (status) {
     case 'pending':
       return { text: 'Waiting', className: 'waiting' }
     case 'skipped':
       return { text: 'Skipped', className: 'waiting' }
+    case 'scratched':
+      return { text: 'Scratched', className: 'scratched' }
     case 'recording':
       return { text: 'RECORDING', className: 'recording' }
     case 'recorded':
@@ -133,13 +179,13 @@ function statusToLabel(routine: Routine): { text: string; className: string } {
     case 'uploading':
       return { text: 'Uploading', className: 'uploading' }
     case 'uploaded': {
-      const hasPhotos = (routine.photos?.length ?? 0) > 0
-      const allPhotosUp = !hasPhotos || routine.photos!.every(p => p.uploaded)
-      if (allPhotosUp) return { text: 'All media uploaded', className: 'complete' }
+      if (media.allMediaUploaded) return { text: 'All Media Uploaded', className: 'complete' }
       return { text: 'Videos Uploaded', className: 'video-only' }
     }
     case 'confirmed':
-      return { text: 'Confirmed', className: 'complete' }
+      return media.allMediaUploaded
+        ? { text: 'All Media Confirmed', className: 'complete' }
+        : { text: 'Videos Confirmed', className: 'video-only' }
     case 'failed':
       return { text: 'Failed', className: 'failed' }
     default:
@@ -147,10 +193,12 @@ function statusToLabel(routine: Routine): { text: string; className: string } {
   }
 }
 
-function getProgressPercent(routine: Routine): number {
+function getProgressPercent(routine: Routine, judgeCount: number): number {
+  const media = getMediaUploadSummary(routine, judgeCount)
   switch (routine.status) {
     case 'pending':
     case 'skipped':
+    case 'scratched':
       return 0
     case 'recording':
       return 15
@@ -167,8 +215,9 @@ function getProgressPercent(routine: Routine): number {
         ? 70 + (routine.uploadProgress.percent * 0.3)
         : 75
     case 'uploaded':
+      return media.allMediaUploaded ? 100 : 85
     case 'confirmed':
-      return 100
+      return media.allMediaUploaded ? 100 : 90
     case 'failed':
       return 0
     default:
@@ -176,7 +225,8 @@ function getProgressPercent(routine: Routine): number {
   }
 }
 
-function getBarClass(status: RoutineStatus): string {
+function getBarClass(status: RoutineStatus, routine: Routine, judgeCount: number): string {
+  const media = getMediaUploadSummary(routine, judgeCount)
   switch (status) {
     case 'recording':
       return 'recording'
@@ -187,11 +237,15 @@ function getBarClass(status: RoutineStatus): string {
     case 'uploading':
       return 'uploading'
     case 'uploaded':
+      return media.allMediaUploaded ? 'complete' : 'video-only'
     case 'confirmed':
+      return media.allMediaUploaded ? 'complete' : 'video-only'
     case 'encoded':
       return 'complete'
     case 'failed':
       return 'failed'
+    case 'scratched':
+      return 'scratched'
     default:
       return ''
   }
@@ -523,11 +577,11 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
               }
               const routine = item.routine
               const isLive = routine.status === 'recording'
-            const isNotRecorded = routine.status === 'pending' || routine.status === 'skipped'
+            const isNotRecorded = routine.status === 'pending' || routine.status === 'skipped' || routine.status === 'scratched'
             const isCurrent = currentRoutine?.id === routine.id
-            const statusInfo = statusToLabel(routine)
-            const progress = getProgressPercent(routine)
-            const barClass = getBarClass(routine.status)
+            const statusInfo = statusToLabel(routine, judgeCount)
+            const progress = getProgressPercent(routine, judgeCount)
+            const barClass = getBarClass(routine.status, routine, judgeCount)
             const pipeline = getPipeline(routine, judgeCount)
 
             return (
@@ -634,6 +688,31 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                         title="Retry upload"
                       >
                         Retry
+                      </button>
+                    )}
+                    {routine.status !== 'scratched' ? (
+                      <button
+                        className="view-btn"
+                        style={{ color: '#f59e0b', borderColor: '#f59e0b' }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          window.api.recordingScratch(routine.id)
+                        }}
+                        title="Mark routine as scratched / did not perform"
+                      >
+                        Scratch
+                      </button>
+                    ) : (
+                      <button
+                        className="view-btn"
+                        style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          window.api.recordingUnscratch(routine.id)
+                        }}
+                        title="Return scratched routine to pending"
+                      >
+                        Unscratch
                       </button>
                     )}
                     {!isNotRecorded && (

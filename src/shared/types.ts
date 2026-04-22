@@ -13,6 +13,7 @@ export interface PinnedChatConfig { enabled: boolean; maxVisible: number; rotate
 export type RoutineStatus =
   | 'pending'
   | 'skipped'
+  | 'scratched'
   | 'recording'
   | 'recording_interrupted'
   | 'recorded'
@@ -458,6 +459,7 @@ export interface AppSettings {
   upload: {
     bandwidthCapBytesPerSec: number // 0 = unlimited
     strategy: 'routine-batch' | 'round-robin' // default 'round-robin' — interleave photos across routines for slideshow breadth
+    photoPriority: 'newest-first' | 'oldest-first' // default 'newest-first' — controls which pending photo upload gets picked next
     incrementalPublish: boolean // default true — fire plugin/complete progressively during an upload
     incrementalPublishEvery: number // default 20 — fire every N photos per routine
     autoResumeOnBoot?: boolean // default true — on app boot after share-code resolve, DB cross-check + enqueue only truly-missing photos
@@ -554,6 +556,8 @@ export const IPC_CHANNELS = {
   RECORDING_PREV: 'recording:prev',
   RECORDING_SKIP: 'recording:skip',
   RECORDING_UNSKIP: 'recording:unskip',
+  RECORDING_SCRATCH: 'recording:scratch',
+  RECORDING_UNSCRATCH: 'recording:unscratch',
   RECORDING_REREC_SUSPECTED: 'recording:rerec-suspected',
 
   // FFmpeg
@@ -577,6 +581,7 @@ export const IPC_CHANNELS = {
   STATE_JUMP_TO: 'state:jump-to',
   STATE_SET_NOTE: 'state:set-note',
   STATE_EXPORT_REPORT: 'state:export-report',
+  STATE_EXPORT_VERIFICATION_REPORT: 'state:export-verification-report',
   STATE_LIST_CAMERA_OFFSETS: 'state:list-camera-offsets',
   STATE_CLEAR_CAMERA_OFFSETS: 'state:clear-camera-offsets',
 
@@ -765,6 +770,7 @@ export const IPC_CHANNELS = {
   OVERLAY_MODE_OPEN: 'overlay-mode:open',
   OVERLAY_MODE_CLOSE: 'overlay-mode:close',
   OVERLAY_MODE_TOGGLE: 'overlay-mode:toggle',
+  OVERLAY_MODE_HIDE_PANEL: 'overlay-mode:hide-panel',
 
   // Day checklist modals (start-of-day / end-of-day)
   DAY_CHECKLIST_GET: 'day-checklist:get',
@@ -1074,6 +1080,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   upload: {
     bandwidthCapBytesPerSec: 0,
     strategy: 'round-robin',
+    photoPriority: 'newest-first',
     incrementalPublish: true,
     incrementalPublishEvery: 20,
     autoResumeOnBoot: true,

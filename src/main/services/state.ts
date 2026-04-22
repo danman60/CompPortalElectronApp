@@ -75,6 +75,10 @@ let sdWatermarks: Record<string, SdWatermarkEntry> = {}
 let cachedSkippedCount = 0
 let cachedActiveCount = 0  // routines that are not skipped
 
+function isNonPerformingStatus(status: RoutineStatus): boolean {
+  return status === 'skipped' || status === 'scratched'
+}
+
 function getStatePath(): string {
   // Keep operator session state in app userData so changing media output directories
   // does not silently switch the persisted competition/session file.
@@ -190,7 +194,7 @@ function applyLoadedState(data: PersistedState): void {
   if (data.currentRoutineId) {
     currentRoutineId = data.currentRoutineId
   } else if (data.currentRoutineIndex !== undefined && data.competition) {
-    const visibleRoutines = data.competition.routines.filter(r => r.status !== 'skipped')
+    const visibleRoutines = data.competition.routines.filter(r => !isNonPerformingStatus(r.status))
     const routine = visibleRoutines[data.currentRoutineIndex]
     currentRoutineId = routine?.id || null
     logger.app.info(`Migrated state from index ${data.currentRoutineIndex} to ID ${currentRoutineId}`)
@@ -243,7 +247,7 @@ export function loadState(): PersistedState | null {
 
 function getVisibleRoutines(): Routine[] {
   if (!currentCompetition) return []
-  return currentCompetition.routines.filter(r => r.status !== 'skipped')
+  return currentCompetition.routines.filter(r => !isNonPerformingStatus(r.status))
 }
 
 function getCurrentIndex(): number {
@@ -263,7 +267,7 @@ function recomputeCachedCounts(): void {
   }
   let skipped = 0
   for (const r of currentCompetition.routines) {
-    if (r.status === 'skipped') skipped++
+    if (isNonPerformingStatus(r.status)) skipped++
   }
   cachedSkippedCount = skipped
   cachedActiveCount = currentCompetition.routines.length - skipped
@@ -547,7 +551,7 @@ export function jumpToRoutine(routineId: string): Routine | null {
   }
   // If routine is skipped, unskip it first and jump
   const allRoutine = currentCompetition.routines.find(r => r.id === routineId)
-  if (allRoutine && allRoutine.status === 'skipped') {
+  if (allRoutine && isNonPerformingStatus(allRoutine.status)) {
     allRoutine.status = 'pending'
     currentRoutineId = routineId
     saveState()
@@ -601,10 +605,10 @@ export function updateRoutineStatus(
   }
 
   // Fix 8: Update cached counts incrementally
-  if (oldStatus === 'skipped' && status !== 'skipped') {
+  if (isNonPerformingStatus(oldStatus) && !isNonPerformingStatus(status)) {
     cachedSkippedCount--
     cachedActiveCount++
-  } else if (oldStatus !== 'skipped' && status === 'skipped') {
+  } else if (!isNonPerformingStatus(oldStatus) && isNonPerformingStatus(status)) {
     cachedSkippedCount++
     cachedActiveCount--
   }
@@ -642,6 +646,23 @@ export function unskipRoutine(routineId: string): void {
   updateRoutineStatus(routineId, 'pending')
 }
 
+export function scratchRoutine(routineId: string): void {
+  updateRoutineStatus(routineId, 'scratched', {
+    recordingStartedAt: undefined,
+    recordingStoppedAt: undefined,
+    outputPath: undefined,
+    outputDir: undefined,
+    encodedFiles: undefined,
+    keyframes: undefined,
+    uploadProgress: undefined,
+    error: undefined,
+  })
+}
+
+export function unscratchedRoutine(routineId: string): void {
+  updateRoutineStatus(routineId, 'pending')
+}
+
 export function getFilteredRoutines(dayFilter?: string): Routine[] {
   if (!currentCompetition) return []
   let routines = currentCompetition.routines
@@ -656,6 +677,7 @@ export function exportReport(): string {
 
   const lines: string[] = []
   const now = new Date()
+  const csvEscape = (s: string) => s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
 
   lines.push(`CompSync Media — Session Report`)
   lines.push(`Competition: ${currentCompetition.name}`)
@@ -664,7 +686,7 @@ export function exportReport(): string {
   lines.push('')
 
   const total = currentCompetition.routines.length
-  const recorded = currentCompetition.routines.filter((r) => r.status !== 'pending' && r.status !== 'skipped').length
+  const recorded = currentCompetition.routines.filter((r) => r.status !== 'pending' && !isNonPerformingStatus(r.status)).length
   const errors = currentCompetition.routines.filter((r) => r.status === 'failed' || r.error).length
   const withNotes = currentCompetition.routines.filter((r) => r.notes).length
   lines.push(`Total routines: ${total}`)
@@ -679,11 +701,10 @@ export function exportReport(): string {
     const startTime = r.recordingStartedAt || ''
     const stopTime = r.recordingStoppedAt || ''
     let duration = ''
-    if (r.recordingStartedAt && r.recordingStoppedAt) {
+    if (r.status !== 'scratched' && r.recordingStartedAt && r.recordingStoppedAt) {
       const sec = Math.round((new Date(r.recordingStoppedAt).getTime() - new Date(r.recordingStartedAt).getTime()) / 1000)
       duration = `${Math.floor(sec / 60)}m${sec % 60}s`
     }
-    const csvEscape = (s: string) => s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
     lines.push([
       r.entryNumber,
       csvEscape(r.routineTitle),
@@ -695,6 +716,76 @@ export function exportReport(): string {
       startTime,
       stopTime,
       duration,
+    ].join(','))
+  }
+
+  return lines.join('\n')
+}
+
+export function exportVerificationReport(): string {
+  if (!currentCompetition) return ''
+
+  const lines: string[] = []
+  const now = new Date()
+  const csvEscape = (s: string) => s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
+
+  const issueRows = currentCompetition.routines.map((routine) => {
+    const photos = routine.photos || []
+    const encodedFiles = routine.encodedFiles || []
+    const videosUploaded = encodedFiles.filter((f) => f.uploaded).length
+    const photosUploaded = photos.filter((p) => p.uploaded).length
+    const thumbsMissing = photos.filter((p) => p.uploaded && !p.thumbnailStoragePath).length
+    const keyframesPresent = (routine.keyframes || []).filter(Boolean).length
+    const hasMediaState = routine.status !== 'pending' && !isNonPerformingStatus(routine.status)
+
+    const issues: string[] = []
+    if (routine.status === 'failed' || routine.error) issues.push('error')
+    if (hasMediaState && encodedFiles.length === 0 && !['recording', 'recorded', 'encoding', 'queued'].includes(routine.status)) {
+      issues.push('missing-video')
+    }
+    if (encodedFiles.length > 0 && videosUploaded < encodedFiles.length) issues.push('video-upload-pending')
+    if (hasMediaState && photos.length === 0) issues.push('no-photos-matched')
+    if (photos.length > 0 && photosUploaded < photos.length) issues.push('photo-upload-pending')
+    if (thumbsMissing > 0) issues.push('thumbnail-missing')
+    if (encodedFiles.length > 0 && keyframesPresent < 3) issues.push('keyframes-missing')
+    if (routine.notes) issues.push('operator-note')
+    if (routine.status === 'scratched') issues.push('scratched')
+
+    return {
+      routine,
+      videosUploaded,
+      videosTotal: encodedFiles.length,
+      photosUploaded,
+      photosTotal: photos.length,
+      thumbsMissing,
+      keyframesPresent,
+      issues,
+    }
+  })
+
+  lines.push('# CompSync Media Verification Report')
+  lines.push(`Competition: ${currentCompetition.name}`)
+  lines.push(`Generated: ${now.toLocaleString()}`)
+  lines.push(`Routines with issues: ${issueRows.filter((row) => row.issues.length > 0).length}`)
+  lines.push(`Routines with notes: ${issueRows.filter((row) => row.routine.notes).length}`)
+  lines.push(`Video issues: ${issueRows.filter((row) => row.issues.includes('missing-video') || row.issues.includes('video-upload-pending')).length}`)
+  lines.push(`Photo issues: ${issueRows.filter((row) => row.issues.includes('no-photos-matched') || row.issues.includes('photo-upload-pending')).length}`)
+  lines.push(`Thumbnail issues: ${issueRows.filter((row) => row.issues.includes('thumbnail-missing')).length}`)
+  lines.push('')
+  lines.push('Entry#,Title,Studio,Status,Videos Uploaded,Photos Uploaded,Thumbs Missing,Keyframes Present,Notes,Issues')
+
+  for (const row of issueRows) {
+    lines.push([
+      row.routine.entryNumber,
+      csvEscape(row.routine.routineTitle),
+      csvEscape(row.routine.studioName),
+      row.routine.status,
+      `${row.videosUploaded}/${row.videosTotal}`,
+      `${row.photosUploaded}/${row.photosTotal}`,
+      String(row.thumbsMissing),
+      `${row.keyframesPresent}/3`,
+      csvEscape(row.routine.notes || ''),
+      csvEscape(row.issues.join('; ') || 'ok'),
     ].join(','))
   }
 

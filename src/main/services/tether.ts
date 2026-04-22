@@ -112,7 +112,7 @@ function getRecordingWindows(): RecordingWindow[] {
   const comp = state.getCompetition()
   if (!comp) return []
   return comp.routines
-    .filter((r) => r.recordingStartedAt && r.recordingStoppedAt)
+    .filter((r) => r.status !== 'scratched' && r.recordingStartedAt && r.recordingStoppedAt)
     .map((r) => ({
       routineId: r.id,
       entryNumber: r.entryNumber,

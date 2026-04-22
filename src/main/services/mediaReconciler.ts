@@ -96,9 +96,12 @@ function selectCandidates(routineIds?: string[]): Routine[] {
   for (const r of subset) {
     const pendingPhotos = (r.photos || []).some((p) => !p.uploaded)
     const pendingVideos = (r.encodedFiles || []).some((f) => !f.uploaded)
+    const stalePhotoMetadata = (r.photos || []).some(
+      (p) => p.uploaded && (!p.storagePath || !p.thumbnailStoragePath),
+    )
     const hasVideos = (r.encodedFiles || []).length > 0
     const keyframesIncomplete = hasVideos && (r.keyframes || []).filter(Boolean).length < 3
-    if (pendingPhotos || pendingVideos || keyframesIncomplete) {
+    if (pendingPhotos || pendingVideos || keyframesIncomplete || stalePhotoMetadata) {
       out.push(r)
     } else if (routineIds && routineIds.length > 0) {
       // Explicit target: include even if nothing obvious pending — the
@@ -120,20 +123,41 @@ function reconcileOne(
   inv: RemoteRoutineInventory | undefined,
 ): { repaired: number; queued: number; error?: string } {
   let repaired = 0
+  let queued = 0
 
   // ── Photo reconcile ──
   const remoteFilenames = inv?.filenames ?? new Set<string>()
   const localPhotos = routine.photos || []
   let photosTouched = false
   const healedPhotos: PhotoMatch[] = localPhotos.map((p) => {
-    if (p.uploaded) return p
     const basename = path.basename(p.filePath)
-    if (remoteFilenames.has(basename)) {
+    const remotePhoto = inv?.photos?.get(basename)
+    const remotePresent = remotePhoto != null || remoteFilenames.has(basename)
+    if (!remotePresent) return p
+
+    const next = { ...p }
+    let changed = false
+
+    if (!next.uploaded) {
       repaired++
       photosTouched = true
-      return { ...p, uploaded: true }
+      next.uploaded = true
+      changed = true
     }
-    return p
+
+    if (remotePhoto?.storage_url && next.storagePath !== remotePhoto.storage_url) {
+      next.storagePath = remotePhoto.storage_url
+      photosTouched = true
+      changed = true
+    }
+
+    if (remotePhoto?.thumbnail_url && next.thumbnailStoragePath !== remotePhoto.thumbnail_url) {
+      next.thumbnailStoragePath = remotePhoto.thumbnail_url
+      photosTouched = true
+      changed = true
+    }
+
+    return changed ? next : p
   })
 
   // ── Video reconcile (v2 field) ──
@@ -163,29 +187,30 @@ function reconcileOne(
   // Re-read so enqueueRoutine sees the healed flags.
   const fresh = state.getCompetition()?.routines.find((r) => r.id === routine.id) ?? routine
   const enqResult = uploadService.enqueueRoutine(fresh)
-  let queued = enqResult.queuedJobs
+  queued += enqResult.queuedJobs
 
   // ── Thumbs (v2): for each local photo already uploaded but DB says thumb
-  //    is missing, force-enqueue a thumb-only upload. Rare — the normal
-  //    upload path PUTs the thumb as a sibling — but during recovery of
-  //    old data where thumbs never made it, this plugs the gap.
+  //    is missing, force-enqueue a thumb-only upload.
   if (inv?.photos && localPhotos.length > 0) {
-    // Build a set of basename→localPhoto for O(1) lookup.
+    const latestRoutine = state.getCompetition()?.routines.find((r) => r.id === routine.id) ?? fresh
     const byName = new Map<string, PhotoMatch>()
-    for (const p of localPhotos) byName.set(path.basename(p.filePath), p)
+    for (const p of latestRoutine.photos || []) {
+      byName.set(path.basename(p.filePath), p)
+    }
+
     for (const [fname, remotePhoto] of inv.photos.entries()) {
       if (remotePhoto.thumbnail_present) continue
       const local = byName.get(fname)
       if (!local) continue
-      if (!local.thumbnailPath) continue
-      if (!fs.existsSync(local.thumbnailPath)) continue
-      // Thumb regeneration is handled by the upload worker's ensurePhotoThumbnail
-      // path (T-H17). For a thumb-only backfill we'd need a separate IPC path;
-      // for now, log at info so the operator knows thumbs are lagging.
-      // Future T-V7-27: add uploadService.enqueueThumbOnly(routineId, filename).
-      logger.app.info(
-        `Reconcile: R${routine.entryNumber} thumb missing in DB for ${fname} — flagged (no thumb-only enqueue yet)`,
-      )
+      if (!local.uploaded || !local.storagePath) continue
+      if (!fs.existsSync(local.filePath)) continue
+      const repairResult = uploadService.enqueuePhotoThumbRepair(latestRoutine, local)
+      queued += repairResult.queuedJobs
+      if (repairResult.queuedJobs > 0) {
+        logger.app.info(
+          `Reconcile: R${routine.entryNumber} enqueued thumb repair for ${fname}`,
+        )
+      }
     }
   }
 
@@ -206,7 +231,7 @@ function reconcileOne(
     }
   }
 
-  if (queued > 0) onRoutineSuccess(routine.id)
+  if (queued > 0 || repaired > 0) onRoutineSuccess(routine.id)
   return { repaired, queued }
 }
 
@@ -344,6 +369,10 @@ let ambientFirstTick: NodeJS.Timeout | null = null
 export function startAmbientReconciler(): void {
   if (ambientTimer) return
   const s = getSettings()
+  if (s.behavior.autoUploadAfterEncoding === false) {
+    logger.app.info('Ambient reconciler: disabled because auto-upload is off')
+    return
+  }
   const rawMinutes = s.upload?.reconcileCadenceMinutes
   const minutes = typeof rawMinutes === 'number' ? rawMinutes : 15
   if (minutes <= 0) {

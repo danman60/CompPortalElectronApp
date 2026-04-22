@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import { app } from 'electron'
 import { JobRecord, JobType, JobStatus } from '../../shared/types'
 import { logger } from '../logger'
+import { getSettings } from './settings'
 
 // --- State ---
 
@@ -199,6 +200,7 @@ export function updateStatus(
 /** Get the next pending job of a given type, respecting backoff. */
 export function getNext(type: JobType): JobRecord | null {
   const now = Date.now()
+  const eligible: JobRecord[] = []
   for (const job of jobs) {
     if (job.type !== type || job.status !== 'pending') continue
 
@@ -209,9 +211,35 @@ export function getNext(type: JobType): JobRecord | null {
       if (now - lastUpdate < backoffMs) continue
     }
 
-    return job
+    eligible.push(job)
   }
-  return null
+  if (eligible.length === 0) return null
+  if (type !== 'upload') return eligible[0]
+
+  const priority = getSettings().upload?.photoPriority ?? 'newest-first'
+  const newestPrimaryPhoto = eligible
+    .filter((job) => {
+      const payload = job.payload as Record<string, unknown>
+      return payload.type === 'photos' && payload.isPhotoThumbRepair !== true
+    })
+    .sort((a, b) => priority === 'oldest-first'
+      ? getPhotoPriorityTs(a) - getPhotoPriorityTs(b)
+      : getPhotoPriorityTs(b) - getPhotoPriorityTs(a))[0]
+
+  return newestPrimaryPhoto || eligible[0]
+}
+
+function getPhotoPriorityTs(job: JobRecord): number {
+  const payload = job.payload as Record<string, unknown>
+  const captureTime = typeof payload.photoCaptureTime === 'string' ? payload.photoCaptureTime : ''
+  const captureTs = Date.parse(captureTime)
+  if (Number.isFinite(captureTs)) return captureTs
+
+  const createdTs = Date.parse(job.createdAt)
+  if (Number.isFinite(createdTs)) return createdTs
+
+  const updatedTs = Date.parse(job.updatedAt)
+  return Number.isFinite(updatedTs) ? updatedTs : 0
 }
 
 export function getByRoutine(routineId: string): JobRecord[] {

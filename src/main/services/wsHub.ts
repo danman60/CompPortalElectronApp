@@ -81,6 +81,7 @@ export function start(): void {
   }, 30000)
 
   overlay.setOnStateChange(() => broadcastState())
+  obs.setOnStateChange(() => broadcastState())
   obs.setOnAudioLevels((levels) => broadcastAudioLevels(levels))
   chatBridge.setOnPinChange(() => broadcastState())
 }

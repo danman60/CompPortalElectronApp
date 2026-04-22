@@ -20,6 +20,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_SKIP, routineId),
   recordingUnskip: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_UNSKIP, routineId),
+  recordingScratch: (routineId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_SCRATCH, routineId),
+  recordingUnscratch: (routineId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_UNSCRATCH, routineId),
 
   // FFmpeg
   ffmpegEncode: (routineId: string) =>
@@ -37,11 +41,13 @@ const api = {
   scheduleBrowseFile: () => ipcRenderer.invoke(IPC_CHANNELS.SCHEDULE_BROWSE_FILE),
 
   // State
+  stateGet: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_GET),
   jumpToRoutine: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATE_JUMP_TO, routineId),
   setRoutineNote: (routineId: string, note: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATE_SET_NOTE, routineId, note),
   exportReport: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_EXPORT_REPORT),
+  exportVerificationReport: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_EXPORT_VERIFICATION_REPORT),
   listCameraOffsets: () =>
     ipcRenderer.invoke(IPC_CHANNELS.STATE_LIST_CAMERA_OFFSETS),
   clearCameraOffsets: () =>
@@ -61,6 +67,8 @@ const api = {
   uploadAll: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ALL),
   uploadResumeUnfinished: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED),
   uploadCountUnfinished: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_COUNT_UNFINISHED),
+  mediaReconcileRun: (scope: 'manual' | 'ambient' | 'boot' | 'sd-plugin' | 'post-record' | 'tether-error' = 'manual') =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEDIA_RECONCILE_RUN, scope),
   uploadRoutine: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_ROUTINE, routineId),
   uploadCancelRoutine: (routineId: string) =>
@@ -211,6 +219,7 @@ const api = {
   overlayModeOpen: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_OPEN),
   overlayModeClose: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_CLOSE),
   overlayModeToggle: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_TOGGLE),
+  overlayModeHidePanel: (panelId: string) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MODE_HIDE_PANEL, panelId),
 
   // Day Checklist (Start-of-Day / End-of-Day modals)
   dayChecklistGet: (date: string, kind: 'start' | 'end') =>

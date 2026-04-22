@@ -5,10 +5,22 @@
   height: 100vh;
 }
 
-.main-split {
+.main-stack {
   display: flex;
+  flex-direction: column;
   flex: 1;
   overflow: hidden;
+}
+
+.main-stack > .left-panel {
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.main-stack > .right-panel {
+  min-height: 260px;
+  flex: 1 1 auto;
 }
 
 /* Compact mode — narrower left panel, hide middle panel & drag handles */

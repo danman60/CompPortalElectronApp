@@ -196,7 +196,7 @@ function pendingRoutinesForDay(routines: Routine[], day: string): Routine[] {
  * as recorded / encoded / uploaded.
  */
 function allRoutinesForDay(routines: Routine[], day: string): Routine[] {
-  return routines.filter((r) => r.scheduledDay === day && r.status !== 'skipped')
+  return routines.filter((r) => r.scheduledDay === day && r.status !== 'skipped' && r.status !== 'scratched')
 }
 
 /**

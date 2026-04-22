@@ -420,6 +420,7 @@ function SystemMonitor(): React.ReactElement | null {
 function ImportPill(): React.ReactElement | null {
   const s = useImportMinimizedState()
   if (!s.active) return null
+  const isComplete = s.stage === 'done' || s.canRemoveCard === true
   const label = s.total > 0 ? `${s.current}/${s.total}` : (s.message || '...')
   const pct = s.total > 0 ? Math.min(100, Math.round((s.current / s.total) * 100)) : 0
 
@@ -436,14 +437,23 @@ function ImportPill(): React.ReactElement | null {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
       <button
-        className="import-pill"
+        className={`import-pill${isComplete ? ' complete' : ''}`}
         onClick={() => restoreMinimizedImport()}
         title="Click to re-open import panel"
         style={{ position: 'relative' }}
       >
-        <span className="import-pill-dot" />
-        <span>Importing {label}{s.total > 0 ? ` (${pct}%)` : ''}</span>
-        {s.total > 0 && (
+        {isComplete ? (
+          <>
+            <span className="import-pill-remove-icon" aria-hidden>{'\u23CF'}</span>
+            <span>Import Complete — Remove SD Card</span>
+          </>
+        ) : (
+          <>
+            <span className="import-pill-dot" />
+            <span>Importing {label}{s.total > 0 ? ` (${pct}%)` : ''}</span>
+          </>
+        )}
+        {!isComplete && s.total > 0 && (
           <span
             aria-hidden
             style={{
@@ -458,22 +468,24 @@ function ImportPill(): React.ReactElement | null {
           />
         )}
       </button>
-      <button
-        onClick={handleCancel}
-        title="Cancel running import"
-        style={{
-          background: 'transparent',
-          border: '1px solid var(--text-muted, #888)',
-          color: 'var(--text-muted, #888)',
-          borderRadius: '4px',
-          padding: '2px 8px',
-          cursor: 'pointer',
-          fontSize: '11px',
-          lineHeight: 1.4,
-        }}
-      >
-        Cancel
-      </button>
+      {!isComplete && (
+        <button
+          onClick={handleCancel}
+          title="Cancel running import"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--text-muted, #888)',
+            color: 'var(--text-muted, #888)',
+            borderRadius: '4px',
+            padding: '2px 8px',
+            cursor: 'pointer',
+            fontSize: '11px',
+            lineHeight: 1.4,
+          }}
+        >
+          Cancel
+        </button>
+      )}
     </span>
   )
 }

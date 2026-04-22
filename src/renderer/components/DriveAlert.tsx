@@ -16,9 +16,10 @@ type MinimizedImportState = {
   total: number
   message: string
   driveKey: string | null
+  canRemoveCard?: boolean
 }
 let minimizedState: MinimizedImportState = {
-  active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null,
+  active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null, canRemoveCard: false,
 }
 const minimizedListeners = new Set<(s: MinimizedImportState) => void>()
 function setMinimized(next: Partial<MinimizedImportState>): void {
@@ -171,6 +172,14 @@ export default function DriveAlert(): React.ReactElement | null {
           (result.clockOffsetMs !== 0 ? ` (clock offset: ${Math.round(result.clockOffsetMs / 1000)}s)` : ''),
       }))
       setShowResults(true)
+      setMinimized({
+        active: true,
+        stage: 'done',
+        current: result.totalPhotos,
+        total: result.totalPhotos,
+        message: 'Import complete — remove SD card',
+        canRemoveCard: true,
+      })
       // Bug B: header-triggered imports own the pill via Header's finally{}.
       // Drive-detect imports own it via handleDismiss. For both, clear it
       // here once the match-result lands so the pill doesn't get stuck on
@@ -212,6 +221,7 @@ export default function DriveAlert(): React.ReactElement | null {
       total: 0,
       message: `Scanning...`,
       driveKey: detected ? detected.drivePath : (wpdDevice?.id ?? null),
+      canRemoveCard: false,
     })
 
     window.api.photosImport(photoPath).then((result) => {
@@ -294,6 +304,7 @@ export default function DriveAlert(): React.ReactElement | null {
       total: detected.photoCount ?? 0,
       message: `SD matched: ${detected.photoCount ?? 0} photos — importing`,
       driveKey: `${detected.drivePath}::${detected.photoCount}`,
+      canRemoveCard: false,
     })
     runImport(detected.photoPath)
     // runImport identity changes every render; intentional single-fire guard via ref.
@@ -342,7 +353,7 @@ export default function DriveAlert(): React.ReactElement | null {
   const isWorking = ['scanning', 'reading-exif', 'matching', 'copying', 'uploading'].includes(progress.stage)
   const hasCompetition = !!competition
   const recordedCount = competition?.routines?.filter(
-    (r) => r.recordingStartedAt && r.recordingStoppedAt,
+    (r) => r.status !== 'scratched' && r.recordingStartedAt && r.recordingStoppedAt,
   ).length ?? 0
 
   const showPrimaryAlert = (detected || wpdDevice) && !minimized

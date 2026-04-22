@@ -207,6 +207,25 @@ export function closeAll(): void {
   mainWindowRef = null
 }
 
+export function hidePanel(id: PanelId): void {
+  const win = panels.get(id)
+  if (!win) return
+  try {
+    saveBounds(id, win)
+    if (!win.isDestroyed()) win.close()
+  } catch (err) {
+    logger.app.warn(`overlayPanels: hide error for ${id}:`, err instanceof Error ? err.message : String(err))
+  }
+
+  if (panels.size <= 1 && mainWindowRef && !mainWindowRef.isDestroyed()) {
+    try {
+      mainWindowRef.show()
+      mainWindowRef.focus()
+    } catch {}
+    mainWindowRef = null
+  }
+}
+
 export function toggle(mainWindow: BrowserWindow): void {
   if (isOpen()) closeAll()
   else openAll(mainWindow)

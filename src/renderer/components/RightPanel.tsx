@@ -74,7 +74,7 @@ export default function RightPanel(): React.ReactElement {
 
   const total = competition?.routines.length ?? 0
   const recorded = competition?.routines.filter(
-    (r) => r.status !== 'pending' && r.status !== 'skipped',
+    (r) => r.status !== 'pending' && r.status !== 'skipped' && r.status !== 'scratched',
   ).length ?? 0
   const remaining = total - recorded
   const outputDir = settings?.fileNaming.outputDirectory || ''

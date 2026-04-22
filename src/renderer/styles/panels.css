@@ -70,6 +70,26 @@ html, body {
   border-color: #a32626;
 }
 
+.panel-hide-btn {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.16);
+  color: var(--text-muted, #9ca3af);
+  font-size: 10px;
+  font-weight: 700;
+  width: 22px;
+  height: 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+.panel-hide-btn:hover {
+  color: #fff;
+  border-color: rgba(255,255,255,0.38);
+  background: rgba(255,255,255,0.08);
+}
+
 /* Body is non-drag so scrollbars, wheel events, clicks, text selection, and
    table row clicks all work. Drag is available via the titlebar (always) and
    via any remaining drag-marked region. Tradeoff: you can't pick up the

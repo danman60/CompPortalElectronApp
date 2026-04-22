@@ -3,9 +3,8 @@ import { useStore, initIPCListeners } from './store/useStore'
 import { IPC_CHANNELS } from '../shared/types'
 import Header from './components/Header'
 import LeftPanel from './components/LeftPanel'
-
 import RightPanel from './components/RightPanel'
-import DragHandle from './components/DragHandle'
+import MediaAuditPanel from './components/MediaAuditPanel'
 import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
@@ -839,11 +838,24 @@ export default function App(): React.ReactElement {
       }
     }).catch(() => {})
 
-    // Load persisted competition
-    window.api.scheduleGet().then((comp) => {
-      if (comp) {
-        useStore.getState().setCompetition(comp)
+    // Load a full authoritative state snapshot so the main renderer boots
+    // with the same current routine / next routine / index the panels and
+    // WS clients should see.
+    window.api.stateGet().then((snapshot) => {
+      if (!snapshot || typeof snapshot !== 'object') return
+      const s = snapshot as {
+        competition: unknown
+        currentRoutine: unknown
+        nextRoutine: unknown
+        currentIndex: unknown
       }
+      useStore.setState({
+        competition: (s.competition as any) ?? null,
+        currentRoutine: (s.currentRoutine as any) ?? null,
+        nextRoutine: (s.nextRoutine as any) ?? null,
+        currentIndex: typeof s.currentIndex === 'number' ? s.currentIndex : 0,
+      })
+      useStore.getState().recalcCounts()
     }).catch(() => {})
 
     return cleanupIPC
@@ -852,10 +864,10 @@ export default function App(): React.ReactElement {
   return (
     <div className={`app-layout${compactMode ? ' compact' : ''}`}>
       <Header />
-      <div className="main-split">
+      <div className="main-stack">
         <LeftPanel />
-        <DragHandle target=".left-panel" min={400} max={1400} />
         <RightPanel />
+        {!compactMode && <MediaAuditPanel />}
       </div>
       {settingsOpen && <Settings />}
       {photoSorterOpen && <PhotoSorter />}

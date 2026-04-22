@@ -129,6 +129,18 @@ export function registerAllHandlers(): void {
     recording.broadcastFullState()
   })
 
+  safeHandle(IPC_CHANNELS.RECORDING_SCRATCH, async (routineId: unknown) => {
+    logIPC(IPC_CHANNELS.RECORDING_SCRATCH, { routineId })
+    stateService.scratchRoutine(routineId as string)
+    recording.broadcastFullState()
+  })
+
+  safeHandle(IPC_CHANNELS.RECORDING_UNSCRATCH, async (routineId: unknown) => {
+    logIPC(IPC_CHANNELS.RECORDING_UNSCRATCH, { routineId })
+    stateService.unscratchedRoutine(routineId as string)
+    recording.broadcastFullState()
+  })
+
   safeHandle(IPC_CHANNELS.RECORDING_NEXT_FULL, async () => {
     logIPC(IPC_CHANNELS.RECORDING_NEXT_FULL)
     await recording.nextFull()
@@ -228,6 +240,16 @@ export function registerAllHandlers(): void {
   })
 
   // --- State ---
+  safeHandle(IPC_CHANNELS.STATE_GET, async () => {
+    logIPC(IPC_CHANNELS.STATE_GET)
+    return {
+      competition: stateService.getCompetition(),
+      currentRoutine: stateService.getCurrentRoutine(),
+      nextRoutine: stateService.getNextRoutine(),
+      currentIndex: stateService.getCurrentRoutineIndex(),
+    }
+  })
+
   safeHandle(IPC_CHANNELS.STATE_JUMP_TO, async (routineId: unknown) => {
     logIPC(IPC_CHANNELS.STATE_JUMP_TO, { routineId })
     const routine = stateService.jumpToRoutine(routineId as string)
@@ -264,6 +286,27 @@ export function registerAllHandlers(): void {
     return { path: result.filePath }
   })
 
+  safeHandle(IPC_CHANNELS.STATE_EXPORT_VERIFICATION_REPORT, async () => {
+    logIPC(IPC_CHANNELS.STATE_EXPORT_VERIFICATION_REPORT)
+    const report = stateService.exportVerificationReport()
+    if (!report) return { error: 'No competition loaded' }
+
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return { error: 'No window' }
+
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Export Verification Report',
+      defaultPath: `compsync-verification-${new Date().toISOString().split('T')[0]}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+
+    if (result.canceled || !result.filePath) return { cancelled: true }
+
+    fs.writeFileSync(result.filePath, report, 'utf-8')
+    logger.app.info(`Verification report exported to ${result.filePath}`)
+    return { path: result.filePath }
+  })
+
   safeHandle(IPC_CHANNELS.STATE_LIST_CAMERA_OFFSETS, async () => {
     logIPC(IPC_CHANNELS.STATE_LIST_CAMERA_OFFSETS)
     return stateService.listCameraOffsets()
@@ -294,9 +337,13 @@ export function registerAllHandlers(): void {
     }
 
     // T-V7-26: re-apply ambient reconciler cadence when upload settings change.
-    if (p.upload) {
-      const u = p.upload as Record<string, unknown>
-      if ('reconcileCadenceMinutes' in u || 'reconcileSilent' in u) {
+    if (p.upload || p.behavior) {
+      const u = p.upload as Record<string, unknown> | undefined
+      const b = p.behavior as Record<string, unknown> | undefined
+      if (
+        (u && ('reconcileCadenceMinutes' in u || 'reconcileSilent' in u)) ||
+        (b && 'autoUploadAfterEncoding' in b)
+      ) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
@@ -411,6 +458,19 @@ export function registerAllHandlers(): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.ipc.error(`overlay-mode:toggle failed: ${msg}`)
+      return { error: msg }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_MODE_HIDE_PANEL, (_event, panelId: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_MODE_HIDE_PANEL, { panelId })
+    try {
+      if (typeof panelId !== 'string') return { error: 'Invalid panel id' }
+      overlayPanels.hidePanel(panelId as Parameters<typeof overlayPanels.hidePanel>[0])
+      return { ok: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.ipc.error(`overlay-mode:hide-panel failed: ${msg}`)
       return { error: msg }
     }
   })

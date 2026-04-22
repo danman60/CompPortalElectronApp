@@ -30,8 +30,12 @@ function formatClock(d: Date): { date: string; time: string } {
     month: 'long',
     day: 'numeric',
   })
-  const pad = (n: number): string => String(n).padStart(2, '0')
-  const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  const timeStr = d.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  })
   return { date: dateStr, time: timeStr }
 }
 

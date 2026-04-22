@@ -55,5 +55,5 @@ export default function PanelApp({ panelId }: PanelAppProps): React.ReactElement
       content = <div style={{ padding: 12, color: '#888' }}>Unknown panel: {panelId}</div>
   }
 
-  return <PanelChrome title={title} showExit={showExit}>{content}</PanelChrome>
+  return <PanelChrome title={title} panelId={panelId} showExit={showExit}>{content}</PanelChrome>
 }

@@ -3,6 +3,7 @@ import { useImportMinimizedState, restoreMinimizedImport } from './DriveAlert'
 
 interface PanelChromeProps {
   title: string
+  panelId: string
   showExit?: boolean
   children: React.ReactNode
 }
@@ -15,16 +16,17 @@ interface PanelChromeProps {
 function OverlayImportPill(): React.ReactElement | null {
   const s = useImportMinimizedState()
   if (!s.active) return null
+  const isComplete = s.stage === 'done' || s.canRemoveCard === true
   const pct = s.total > 0 ? Math.min(100, Math.round((s.current / s.total) * 100)) : 0
   const label = s.total > 0 ? `${s.current}/${s.total} (${pct}%)` : '...'
   return (
     <button
       onClick={() => restoreMinimizedImport()}
-      title="SD import in progress — click to expand (exits overlay mode)"
+      title={isComplete ? 'Import complete — click to expand details' : 'SD import in progress — click to expand (exits overlay mode)'}
       style={{
-        background: 'rgba(99, 102, 234, 0.18)',
-        border: '1px solid rgba(99, 102, 234, 0.55)',
-        color: '#e0e0f0',
+        background: isComplete ? 'rgba(45, 168, 85, 0.18)' : 'rgba(99, 102, 234, 0.18)',
+        border: isComplete ? '1px solid rgba(45, 168, 85, 0.65)' : '1px solid rgba(99, 102, 234, 0.55)',
+        color: isComplete ? '#dff7e7' : '#e0e0f0',
         fontSize: '10px',
         padding: '2px 6px',
         borderRadius: '3px',
@@ -35,18 +37,28 @@ function OverlayImportPill(): React.ReactElement | null {
         alignItems: 'center',
         gap: '4px',
         marginRight: '6px',
+        animation: isComplete ? 'importCompleteFlash 1s ease-in-out infinite' : undefined,
       }}
     >
-      <span style={{
-        width: '6px',
-        height: '6px',
-        borderRadius: '50%',
-        background: '#2da855',
-        boxShadow: '0 0 4px #2da855',
-        flex: '0 0 auto',
-      }} />
-      <span style={{ whiteSpace: 'nowrap' }}>SD {label}</span>
-      {s.total > 0 && (
+      {isComplete ? (
+        <>
+          <span style={{ flex: '0 0 auto', fontSize: '11px' }}>{'\u23CF'}</span>
+          <span style={{ whiteSpace: 'nowrap' }}>Import Complete</span>
+        </>
+      ) : (
+        <>
+          <span style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            background: '#2da855',
+            boxShadow: '0 0 4px #2da855',
+            flex: '0 0 auto',
+          }} />
+          <span style={{ whiteSpace: 'nowrap' }}>SD {label}</span>
+        </>
+      )}
+      {!isComplete && s.total > 0 && (
         <span
           aria-hidden
           style={{
@@ -70,9 +82,13 @@ function OverlayImportPill(): React.ReactElement | null {
  * a compact SD-import progress pill (visible in all panels while an import
  * runs), and a resize grab corner.
  */
-export default function PanelChrome({ title, showExit = false, children }: PanelChromeProps): React.ReactElement {
+export default function PanelChrome({ title, panelId, showExit = false, children }: PanelChromeProps): React.ReactElement {
   async function handleExit(): Promise<void> {
     try { await window.api.overlayModeClose() } catch { /* ignore */ }
+  }
+
+  async function handleHidePanel(): Promise<void> {
+    try { await window.api.overlayModeHidePanel(panelId) } catch { /* ignore */ }
   }
 
   return (
@@ -81,6 +97,13 @@ export default function PanelChrome({ title, showExit = false, children }: Panel
         <span className="panel-title">{title}</span>
         <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center' }}>
           <OverlayImportPill />
+          <button
+            className="panel-hide-btn"
+            onClick={handleHidePanel}
+            title="Hide this panel until Overlay Mode is opened again"
+          >
+            X
+          </button>
           {showExit && (
             <button
               className="panel-exit-btn"

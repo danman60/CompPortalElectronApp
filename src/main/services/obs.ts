@@ -27,6 +27,11 @@ export function setOnAudioLevels(cb: (levels: AudioLevel[]) => void): void {
   onAudioLevelsCb = cb
 }
 
+let onStateChangeCb: ((state: OBSState) => void) | null = null
+export function setOnStateChange(cb: (state: OBSState) => void): void {
+  onStateChangeCb = cb
+}
+
 // Fix 11: reconcile hook invoked after (re)sync so recording.ts can fix up orphan state
 type ReconcileCallback = (info: { outputActive: boolean; recordDirectory: string | null }) => void
 let onReconcileCb: ReconcileCallback | null = null
@@ -79,6 +84,11 @@ function emitRecordingAlert(level: 'warning' | 'error', message: string): void {
 
 function broadcastState(): void {
   sendToRenderer(IPC_CHANNELS.OBS_STATE, state)
+  try {
+    onStateChangeCb?.(state)
+  } catch (err) {
+    logger.obs.warn(`OBS state-change callback threw: ${err instanceof Error ? err.message : err}`)
+  }
 }
 
 // --- Stats poller (commit 3): cadence 5s, only while connected ---
