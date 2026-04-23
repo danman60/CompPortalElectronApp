@@ -3,6 +3,8 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .routine-card.is-recording {
@@ -10,7 +12,7 @@
   box-shadow: 0 0 0 1px var(--recording-pulse), inset 0 0 20px var(--recording-pulse);
 }
 
-.routine-top { display: flex; align-items: flex-start; gap: 8px; }
+.routine-top { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 
 .routine-number {
   background: linear-gradient(135deg, #667eea, #764ba2);
@@ -23,8 +25,22 @@
 }
 
 .routine-details { flex: 1; min-width: 0; }
-.routine-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
-.routine-dancers { font-size: 12px; color: #a5b4fc; margin-top: 1px; }
+.routine-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routine-dancers {
+  font-size: 12px;
+  color: #a5b4fc;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .routine-meta {
   font-size: 10px;
@@ -41,6 +57,9 @@
   margin-top: 6px;
   padding-top: 5px;
   border-top: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recording-timer {

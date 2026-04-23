@@ -118,10 +118,24 @@ function createPanel(spec: PanelSpec): BrowserWindow {
   const url = panelUrl(spec.id)
   if (url.startsWith('file://')) {
     const [filePath, query] = url.replace('file://', '').split('?')
-    win.loadFile(filePath, { search: query })
+    win.loadFile(filePath, { search: query ? `?${query}` : undefined })
   } else {
     win.loadURL(url)
   }
+
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level < 2) return
+    const src = sourceId ? ` (${sourceId}:${line})` : ''
+    const prefix = `[OverlayPanel:${spec.id}] ${message}${src}`
+    if (level === 3) logger.app.error(prefix)
+    else logger.app.warn(prefix)
+  })
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logger.app.error(
+      `overlayPanels: renderer gone for ${spec.id}: reason=${details.reason}, exitCode=${details.exitCode}`,
+    )
+  })
 
   win.once('ready-to-show', () => win.show())
 

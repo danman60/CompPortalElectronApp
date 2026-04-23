@@ -262,6 +262,27 @@
   background: transparent;
   border: none;
   padding: 0;
+  height: 100%;
+  max-height: 170px;
+}
+
+.topband-current .routine-title,
+.topband-current .routine-dancers,
+.topband-current .routine-studio {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topband-current .routine-meta {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.topband-current .routine-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topband-meters-card {

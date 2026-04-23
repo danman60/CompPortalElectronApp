@@ -1,6 +1,5 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import ErrorBoundary from './components/ErrorBoundary'
 import PanelApp from './components/PanelApp'
 import { initIPCListeners, useStore } from './store/useStore'
 import './styles/global.css'
@@ -35,8 +34,6 @@ if (window.api) {
 const root = createRoot(document.getElementById('root')!)
 root.render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <PanelApp panelId={panelId} />
-    </ErrorBoundary>
+    <PanelApp panelId={panelId} />
   </React.StrictMode>,
 )

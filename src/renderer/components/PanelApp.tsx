@@ -1,5 +1,6 @@
 import React from 'react'
 import PanelChrome from './PanelChrome'
+import ErrorBoundary from './ErrorBoundary'
 import CurrentRoutine from './CurrentRoutine'
 import Controls from './Controls'
 import PreviousRoutines from './PreviousRoutines'
@@ -55,5 +56,15 @@ export default function PanelApp({ panelId }: PanelAppProps): React.ReactElement
       content = <div style={{ padding: 12, color: '#888' }}>Unknown panel: {panelId}</div>
   }
 
-  return <PanelChrome title={title} panelId={panelId} showExit={showExit}>{content}</PanelChrome>
+  const closeOverlay = (): void => {
+    try { void window.api.overlayModeClose() } catch {}
+  }
+
+  return (
+    <PanelChrome title={title} panelId={panelId} showExit={showExit}>
+      <ErrorBoundary compact onClose={closeOverlay}>
+        {content}
+      </ErrorBoundary>
+    </PanelChrome>
+  )
 }
