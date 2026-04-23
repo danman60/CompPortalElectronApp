@@ -5,6 +5,7 @@ import { app } from 'electron'
 import { JobRecord, JobType, JobStatus } from '../../shared/types'
 import { logger } from '../logger'
 import { getSettings } from './settings'
+import * as events from './events'
 
 // --- State ---
 
@@ -137,6 +138,15 @@ export function enqueue(
   jobs.push(job)
   indexAdd(job)
   logger.app.info(`Job queue: enqueued ${type} job ${job.id} for routine ${routineId}`)
+  if (type !== 'upload' || jobs.length % 100 === 0) {
+    events.emit('queue.enqueued', {
+      jobId: job.id,
+      type,
+      routineId,
+      status: job.status,
+      totalJobs: jobs.length,
+    })
+  }
   // T-V7-21: debounced save instead of flushSync. Bulk-enqueue bursts (SD
   // imports of 10k+ photos) used to hit the disk 10k+ times and thrash the
   // main thread. 500ms debounce coalesces the burst into a single write
@@ -188,6 +198,19 @@ export function updateStatus(
   }
 
   logger.app.info(`Job queue: job ${jobId} ${prev} → ${job.status}`)
+  if (prev !== job.status || status === 'failed') {
+    events.emit('queue.status', {
+      jobId,
+      type: job.type,
+      routineId: job.routineId,
+      from: prev,
+      to: job.status,
+      requestedStatus: status,
+      attempts: job.attempts,
+      maxAttempts: job.maxAttempts,
+      error: job.error || null,
+    })
+  }
 
   // Immediate flush for status transitions (running→done, running→failed)
   if (prev === 'running' || status === 'done' || status === 'failed') {

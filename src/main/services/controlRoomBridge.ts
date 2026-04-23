@@ -13,8 +13,8 @@ import type { WSCommandMessage } from '../../shared/types'
 
 const HEARTBEAT_INTERVAL_MS = 5000
 const COMMAND_POLL_INTERVAL_MS = 3000
-const REQUEST_TIMEOUT_MS = 5000
-const MAX_EVENTS = 120
+const REQUEST_TIMEOUT_MS = 15000
+const MAX_EVENTS = 300
 
 let heartbeatTimer: NodeJS.Timeout | null = null
 let commandPollTimer: NodeJS.Timeout | null = null

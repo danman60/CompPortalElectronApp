@@ -824,6 +824,8 @@ async function runImport(
   let skippedDupes = 0
   let skippedWrongDate = 0
   let skippedByWatermark = 0
+  let firstCaptureTime: string | null = null
+  let lastCaptureTime: string | null = null
   const maxCaptureByBody: Record<string, { lastCaptureTime: string; lastFilename?: string }> = {}
   for (let i = 0; i < partitionedPaths.length; i++) {
     if (signal.aborted) {
@@ -837,6 +839,9 @@ async function runImport(
     }
     const captureTime = await getPhotoCaptureTime(partitionedPaths[i])
     if (captureTime) {
+      const captureIsoForRange = captureTime.toISOString()
+      if (!firstCaptureTime || captureIsoForRange < firstCaptureTime) firstCaptureTime = captureIsoForRange
+      if (!lastCaptureTime || captureIsoForRange > lastCaptureTime) lastCaptureTime = captureIsoForRange
       const bodyKey = getCameraBodyKey(partitionedPaths[i])
       if (bodyKey) {
         const iso = captureTime.toISOString()
@@ -872,6 +877,18 @@ async function runImport(
         total: partitionedPaths.length,
         current: i,
       })
+      if (partitionedPaths.length >= 1000 && i > 0 && i % 1000 === 0) {
+        events.emit('import.exif.progress', {
+          scanned: i,
+          total: partitionedPaths.length,
+          accepted: photos.length,
+          skippedDupes,
+          skippedWrongDate,
+          skippedByWatermark,
+          firstCaptureTime,
+          lastCaptureTime,
+        })
+      }
       await yieldToEventLoop()
     }
   }
@@ -885,6 +902,18 @@ async function runImport(
   }
 
   logger.photos.info(`${photos.length}/${partitionedPaths.length} photos have EXIF timestamps (skipped ${skippedDupes} already-uploaded)`)
+  events.emit('import.exif.summary', {
+    folderPath,
+    scanned: partitionedPaths.length,
+    accepted: photos.length,
+    skippedDupes,
+    skippedWrongDate,
+    skippedByWatermark,
+    skippedByAllowlist,
+    firstCaptureTime,
+    lastCaptureTime,
+    maxCaptureByBody,
+  })
 
   // Build recording windows from routines
   const windows: RecordingWindow[] = routines
@@ -997,6 +1026,36 @@ async function runImport(
     matches[i] = bodyMatches[cursor]
     bodyIndexCursor.set(body, cursor + 1)
   }
+
+  const matchCounts: Record<string, number> = {}
+  const routineMatchCounts: Record<string, number> = {}
+  const matchSamples: Array<{
+    file: string
+    captureTime: string
+    confidence: string
+    routineId?: string
+  }> = []
+  for (const match of matches) {
+    matchCounts[match.confidence] = (matchCounts[match.confidence] || 0) + 1
+    if (match.matchedRoutineId) {
+      routineMatchCounts[match.matchedRoutineId] = (routineMatchCounts[match.matchedRoutineId] || 0) + 1
+    }
+    if (matchSamples.length < 20) {
+      matchSamples.push({
+        file: path.basename(match.filePath),
+        captureTime: match.captureTime,
+        confidence: match.confidence,
+        routineId: match.matchedRoutineId,
+      })
+    }
+  }
+  events.emit('import.match.summary', {
+    folderPath,
+    totalPhotos: photos.length,
+    matchCounts,
+    routineMatchCounts,
+    samples: matchSamples,
+  })
 
   // Attach sourceHash to each match — used downstream for dedup + safe-delete gating.
   for (let i = 0; i < matches.length; i++) {
