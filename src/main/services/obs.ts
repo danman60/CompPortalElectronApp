@@ -404,45 +404,10 @@ function startBlackFrameMonitor(): void {
   if (blackFrameTimer) clearInterval(blackFrameTimer)
   blackFrameCount = 0
   blackAlertFired = false
-  blackFrameTimer = setInterval(async () => {
-    if (!state.isRecording || state.connectionStatus !== 'connected') return
-    // Skip screenshot probe while streaming — OBS is CPU-bound on the encoder,
-    // stealing a GetSourceScreenshot every 10s can push it into frame drops.
-    if (state.isStreaming) { perf.counter('obs.blackframe.skip_streaming'); return }
-    const t0 = Date.now()
-    try {
-      const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene')
-      const res = await obs.call('GetSourceScreenshot', {
-        sourceName: currentProgramSceneName,
-        imageFormat: 'jpg',
-        imageCompressionQuality: 10,
-        imageWidth: 64,
-        imageHeight: 36,
-      })
-      const imageData = res.imageData as string
-      const base64 = imageData.includes(',') ? imageData.split(',', 2)[1] : imageData
-      const buf = Buffer.from(base64, 'base64')
-      // Lazy-require sharp to avoid hard dependency at module load
-      const sharp = require('sharp') as typeof import('sharp')
-      const raw = await sharp(buf).raw().toBuffer()
-      let sum = 0
-      for (let i = 0; i < raw.length; i++) sum += raw[i]
-      const mean = raw.length > 0 ? sum / raw.length : 0
-      if (mean < 5) {
-        blackFrameCount++
-        if (blackFrameCount >= 2 && !blackAlertFired) {
-          blackAlertFired = true
-          emitRecordingAlert('warning', `Black frames detected (${blackFrameCount} consecutive). Check camera / scene.`)
-        }
-      } else {
-        blackFrameCount = 0
-        blackAlertFired = false
-      }
-      perf.timing('obs.blackframe.tick_ms', Date.now() - t0)
-    } catch {
-      perf.counter('obs.blackframe.err')
-    }
-  }, 10000)
+  // Disabled for app.asar-only hot deploys: the previous probe decoded JPEG
+  // screenshots with sharp, whose native binary is not available when only
+  // app.asar is replaced on the show machine. Keep recording launch-safe.
+  perf.counter('obs.blackframe.disabled_no_sharp')
 }
 
 // --- Streaming ---

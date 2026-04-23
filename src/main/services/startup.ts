@@ -87,6 +87,7 @@ export async function runStartupChecks(): Promise<StartupReport> {
 
   // 4. Job queue recovery count
   const resumedJobs = jobQueue.getPending().length
+  const quarantinedJobs = jobQueue.getQuarantined().length
 
   // 5. Orphaned file count (from crash recovery — already ran)
   const orphanedFiles = 0 // crashRecovery handles this separately
@@ -119,6 +120,7 @@ export async function runStartupChecks(): Promise<StartupReport> {
     diskFreeGB,
     diskWarning,
     resumedJobs,
+    quarantinedJobs,
     orphanedFiles,
     warnings,
   }
@@ -130,6 +132,7 @@ export async function runStartupChecks(): Promise<StartupReport> {
   if (!ffmpegAvailable) parts.push('WARNING: FFmpeg not found.')
   if (diskWarning) parts.push(`WARNING: Only ${diskFreeGB}GB disk space.`)
   if (resumedJobs > 0) parts.push(`${resumedJobs} jobs resumed from previous session.`)
+  if (quarantinedJobs > 0) parts.push(`${quarantinedJobs} job${quarantinedJobs === 1 ? '' : 's'} quarantined for manual attention.`)
   logger.app.info(parts.join(' '))
 
   return report

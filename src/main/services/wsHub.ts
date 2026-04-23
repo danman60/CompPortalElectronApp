@@ -111,11 +111,11 @@ function handleMessage(ws: TaggedSocket, msg: Record<string, unknown>): void {
     return
   }
   if (msg.type === 'command') {
-    handleCommand(msg as unknown as WSCommandMessage)
+    void handleCommand(msg as unknown as WSCommandMessage)
   }
 }
 
-async function handleCommand(cmd: WSCommandMessage): Promise<void> {
+export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
   try {
     logger.app.info(`WebSocket command: ${cmd.action}${cmd.element ? ' ' + cmd.element : ''}`)
     const obsState = obs.getState()
@@ -145,6 +145,20 @@ async function handleCommand(cmd: WSCommandMessage): Promise<void> {
           else await obs.startRecord()
         }
         break
+      case 'startRecord':
+        if (obsState.connectionStatus === 'connected' && !obsState.isRecording) {
+          const blocked = recording.canStartRecording()
+          if (blocked) {
+            throw new Error(blocked.detail || blocked.reason)
+          }
+          await obs.startRecord()
+        }
+        break
+      case 'stopRecord':
+        if (obsState.connectionStatus === 'connected' && obsState.isRecording) {
+          await obs.stopRecord()
+        }
+        break
       case 'toggleStream':
         if (obsState.connectionStatus === 'connected') {
           if (obsState.isStreaming) await obs.stopStream()
@@ -170,11 +184,31 @@ async function handleCommand(cmd: WSCommandMessage): Promise<void> {
           logger.app.info(`WS hub loaded competition: ${comp.name} (${comp.routines.length} routines)`)
         }
         break
+      case 'pauseUploads': {
+        const upload = await import('./upload')
+        upload.stopUploads()
+        break
+      }
+      case 'resumeUploads': {
+        const upload = await import('./upload')
+        upload.startUploads()
+        break
+      }
+      case 'reconcileMedia': {
+        const reconciler = await import('./mediaReconciler')
+        await reconciler.reconcileMedia({ scope: 'manual', silent: false })
+        break
+      }
     }
     broadcastState()
   } catch (err) {
     logger.app.error(`WebSocket command ${cmd.action} failed:`, err instanceof Error ? err.message : String(err))
+    throw err
   }
+}
+
+async function handleCommand(cmd: WSCommandMessage): Promise<void> {
+  await executeCommand(cmd)
 }
 
 function buildStateMessage(): WSStateMessage {

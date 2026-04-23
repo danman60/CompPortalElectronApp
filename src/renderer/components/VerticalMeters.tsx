@@ -30,6 +30,7 @@ export default function VerticalMeters(): React.ReactElement {
   const judgeCount = settings?.competition.judgeCount ?? 3
   const [peaks, setPeaks] = useState<Record<string, number>>({})
   const wsRef = useRef<WebSocket | null>(null)
+  const debugMeters = window.location.search.includes('debugMeters=1')
 
   useEffect(() => {
     let cancelled = false
@@ -42,7 +43,7 @@ export default function VerticalMeters(): React.ReactElement {
         wsRef.current = ws
 
         ws.onopen = () => {
-          console.error('[VM-WS] open, sending identify')
+          if (debugMeters) console.error('[VM-WS] open, sending identify')
           try { ws.send(JSON.stringify({ type: 'identify', client: 'tablet' })) } catch {}
         }
 
@@ -58,22 +59,22 @@ export default function VerticalMeters(): React.ReactElement {
                 }
               }
               msgCount++
-              if (msgCount <= 3 || msgCount % 50 === 0) {
+              if (debugMeters && (msgCount <= 3 || msgCount % 50 === 0)) {
                 console.error(`[VM-WS #${msgCount}] audioLevels received, roles=${Object.keys(next).join(',')} peaks=${JSON.stringify(next)}`)
               }
               setPeaks(next)
-            } else if (msgCount === 0 && msg && msg.type) {
+            } else if (debugMeters && msgCount === 0 && msg && msg.type) {
               console.error(`[VM-WS] first non-audio msg type=${msg.type}`)
             }
           } catch (e) {
-            console.error(`[VM-WS] parse error: ${e instanceof Error ? e.message : e}`)
+            if (debugMeters) console.error(`[VM-WS] parse error: ${e instanceof Error ? e.message : e}`)
           }
         }
 
-        ws.onerror = () => { console.error('[VM-WS] ws error'); try { ws.close() } catch {} }
+        ws.onerror = () => { if (debugMeters) console.error('[VM-WS] ws error'); try { ws.close() } catch {} }
 
         ws.onclose = () => {
-          console.error('[VM-WS] closed')
+          if (debugMeters) console.error('[VM-WS] closed')
           wsRef.current = null
           if (!cancelled) {
             reconnectTimer = setTimeout(connect, 1000)

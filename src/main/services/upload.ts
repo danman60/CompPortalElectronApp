@@ -151,6 +151,26 @@ const publishedPhotoCountByRoutine = new Map<string, number>()
 let pausedByDiskSpace = false
 let pausedByDriveLoss = false
 
+export function getUploadRuntimeState(): {
+  isUploading: boolean
+  isPaused: boolean
+  pausedByDiskSpace: boolean
+  pausedByDriveLoss: boolean
+  pending: number
+  running: number
+  quarantined: number
+} {
+  return {
+    isUploading,
+    isPaused,
+    pausedByDiskSpace,
+    pausedByDriveLoss,
+    pending: jobQueue.getPending('upload').length,
+    running: jobQueue.getRunning('upload').length,
+    quarantined: jobQueue.getQuarantined('upload').length,
+  }
+}
+
 export function pauseForDiskSpace(): void {
   if (pausedByDiskSpace) return
   pausedByDiskSpace = true
@@ -538,10 +558,23 @@ async function processLoop(): Promise<void> {
     const job = jobQueue.getNext('upload')
     if (!job) break
 
-    jobQueue.updateStatus(job.id, 'running')
+    const activeCompetitionId = state.getCompetition()?.competitionId
     const payload = job.payload as unknown as UploadPayload
+    if (
+      activeCompetitionId &&
+      payload.competitionId &&
+      payload.competitionId !== activeCompetitionId
+    ) {
+      logger.upload.warn(
+        `Dropping stale upload job ${job.id} for competition ${payload.competitionId}; active competition is ${activeCompetitionId}`,
+      )
+      jobQueue.remove(job.id)
+      continue
+    }
 
-    // Set routine status to uploading (only if not already uploading).
+    jobQueue.updateStatus(job.id, 'running')
+
+    // Ensure the routine is in an upload attempt with a persisted uploadRunId.
     //
     // uploadRunId lives on the Routine itself (persisted via updateRoutineStatus).
     // Rationale: a single upload attempt for one routine spans multiple processLoop
@@ -550,9 +583,22 @@ async function processLoop(): Promise<void> {
     // can match them. On retry after failure the routine is reset to 'encoded', so
     // the next 'encoded → uploading' transition naturally generates a fresh runId.
     // Persisting on the routine also survives app crashes mid-attempt.
+    //
+    // Self-heal: crash-recovered / older queued jobs can be resumed while the local
+    // routine is already marked `uploading` but has no uploadRunId persisted. In
+    // that case, mint a fresh runId instead of failing every job in a tight loop.
     const routine = state.getCompetition()?.routines.find(r => r.id === payload.routineId)
-    if (routine && routine.status !== 'uploading') {
+    if (!routine) {
+      const errMsg = `Missing routine ${payload.routineId} for upload job ${job.id}`
+      logger.upload.error(errMsg)
+      jobQueue.quarantine(job.id, errMsg)
+      continue
+    }
+    if (routine.status !== 'uploading' || !routine.uploadRunId) {
       const uploadRunId = crypto.randomUUID()
+      if (routine.status === 'uploading' && !routine.uploadRunId) {
+        logger.upload.warn(`Routine ${payload.routineId} was uploading with no uploadRunId; minting a new runId`)
+      }
       state.updateRoutineStatus(payload.routineId, 'uploading', { uploadRunId })
       activeUploadRoutineIds.add(payload.routineId)
       broadcastRoutineUpdate(payload.routineId)
@@ -565,7 +611,7 @@ async function processLoop(): Promise<void> {
     if (!uploadRunId) {
       const errMsg = `Missing uploadRunId for routine ${payload.routineId} — cannot proceed`
       logger.upload.error(errMsg)
-      jobQueue.updateStatus(job.id, 'failed', { error: errMsg })
+      jobQueue.quarantine(job.id, errMsg)
       continue
     }
 
@@ -893,7 +939,16 @@ async function processLoop(): Promise<void> {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       logger.upload.error(`Upload failed for ${payload.objectName}:`, errMsg)
-      jobQueue.updateStatus(job.id, 'failed', { error: errMsg })
+      const nonRetryable =
+        errMsg.includes('File not found:') ||
+        errMsg.includes('File too large for single upload') ||
+        errMsg.includes('Missing uploadRunId') ||
+        errMsg.includes('Missing routine ')
+      if (nonRetryable) {
+        jobQueue.quarantine(job.id, errMsg)
+      } else {
+        jobQueue.updateStatus(job.id, 'failed', { error: errMsg })
+      }
 
       sendProgress(payload.routineId, {
         state: 'failed',

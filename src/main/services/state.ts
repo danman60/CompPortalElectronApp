@@ -3,6 +3,7 @@ import path from 'path'
 import { app, BrowserWindow } from 'electron'
 import { Competition, Routine, RoutineStatus, IPC_CHANNELS } from '../../shared/types'
 import { logger } from '../logger'
+import * as jobQueue from './jobQueue'
 
 const STATE_FILE = 'compsync-state.json'
 const STATE_BACKUP_KEEP = 10
@@ -51,7 +52,8 @@ interface CameraOffsetEntry {
 }
 
 interface SdWatermarkEntry {
-  lastFilename: string   // e.g. "P1678123.JPG" — highest seen for this body
+  lastCaptureTime: string // ISO EXIF DateTimeOriginal of latest processed photo for this body
+  lastFilename?: string   // legacy/back-compat log aid only
   setAt: string          // ISO
 }
 
@@ -187,7 +189,7 @@ function applyLoadedState(data: PersistedState): void {
   const wmCount = Object.keys(sdWatermarks).length
   if (wmCount > 0) {
     logger.app.info(`Hydrated ${wmCount} SD watermark(s): ` +
-      Object.entries(sdWatermarks).map(([k, v]) => `${k}=${v.lastFilename}`).join(', '))
+      Object.entries(sdWatermarks).map(([k, v]) => `${k}=${v.lastCaptureTime}`).join(', '))
   }
   recomputeCachedCounts()
 
@@ -200,6 +202,11 @@ function applyLoadedState(data: PersistedState): void {
     logger.app.info(`Migrated state from index ${data.currentRoutineIndex} to ID ${currentRoutineId}`)
   } else {
     currentRoutineId = null
+  }
+
+  if (currentCompetition) {
+    const validRoutineIds = new Set(currentCompetition.routines.map((routine) => routine.id))
+    jobQueue.pruneForCompetition(currentCompetition.competitionId, validRoutineIds)
   }
 }
 
@@ -291,6 +298,9 @@ export function setCompetition(comp: Competition): void {
 
   currentCompetition = comp
   currentRoutineId = null
+
+  const validRoutineIds = new Set(comp.routines.map((routine) => routine.id))
+  jobQueue.pruneForCompetition(comp.competitionId, validRoutineIds)
 
   // Try to restore routine states from persisted state (read file directly, don't call loadState which has side effects)
   let existing: PersistedState | null = null
@@ -858,38 +868,37 @@ export function clearCameraOffsets(): void {
 // Operator workflow: SDs always contain the full competition's photos. On
 // each insertion we ONLY want to process photos newer than the last time
 // the app saw this SD/camera body. Keyed by camera body ID (same prefix
-// scheme as cameraOffsets — e.g. "P16"). Value is the highest JPEG
-// filename seen; because Panasonic names files with monotonically
-// increasing sequence numbers, string comparison on the filename is a
-// reliable "newer than" check within a folder, and folder numbers
-// themselves increment. So "P1678123.JPG" > "P1668050.JPG" correctly
-// represents "shot later".
+// scheme as cameraOffsets — e.g. "P16"). Value is the latest processed
+// EXIF DateTimeOriginal (ISO). This is intentionally time-based rather than
+// filename-sequence-based so previous-photo skipping never depends on camera
+// naming order.
 
 export function getSdWatermark(bodyId: string): SdWatermarkEntry | null {
   return sdWatermarks[bodyId] ?? null
 }
 
-export function setSdWatermark(bodyId: string, lastFilename: string): void {
+export function setSdWatermark(bodyId: string, lastCaptureTime: string, lastFilename?: string): void {
   const existing = sdWatermarks[bodyId]
   // Only bump forward — never regress a watermark on accident.
-  if (existing && existing.lastFilename >= lastFilename) return
+  if (existing && existing.lastCaptureTime >= lastCaptureTime) return
   sdWatermarks[bodyId] = {
+    lastCaptureTime,
     lastFilename,
     setAt: new Date().toISOString(),
   }
-  logger.app.info(`SD watermark set: body="${bodyId}" lastFilename="${lastFilename}"`)
+  logger.app.info(`SD watermark set: body="${bodyId}" lastCaptureTime="${lastCaptureTime}"`)
   saveState()
 }
 
 export function setSdWatermarksBulk(
-  entries: Record<string, string>,
+  entries: Record<string, { lastCaptureTime: string; lastFilename?: string }>,
 ): number {
   let updated = 0
   const now = new Date().toISOString()
-  for (const [bodyId, lastFilename] of Object.entries(entries)) {
+  for (const [bodyId, entry] of Object.entries(entries)) {
     const existing = sdWatermarks[bodyId]
-    if (existing && existing.lastFilename >= lastFilename) continue
-    sdWatermarks[bodyId] = { lastFilename, setAt: now }
+    if (existing && existing.lastCaptureTime >= entry.lastCaptureTime) continue
+    sdWatermarks[bodyId] = { lastCaptureTime: entry.lastCaptureTime, lastFilename: entry.lastFilename, setAt: now }
     updated++
   }
   if (updated > 0) {

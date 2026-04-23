@@ -200,21 +200,22 @@
   flex-shrink: 0;
 }
 
+.topband-stats,
 .topband-current,
+.topband-meters,
 .topband-controls {
   min-width: 0;
   display: flex;
-}
-
-.topband-current {
-  flex: 1.35;
-}
-
-.topband-controls {
   flex: 1;
 }
 
+.topband-meters {
+  flex: 0 0 96px;
+}
+
+.topband-stats .section,
 .topband-current .section,
+.topband-meters .section,
 .topband-controls .section {
   width: 100%;
   margin: 0;
@@ -224,7 +225,9 @@
   padding: 10px 12px;
 }
 
+.topband-stats .section-title,
 .topband-current .section-title,
+.topband-meters .section-title,
 .topband-controls .section-title {
   margin-bottom: 6px;
   font-size: 10px;
@@ -233,10 +236,48 @@
   color: var(--text-muted);
 }
 
+.topband-stats-card .topband-system {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.topband-stats-card .health-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0;
+  border-bottom: none;
+  background: transparent;
+}
+
+.topband-stats-card .health-tile {
+  padding: 8px 9px;
+}
+
+.topband-stats-card .health-export {
+  grid-column: 1 / -1;
+}
+
 .topband-current .routine-card {
   background: transparent;
   border: none;
   padding: 0;
+}
+
+.topband-meters-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.topband-meters-card .v-meters {
+  min-width: 0;
+  min-height: 134px;
+  padding: 4px 2px 0;
+  gap: 4px;
+}
+
+.topband-meters-card .v-meter-track {
+  max-width: 12px;
 }
 
 .topband-controls .controls-section {

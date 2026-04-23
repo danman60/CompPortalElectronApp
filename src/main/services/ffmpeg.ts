@@ -772,6 +772,18 @@ export function getQueueLength(): number {
   return jobQueue.getPending('encode').length + jobQueue.getRunning('encode').length
 }
 
+export function getEncodingRuntimeState(): {
+  isPaused: boolean
+  pending: number
+  running: number
+} {
+  return {
+    isPaused,
+    pending: jobQueue.getPending('encode').length,
+    running: jobQueue.getRunning('encode').length,
+  }
+}
+
 export function pauseEncoding(): void {
   isPaused = true
   logger.ffmpeg.info('Encoding paused — will finish current job then stop')
@@ -782,6 +794,43 @@ export function resumeEncoding(): void {
   isPaused = false
   logger.ffmpeg.info('Encoding resumed')
   processNext()
+}
+
+export function resumeRecordedRoutines(): number {
+  const comp = state.getCompetition()
+  if (!comp) return 0
+
+  const settings = getSettings()
+  const existingEncodeRoutineIds = new Set(
+    jobQueue
+      .getAll()
+      .filter((j) => j.type === 'encode' && (j.status === 'pending' || j.status === 'running'))
+      .map((j) => j.routineId),
+  )
+
+  let queued = 0
+  for (const routine of comp.routines) {
+    if (routine.status !== 'recorded' || !routine.outputPath) continue
+    if (existingEncodeRoutineIds.has(routine.id)) continue
+
+    const dir = routine.outputDir || path.dirname(routine.outputPath)
+    const encodeInput = pickLongestMkv(dir, routine.outputPath)
+    enqueueJob({
+      routineId: routine.id,
+      inputPath: encodeInput,
+      outputDir: dir,
+      judgeCount: settings.competition.judgeCount,
+      trackMapping: settings.audioTrackMapping,
+      processingMode: settings.ffmpeg.processingMode,
+      filePrefix: schedule.buildFilePrefix(routine.entryNumber),
+    })
+    queued++
+  }
+
+  if (queued > 0) {
+    logger.ffmpeg.info(`Resume recorded: queued ${queued} recorded routine(s) for encoding`)
+  }
+  return queued
 }
 
 export function isEncodingPaused(): boolean {

@@ -1,6 +1,5 @@
 import fs from 'fs'
 import path from 'path'
-import sharp from 'sharp'
 import ExifReader from 'exifreader'
 import {
   PhotoMatch,
@@ -67,15 +66,9 @@ async function getEmbedding(imagePath: string): Promise<Float32Array> {
 
   await ensureModel()
 
-  // Resize to 224x224 and get raw RGB pixels
-  const { data, info } = await sharp(imagePath)
-    .resize(224, 224, { fit: 'cover' })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true })
-
-  // Build a RawImage-compatible object for the pipeline
-  // The pipeline expects image input — pass the file path directly
+  // Transformers.js pipeline('image-feature-extraction') accepts file paths
+  // directly. Avoid sharp here because its native binary is fragile in
+  // app.asar-only hot deploys.
   // Transformers.js pipeline('image-feature-extraction') accepts file paths
   const result = await clipPipeline!(imagePath)
 
@@ -91,10 +84,6 @@ async function getEmbedding(imagePath: string): Promise<Float32Array> {
 
   embeddingCache.set(imagePath, normalized)
   return normalized
-
-  // Suppress unused variable warning — we needed `data` and `info` for the sharp call
-  void data
-  void info
 }
 
 function extractEmbedding(result: unknown): Float32Array {

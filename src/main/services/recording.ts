@@ -930,7 +930,7 @@ export function broadcastRoutineUpdate(routineId: string): void {
   if (!routine) return
 
   sendToRenderer(IPC_CHANNELS.STATE_ROUTINE_UPDATE, { routineId, routine })
-  // Overlay gets state via broadcastFullState (debounced) — not here, to avoid rapid re-renders
+  wsHub.broadcastState()
 }
 
 export { broadcastFullState, broadcastFullStateImmediate }

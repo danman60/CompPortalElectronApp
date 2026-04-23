@@ -129,12 +129,15 @@ export async function recoverOrphans(orphans: OrphanedFile[]): Promise<void> {
     const dir = path.dirname(orphan.filePath)
     const folderName = path.basename(dir)
 
-    // Look up actual routine by entry number (folder name) instead of using folder name as ID
+    // Look up actual routine by entry number (folder name). If we cannot map
+    // the orphan to a real schedule routine, leave it untouched for manual
+    // recovery rather than enqueueing a poison job.
     const routine = routines.find((r) => r.entryNumber === folderName)
-    const routineId = routine?.id ?? folderName // fallback to folder name only if no schedule loaded
     if (!routine) {
-      logger.app.warn(`Crash recovery: no routine found for folder "${folderName}", using folder name as ID`)
+      logger.app.warn(`Crash recovery: no routine found for folder "${folderName}" — skipping auto-enqueue`)
+      continue
     }
+    const routineId = routine.id
 
     logger.app.info(`Recovering orphan: ${orphan.fileName} → routine ${routineId}`)
 

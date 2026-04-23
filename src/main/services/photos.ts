@@ -767,20 +767,12 @@ async function runImport(
     partitionedPathsRaw.push(...arr)
   }
 
-  // ── SD watermark filter ──
-  // Skip photos whose filename is <= the persisted watermark for that
-  // camera body. Operator directive (2026-04-19): SDs always contain the
-  // full competition's photos; each insertion should ONLY process photos
-  // taken AFTER the app last saw this SD. Without this filter the
-  // 2nd-day import re-scans yesterday's 10k photos (wasted EXIF reads,
-  // potential mis-match against today's routines).
+  // ── Allowlist gate ──
+  // Scoped recovery/backfill can restrict the scan to explicit basenames.
+  // Watermarking itself is enforced later from EXIF capture times, not
+  // filename sequence numbers.
   const partitionedPaths: string[] = []
-  let skippedByWatermark = 0
   let skippedByAllowlist = 0
-  // T-V7-25: allowlist (case-insensitive) filters the scan to ONLY the
-  // requested basenames. When set, also bypasses the watermark filter for
-  // allowlisted files so a watermarked SD can be backfilled without having
-  // to clear its watermark first.
   const allowlistUpper = opts.filenameAllowlist
     ? new Set(Array.from(opts.filenameAllowlist).map((s) => s.toUpperCase()))
     : null
@@ -790,31 +782,7 @@ async function runImport(
       skippedByAllowlist++
       continue
     }
-    const bodyKey = getCameraBodyKey(fp)
-    if (!bodyKey) {
-      partitionedPaths.push(fp)
-      continue
-    }
-    // Watermark filter is skipped when the file is on the allowlist —
-    // scoped backfill must not be blocked by an older watermark.
-    if (!allowlistUpper) {
-      const wm = state.getSdWatermark(bodyKey)
-      if (wm) {
-        const fileName = bn
-        // String comparison: "P1678123.JPG" > "P1668050.JPG" — valid because
-        // Panasonic filenames are fixed-width and monotonically increasing.
-        if (fileName <= wm.lastFilename.toUpperCase()) {
-          skippedByWatermark++
-          continue
-        }
-      }
-    }
     partitionedPaths.push(fp)
-  }
-  if (skippedByWatermark > 0) {
-    logger.photos.info(
-      `SD watermark filter: skipped ${skippedByWatermark}/${partitionedPathsRaw.length} photos (already processed in prior sessions)`,
-    )
   }
   if (skippedByAllowlist > 0) {
     logger.photos.info(
@@ -855,6 +823,8 @@ async function runImport(
   const photos: { path: string; captureTime: Date; sourceHash: string }[] = []
   let skippedDupes = 0
   let skippedWrongDate = 0
+  let skippedByWatermark = 0
+  const maxCaptureByBody: Record<string, { lastCaptureTime: string; lastFilename?: string }> = {}
   for (let i = 0; i < partitionedPaths.length; i++) {
     if (signal.aborted) {
       logger.photos.warn(`Import cancelled during EXIF read at ${i}/${partitionedPaths.length}`)
@@ -867,6 +837,24 @@ async function runImport(
     }
     const captureTime = await getPhotoCaptureTime(partitionedPaths[i])
     if (captureTime) {
+      const bodyKey = getCameraBodyKey(partitionedPaths[i])
+      if (bodyKey) {
+        const iso = captureTime.toISOString()
+        const existingMax = maxCaptureByBody[bodyKey]
+        if (!existingMax || iso > existingMax.lastCaptureTime) {
+          maxCaptureByBody[bodyKey] = {
+            lastCaptureTime: iso,
+            lastFilename: path.basename(partitionedPaths[i]).toUpperCase(),
+          }
+        }
+        if (!allowlistUpper) {
+          const wm = state.getSdWatermark(bodyKey)
+          if (wm && iso <= wm.lastCaptureTime) {
+            skippedByWatermark++
+            continue
+          }
+        }
+      }
       // Bug F skip-mismatched mode: drop photos whose EXIF date != today.
       if (skipMismatchedDates && !isSameLocalDate(captureTime, new Date())) {
         skippedWrongDate++
@@ -889,6 +877,11 @@ async function runImport(
   }
   if (skippedWrongDate > 0) {
     logger.photos.info(`Skipped ${skippedWrongDate} photos with non-today EXIF dates`)
+  }
+  if (skippedByWatermark > 0) {
+    logger.photos.info(
+      `SD watermark filter: skipped ${skippedByWatermark}/${partitionedPaths.length} photos by EXIF capture time (already processed in prior sessions)`,
+    )
   }
 
   logger.photos.info(`${photos.length}/${partitionedPaths.length} photos have EXIF timestamps (skipped ${skippedDupes} already-uploaded)`)
@@ -1265,18 +1258,11 @@ async function runImport(
     `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s`,
   )
 
-  // Advance SD watermark per camera body to the highest filename we saw
-  // this import. Subsequent inserts will skip everything up through this
-  // filename — enforcing the "only scan NEW photos" rule.
-  const maxFileByBody: Record<string, string> = {}
-  for (const p of partitionedPathsRaw) {
-    const body = getCameraBodyKey(p)
-    if (!body) continue
-    const f = path.basename(p).toUpperCase()
-    if (!maxFileByBody[body] || f > maxFileByBody[body]) maxFileByBody[body] = f
-  }
-  if (!previewOnly && Object.keys(maxFileByBody).length > 0) {
-    state.setSdWatermarksBulk(maxFileByBody)
+  // Advance SD watermark per camera body to the latest EXIF capture time we
+  // saw this import. Subsequent inserts only skip photos at or before that
+  // EXIF time — never by filename sequence.
+  if (!previewOnly && Object.keys(maxCaptureByBody).length > 0) {
+    state.setSdWatermarksBulk(maxCaptureByBody)
   }
 
   // ── Distribution-sanity validator ──
@@ -1538,9 +1524,9 @@ export async function rematchOrphansForWindow(
 
 /**
  * Scan all currently-mounted camera drives and advance SD watermarks to
- * the highest filename on each. Operator's "mark SDs as processed" button
- * fires this — after invocation, subsequent imports only pick up photos
- * with a filename greater than what's on the SD right now.
+ * the latest EXIF capture time on each. Operator's "mark SDs as processed"
+ * button fires this — after invocation, subsequent imports only pick up
+ * photos with an EXIF capture time later than what's on the SD right now.
  *
  * Side-effect: does NOT import any photos, does NOT modify state.routines.
  * Only writes to state.sdWatermarks.
@@ -1560,20 +1546,33 @@ export async function markCurrentSdsAsProcessed(): Promise<{
     if (drives.length === 0) {
       return { scannedDrives: 0, watermarksSet: {} }
     }
-    const maxByBody: Record<string, string> = {}
+    const maxByBody: Record<string, { lastCaptureTime: string; lastFilename?: string }> = {}
     for (const d of drives) {
-      // Recursively scan this drive's photo folder for JPEGs. Cheap — just
-      // filename enumeration, no content reads.
+      // Recursively scan this drive's photo folder for JPEGs and set the
+      // watermark from the latest EXIF capture time we find.
       const files = await collectJpegFilenames(d.photoPath)
       for (const full of files) {
         const body = getCameraBodyKey(full)
         if (!body) continue
-        const f = path.basename(full).toUpperCase()
-        if (!maxByBody[body] || f > maxByBody[body]) maxByBody[body] = f
+        const captureTime = await getPhotoCaptureTime(full)
+        if (!captureTime) continue
+        const iso = captureTime.toISOString()
+        const current = maxByBody[body]
+        if (!current || iso > current.lastCaptureTime) {
+          maxByBody[body] = {
+            lastCaptureTime: iso,
+            lastFilename: path.basename(full).toUpperCase(),
+          }
+        }
       }
     }
     state.setSdWatermarksBulk(maxByBody)
-    return { scannedDrives: drives.length, watermarksSet: maxByBody }
+    return {
+      scannedDrives: drives.length,
+      watermarksSet: Object.fromEntries(
+        Object.entries(maxByBody).map(([body, entry]) => [body, entry.lastCaptureTime]),
+      ),
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     logger.photos.error(`markCurrentSdsAsProcessed failed: ${msg}`)

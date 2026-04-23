@@ -59,20 +59,13 @@ export default function Controls(): React.ReactElement {
 
   const hotkeys = settings?.hotkeys
 
-  // Primary action button swaps based on state:
-  // - Not recording: big RECORD button (with red glow CTA)
-  // - Recording: big NEXT button (to advance)
-  const primaryBtn = isRecording ? (
-    <button className="ctrl-btn next-full" onClick={handleNextFull}>
-      NEXT
-    </button>
-  ) : (
+  const primaryBtn = (
     <button
-      className={`ctrl-btn record-cta${isConnected ? '' : ' disabled'}`}
+      className={`ctrl-btn record-cta${isConnected ? '' : ' disabled'}${isRecording ? ' is-recording' : ''}`}
       onClick={handleToggleRecord}
       disabled={!isConnected}
     >
-      RECORD
+      {isRecording ? 'STOP RECORDING' : 'RECORD'}
       <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
     </button>
   )

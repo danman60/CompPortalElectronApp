@@ -336,12 +336,17 @@ export function initIPCListeners(): () => void {
   // Delta routine update from main (single routine changed)
   window.api.on(IPC_CHANNELS.STATE_ROUTINE_UPDATE, (data: unknown) => {
     const d = data as { routineId: string; routine: Routine }
-    const comp = useStore.getState().competition
+    const s = useStore.getState()
+    const comp = s.competition
     if (!comp) return
     const routines = comp.routines.map(r =>
       r.id === d.routineId ? d.routine : r,
     )
-    useStore.setState({ competition: { ...comp, routines } })
+    useStore.setState({
+      competition: { ...comp, routines },
+      currentRoutine: s.currentRoutine?.id === d.routineId ? d.routine : s.currentRoutine,
+      nextRoutine: s.nextRoutine?.id === d.routineId ? d.routine : s.nextRoutine,
+    })
     store().recalcCounts()
   })
 

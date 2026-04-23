@@ -57,6 +57,19 @@ export default function CurrentRoutine(): React.ReactElement {
             </span>
           </div>
         )}
+        {current.status === 'uploading' && current.uploadProgress && (
+          <div className="recording-timer" style={{ color: 'var(--upload-blue)' }}>
+            <span>{current.uploadProgress.filesCompleted}/{current.uploadProgress.filesTotal} uploading</span>
+            <span style={{ opacity: 0.7, fontSize: '18px' }}>
+              {current.uploadProgress.percent}%
+            </span>
+            {current.uploadProgress.currentFile && (
+              <span style={{ opacity: 0.75, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {current.uploadProgress.currentFile}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
     </div>

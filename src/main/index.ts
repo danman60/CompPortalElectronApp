@@ -26,8 +26,13 @@ import * as tether from './services/tether'
 import * as wifiDisplay from './services/wifiDisplay'
 import * as chatBridge from './services/chatBridge'
 import * as dayChecklist from './services/dayChecklist'
+import * as controlRoomBridge from './services/controlRoomBridge'
 import { checkAndRecover } from './services/crashRecovery'
 import { runStartupChecks } from './services/startup'
+
+function nextTick(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
 
 // --- Global error handlers ---
 process.on('uncaughtException', (error) => {
@@ -146,6 +151,22 @@ function createWindow(): void {
     }
   })
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger.app.error(
+      `Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`,
+    )
+    try { jobQueue.flushSync() } catch {}
+    try { state.saveStateImmediate() } catch {}
+  })
+
+  mainWindow.webContents.on('unresponsive', () => {
+    logger.app.error('Main window webContents became unresponsive')
+  })
+
+  mainWindow.webContents.on('responsive', () => {
+    logger.app.info('Main window webContents became responsive again')
+  })
+
   // Open external links in browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -184,6 +205,12 @@ app.whenReady().then(async () => {
     `App starting, version: ${app.getVersion()}, pid=${process.pid}, ppid=${process.ppid}, argv=${JSON.stringify(process.argv.slice(1))}`,
   )
   logger.app.info('User data path:', app.getPath('userData'))
+
+  app.on('child-process-gone', (_event, details) => {
+    logger.app.error(
+      `Child process gone: type=${details.type}, reason=${details.reason}, exitCode=${details.exitCode ?? 'n/a'}, serviceName=${details.serviceName ?? 'n/a'}`,
+    )
+  })
 
   // Fix 5: elevation gate — runs after whenReady so the message box can render.
   // Calling dialog.showMessageBoxSync at module load returns silently on Windows
@@ -307,6 +334,7 @@ app.whenReady().then(async () => {
   } catch (err) {
     logger.app.warn(`debugServer start failed: ${err instanceof Error ? err.message : err}`)
   }
+  controlRoomBridge.start()
   // WPD/MTP disabled — using folder-watch mode instead
   // tether.initWPDHandlers()
   // wpdBridge.startMonitor().catch((err) => {
@@ -385,40 +413,56 @@ app.whenReady().then(async () => {
             recording.broadcastFullState()
           }
         }
-        // Retry orphaned completions (routines where uploads finished but completion call was lost)
-        uploadService.retryOrphanedCompletions().then(count => {
-          if (count > 0) logger.app.info(`Recovered ${count} orphaned upload completions`)
-        }).catch(() => {})
-        // Retry encoded routines that were skipped due to missing connection at encode time.
-        // Fire-and-forget: batches with setImmediate to prevent AppHangB1 on startup.
-        uploadService.retrySkippedEncoded().then(count => {
-          if (count > 0) logger.app.info(`Retried ${count} encoded routines that were skipped earlier`)
-        }).catch(err => {
-          logger.app.warn(`retrySkippedEncoded failed: ${err instanceof Error ? err.message : err}`)
-        })
-        // Retry incomplete photo uploads for routines already marked 'uploaded'
-        const photoRetried = uploadService.retryIncompletePhotoUploads()
-        if (photoRetried > 0) logger.app.info(`Retrying incomplete photo uploads for ${photoRetried} routines`)
+        try {
+          // Stage startup recovery so boot does not stampede multiple queue
+          // mutation passes at once. Yield between phases to keep the app responsive.
+          const orphanedCompletions = await uploadService.retryOrphanedCompletions()
+          if (orphanedCompletions > 0) {
+            logger.app.info(`Recovered ${orphanedCompletions} orphaned upload completions`)
+          }
+          await nextTick()
 
-        // T-V7-20 / T-V7-26: DB cross-checked auto-resume. Heals stale
-        // `uploaded=false` flags for photos already in R2+DB (crash-lost
-        // writes) and enqueues only the truly-missing delta. Falls back to
-        // state-based enqueue when the endpoint is unavailable. Gated by
-        // settings.upload.autoResumeOnBoot. Routes through the unified
-        // reconciler (scope: 'boot').
-        uploadService.autoResumeUnfinished().then((report) => {
+          const skippedEncoded = await uploadService.retrySkippedEncoded()
+          if (skippedEncoded > 0) {
+            logger.app.info(`Retried ${skippedEncoded} encoded routines that were skipped earlier`)
+          }
+          await nextTick()
+
+          if (getSettings().behavior.autoEncodeRecordings) {
+            try {
+              const resumedRecorded = ffmpegService.resumeRecordedRoutines()
+              if (resumedRecorded > 0) {
+                logger.app.info(`Resumed ${resumedRecorded} recorded routine(s) awaiting encode`)
+              }
+            } catch (err) {
+              logger.app.warn(`resumeRecordedRoutines failed: ${err instanceof Error ? err.message : err}`)
+            }
+          }
+          await nextTick()
+
+          const photoRetried = uploadService.retryIncompletePhotoUploads()
+          if (photoRetried > 0) {
+            logger.app.info(`Retrying incomplete photo uploads for ${photoRetried} routines`)
+          }
+          await nextTick()
+
+          // T-V7-20 / T-V7-26: DB cross-checked auto-resume. Heals stale
+          // `uploaded=false` flags for photos already in R2+DB (crash-lost
+          // writes) and enqueues only the truly-missing delta. Falls back to
+          // state-based enqueue when the endpoint is unavailable. Gated by
+          // settings.upload.autoResumeOnBoot. Routes through the unified
+          // reconciler (scope: 'boot').
+          const report = await uploadService.autoResumeUnfinished()
           if (report.error && report.error !== 'disabled') {
             logger.app.warn(`Auto-resume skipped: ${report.error}`)
-            return
-          }
-          if (report.routinesScanned > 0 || report.jobsQueued > 0) {
+          } else if (report.routinesScanned > 0 || report.jobsQueued > 0) {
             logger.app.info(
               `Auto-resume: ${report.routinesScanned} routines scanned, ${report.photosRepaired} photos repaired, ${report.jobsQueued} jobs queued (endpoint ${report.endpointAvailable ? 'ok' : 'unavailable'})`,
             )
           }
-        }).catch((err) => {
-          logger.app.warn(`autoResumeUnfinished failed: ${err instanceof Error ? err.message : err}`)
-        })
+        } catch (err) {
+          logger.app.warn(`startup recovery sequence failed: ${err instanceof Error ? err.message : err}`)
+        }
 
         // T-V7-26: start the ambient reconciler to auto-heal drift while
         // the app is running. Cadence + silent governed by settings.upload.

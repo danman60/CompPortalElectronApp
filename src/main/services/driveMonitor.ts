@@ -160,12 +160,10 @@ async function sampleAndReportCameraClock(
 ): Promise<void> {
   try {
     // Collect a wider pool, then filter out photos already past the per-body
-    // SD watermark — those are from prior imports and their EXIF date is
-    // "days ago" by design. Without this filter, a partially-imported SD
-    // re-inserted produced false "N days off" popups (UDC London 2026-04-19
-    // H:\ flagged 17-days-off because sampler hit leftover Friday photos
-    // even though today's shots were there too). Over-collect 5× to
-    // survive filtering.
+    // SD watermark by EXIF capture time. Without this filter, a
+    // partially-imported SD re-inserted produced false "N days off" popups
+    // because the sampler hit leftover old photos even though today's shots
+    // were there too. Over-collect 5× to survive filtering.
     const rawSamples = collectJpegSamples(photoPath, 5 * 5)
     const watermarks = state.listSdWatermarks()
     const samples: string[] = []
@@ -173,9 +171,12 @@ async function sampleAndReportCameraClock(
     for (const s of rawSamples) {
       const body = getCameraBodyKey(s)
       const wm = body ? watermarks[body] : null
-      if (wm && path.basename(s).toUpperCase() <= wm.lastFilename.toUpperCase()) {
-        watermarkFiltered++
-        continue
+      if (wm) {
+        const exif = await readExifDateTimeOriginal(s)
+        if (exif && exif.toISOString() <= wm.lastCaptureTime) {
+          watermarkFiltered++
+          continue
+        }
       }
       samples.push(s)
       if (samples.length >= 5) break

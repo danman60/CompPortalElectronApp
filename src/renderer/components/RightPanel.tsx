@@ -12,7 +12,8 @@ export function JobQueuePanel(): React.ReactElement | null {
   const pending = jobQueue.filter((j) => j.status === 'pending').length
   const running = jobQueue.filter((j) => j.status === 'running').length
   const failed = jobQueue.filter((j) => j.status === 'failed')
-  const totalActive = pending + running + failed.length
+  const quarantined = jobQueue.filter((j) => j.status === 'quarantined')
+  const totalActive = pending + running + failed.length + quarantined.length
 
   if (totalActive === 0 && !jobQueuePanelOpen) return null
 
@@ -41,10 +42,13 @@ export function JobQueuePanel(): React.ReactElement | null {
           {failed.length > 0 && (
             <span className="jq-badge failed">{failed.length} failed</span>
           )}
+          {quarantined.length > 0 && (
+            <span className="jq-badge failed">{quarantined.length} quarantined</span>
+          )}
         </div>
         <span className="job-queue-toggle">{jobQueuePanelOpen ? '\u25B2' : '\u25BC'}</span>
       </div>
-      {jobQueuePanelOpen && failed.length > 0 && (
+      {jobQueuePanelOpen && (failed.length > 0 || quarantined.length > 0) && (
         <div className="job-queue-list">
           {failed.map((job) => (
             <div key={job.id} className="job-queue-item failed">
@@ -56,18 +60,36 @@ export function JobQueuePanel(): React.ReactElement | null {
               </div>
             </div>
           ))}
+          {quarantined.map((job) => (
+            <div key={job.id} className="job-queue-item failed">
+              <span className="jq-type">{job.type}</span>
+              <span className="jq-error" title={job.error}>{job.error || 'Quarantined'}</span>
+              <div className="jq-actions">
+                <button className="jq-btn retry" onClick={() => handleRetry(job)}>Retry</button>
+                <button className="jq-btn cancel" onClick={() => handleCancel(job)}>Dismiss</button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
   )
 }
 
-function HealthStrip(): React.ReactElement {
+export function HealthStrip(): React.ReactElement {
   const competition = useStore((s) => s.competition)
   const encodingCount = useStore((s) => s.encodingCount)
   const uploadingCount = useStore((s) => s.uploadingCount)
   const completeCount = useStore((s) => s.completeCount)
   const photosPendingCount = useStore((s) => s.photosPendingCount)
+  const jobQueue = useStore((s) => s.jobQueue)
+
+  const activeUploadRoutineCount = new Set(
+    jobQueue
+      .filter((j) => j.type === 'upload' && (j.status === 'pending' || j.status === 'running'))
+      .map((j) => j.routineId),
+  ).size
+  const visibleUploadingCount = Math.max(uploadingCount, activeUploadRoutineCount)
 
   const total = competition?.routines.length ?? 0
   const recorded = competition?.routines.filter(
@@ -87,7 +109,7 @@ function HealthStrip(): React.ReactElement {
       </div>
       <div className="health-tile">
         <span className="health-label">Uploading</span>
-        <strong>{uploadingCount}</strong>
+        <strong>{visibleUploadingCount}</strong>
       </div>
       <div className="health-tile">
         <span className="health-label">Complete</span>
@@ -144,9 +166,6 @@ export default function RightPanel(): React.ReactElement {
           }}
         />
       </div>
-
-      <HealthStrip />
-
       <RoutineTable />
     </div>
   )

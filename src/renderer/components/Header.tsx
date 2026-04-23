@@ -4,6 +4,8 @@ import { useStore } from '../store/useStore'
 import CurrentRoutine from './CurrentRoutine'
 import Controls from './Controls'
 import LoadCompetition from './LoadCompetition'
+import { HealthStrip } from './RightPanel'
+import VerticalMeters from './VerticalMeters'
 import '../styles/header.css'
 
 function useAppVersion(): string {
@@ -354,42 +356,42 @@ function SystemMonitor(): React.ReactElement | null {
 
   return (
     <div className="header-status topband-system">
-      {stats && (
-        <div className="meter-bar" title={`CPU: ${cpuPercent.toFixed(0)}%`}>
-          <span className="meter-label">CPU</span>
-          <div className="meter-track">
-            <div className="meter-fill" style={{ width: `${cpuPercent}%`, background: cpuColor }} />
+        {stats && (
+          <div className="meter-bar" title={`CPU: ${cpuPercent.toFixed(0)}%`}>
+            <span className="meter-label">CPU</span>
+            <div className="meter-track">
+              <div className="meter-fill" style={{ width: `${cpuPercent}%`, background: cpuColor }} />
+            </div>
+            <span className="meter-value">{cpuPercent.toFixed(0)}%</span>
           </div>
-          <span className="meter-value">{cpuPercent.toFixed(0)}%</span>
-        </div>
-      )}
-      {stats && stats.memPercent !== undefined && (
-        <div className="meter-bar" title={`RAM: ${memPercent}%`}>
-          <span className="meter-label">RAM</span>
-          <div className="meter-track">
-            <div className="meter-fill" style={{ width: `${memPercent}%`, background: memColor }} />
+        )}
+        {stats && stats.memPercent !== undefined && (
+          <div className="meter-bar" title={`RAM: ${memPercent}%`}>
+            <span className="meter-label">RAM</span>
+            <div className="meter-track">
+              <div className="meter-fill" style={{ width: `${memPercent}%`, background: memColor }} />
+            </div>
+            <span className="meter-value">{memPercent}%</span>
           </div>
-          <span className="meter-value">{memPercent}%</span>
-        </div>
-      )}
-      {stats && stats.diskFreeGB >= 0 && (
-        <div className={`meter-bar ${stats.diskFreeGB < 2 ? 'disk-critical' : stats.diskFreeGB < 10 ? 'disk-warning' : ''}`} title={`Disk: ${stats.diskFreeGB.toFixed(1)}GB free`}>
-          <span className="meter-label">Disk</span>
-          <div className="meter-track">
-            <div className="meter-fill" style={{ width: `${diskUsedPercent}%`, background: diskColor }} />
+        )}
+        {stats && stats.diskFreeGB >= 0 && (
+          <div className={`meter-bar ${stats.diskFreeGB < 2 ? 'disk-critical' : stats.diskFreeGB < 10 ? 'disk-warning' : ''}`} title={`Disk: ${stats.diskFreeGB.toFixed(1)}GB free`}>
+            <span className="meter-label">Disk</span>
+            <div className="meter-track">
+              <div className="meter-fill" style={{ width: `${diskUsedPercent}%`, background: diskColor }} />
+            </div>
+            <span className="meter-value">{stats.diskFreeGB.toFixed(0)}GB</span>
           </div>
-          <span className="meter-value">{stats.diskFreeGB.toFixed(0)}GB</span>
-        </div>
-      )}
-      {obsStats && obsFpsLabel !== null && (
-        <span className="si" style={{ color: obsFpsColor }}>OBS {obsFpsLabel}</span>
-      )}
-      {obsStats && obsStats.connected && dropCount !== null && (
-        <span className="si" style={{ color: dropColor }}>Drop {dropCount}</span>
-      )}
-      {obsStats && obsStats.connected && obsStats.streaming && congLabel && (
-        <span className="si" style={{ color: congColor }}>Cong {congLabel}</span>
-      )}
+        )}
+        {obsStats && obsFpsLabel !== null && (
+          <span className="si" style={{ color: obsFpsColor }}>OBS {obsFpsLabel}</span>
+        )}
+        {obsStats && obsStats.connected && dropCount !== null && (
+          <span className="si" style={{ color: dropColor }}>Drop {dropCount}</span>
+        )}
+        {obsStats && obsStats.connected && obsStats.streaming && congLabel && (
+          <span className="si" style={{ color: congColor }}>Cong {congLabel}</span>
+        )}
     </div>
   )
 }
@@ -519,8 +521,20 @@ export default function Header(): React.ReactElement {
       </div>
 
       <div className="topband-row topband-live">
+        <div className="topband-stats">
+          <div className="section topband-stats-card">
+            <div className="section-title">Stats</div>
+            <HealthStrip />
+          </div>
+        </div>
         <div className="topband-current">
           <CurrentRoutine />
+        </div>
+        <div className="topband-meters">
+          <div className="section topband-meters-card">
+            <div className="section-title">Audio</div>
+            <VerticalMeters />
+          </div>
         </div>
         <div className="topband-controls">
           <Controls />

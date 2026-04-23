@@ -461,6 +461,34 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   const compactMode = useStore((s) => s.compactMode)
   const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
+
+  async function handleNudgeRoutine(e: React.MouseEvent, routine: Routine): Promise<void> {
+    e.stopPropagation()
+    try {
+      switch (routine.status) {
+        case 'recorded':
+        case 'queued':
+          await window.api.ffmpegEncode(routine.id)
+          break
+        case 'encoding':
+          await window.api.ffmpegResume()
+          break
+        case 'encoded':
+        case 'uploading':
+        case 'uploaded':
+        case 'confirmed':
+        case 'failed':
+          await window.api.uploadRoutine(routine.id)
+          await window.api.uploadStart()
+          break
+        default:
+          await window.api.mediaReconcileRun('manual')
+          break
+      }
+    } catch {
+      // handled server-side
+    }
+  }
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   // Double-click on a row opens the row's note editor (F5 wire-up). The seq
   // increments per double-click so re-clicking the same row re-opens the
@@ -716,6 +744,18 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                         title="Cancel upload for this routine"
                       >
                         Cancel
+                      </button>
+                    )}
+                    {['recorded', 'queued', 'encoding', 'encoded', 'uploading', 'uploaded', 'confirmed', 'failed'].includes(routine.status) && (
+                      <button
+                        className="view-btn"
+                        style={{ color: 'var(--upload-blue)', borderColor: 'var(--upload-blue)' }}
+                        onClick={(e) => {
+                          void handleNudgeRoutine(e, routine)
+                        }}
+                        title="Manually resume this routine's next processing or upload step"
+                      >
+                        Nudge
                       </button>
                     )}
                     {routine.status === 'failed' && (

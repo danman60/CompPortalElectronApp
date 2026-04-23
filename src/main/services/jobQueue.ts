@@ -150,7 +150,7 @@ export function enqueue(
 export function updateStatus(
   jobId: string,
   status: JobStatus,
-  extra?: { error?: string; progress?: number; storagePath?: string; thumbStoragePath?: string },
+  extra?: { error?: string; progress?: number; storagePath?: string; thumbStoragePath?: string; retryable?: boolean },
 ): void {
   const job = jobs.find(j => j.id === jobId)
   if (!job) {
@@ -180,7 +180,7 @@ export function updateStatus(
   }
 
   // Failed but retryable — reset to pending
-  if (status === 'failed' && job.attempts < job.maxAttempts) {
+  if (status === 'failed' && extra?.retryable !== false && job.attempts < job.maxAttempts) {
     job.status = 'pending'
     logger.app.info(
       `Job queue: ${job.type} job ${jobId} failed (attempt ${job.attempts}/${job.maxAttempts}), will retry`,
@@ -263,6 +263,18 @@ export function pruneCompleted(olderThanMs: number): number {
   return pruned
 }
 
+export function quarantine(jobId: string, error: string): boolean {
+  const job = jobs.find(j => j.id === jobId)
+  if (!job) return false
+  const prev = job.status
+  job.status = 'quarantined'
+  job.error = error
+  job.updatedAt = new Date().toISOString()
+  logger.app.warn(`Job queue: quarantined ${job.type} job ${jobId} (${prev} → quarantined): ${error}`)
+  flushSync()
+  return true
+}
+
 /** Remove a specific job (cancel). Only pending/failed jobs can be removed. */
 export function remove(jobId: string): boolean {
   const idx = jobs.findIndex(j => j.id === jobId)
@@ -279,10 +291,55 @@ export function remove(jobId: string): boolean {
   return true
 }
 
+/** Remove jobs whose routineId is not present in the current competition. */
+export function pruneMissingRoutines(validRoutineIds: Set<string>, type?: JobType): number {
+  const before = jobs.length
+  jobs = jobs.filter((job) => {
+    if (type && job.type !== type) return true
+    return validRoutineIds.has(job.routineId)
+  })
+  const pruned = before - jobs.length
+  if (pruned > 0) {
+    rebuildRoutineIndex()
+    logger.app.warn(`Job queue: pruned ${pruned} orphaned ${type ?? 'all'} job(s) for missing routines`)
+    flushSync()
+  }
+  return pruned
+}
+
+/**
+ * Remove jobs that do not belong to the currently loaded competition.
+ * Upload jobs are additionally scoped by payload.competitionId so stale
+ * persisted work from another competition cannot run after a schedule switch.
+ */
+export function pruneForCompetition(competitionId: string, validRoutineIds: Set<string>): number {
+  const before = jobs.length
+  jobs = jobs.filter((job) => {
+    if (!validRoutineIds.has(job.routineId)) return false
+    if (job.type !== 'upload') return true
+
+    const payloadCompetitionId = (job.payload as Record<string, unknown>).competitionId
+    if (typeof payloadCompetitionId !== 'string' || payloadCompetitionId.length === 0) {
+      return true
+    }
+    return payloadCompetitionId === competitionId
+  })
+
+  const pruned = before - jobs.length
+  if (pruned > 0) {
+    rebuildRoutineIndex()
+    logger.app.warn(
+      `Job queue: pruned ${pruned} stale job(s) not belonging to competition ${competitionId}`,
+    )
+    flushSync()
+  }
+  return pruned
+}
+
 /** Reset a failed job for manual retry. */
 export function retry(jobId: string): boolean {
   const job = jobs.find(j => j.id === jobId)
-  if (!job || job.status !== 'failed') return false
+  if (!job || (job.status !== 'failed' && job.status !== 'quarantined')) return false
   job.status = 'pending'
   job.attempts = 0
   job.error = undefined
@@ -305,6 +362,10 @@ export function getRunning(type?: JobType): JobRecord[] {
 
 export function getFailed(type?: JobType): JobRecord[] {
   return jobs.filter(j => j.status === 'failed' && (!type || j.type === type))
+}
+
+export function getQuarantined(type?: JobType): JobRecord[] {
+  return jobs.filter(j => j.status === 'quarantined' && (!type || j.type === type))
 }
 
 export function getAll(): JobRecord[] {

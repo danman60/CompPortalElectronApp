@@ -936,7 +936,7 @@ export interface OverlayState {
 // --- Job Queue ---
 
 export type JobType = 'encode' | 'upload' | 'photo-import'
-export type JobStatus = 'pending' | 'running' | 'done' | 'failed'
+export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled' | 'quarantined'
 
 export interface JobRecord {
   id: string
@@ -963,6 +963,7 @@ export interface StartupReport {
   diskFreeGB: number
   diskWarning: boolean
   resumedJobs: number
+  quarantinedJobs?: number
   orphanedFiles: number
   warnings: string[]
 }
@@ -1008,7 +1009,9 @@ export interface WSStateMessage {
 export interface WSCommandMessage {
   type: 'command'
   action: 'nextFull' | 'nextRoutine' | 'prev' | 'skip'
-    | 'toggleRecord' | 'toggleStream' | 'saveReplay'
+    | 'toggleRecord' | 'startRecord' | 'stopRecord'
+    | 'toggleStream' | 'saveReplay'
+    | 'pauseUploads' | 'resumeUploads' | 'reconcileMedia'
     | 'toggleOverlay' | 'loadShareCode'
   element?: 'counter' | 'clock' | 'logo' | 'lowerThird'
   shareCode?: string
