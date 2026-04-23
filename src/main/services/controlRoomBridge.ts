@@ -8,6 +8,7 @@ import * as upload from './upload'
 import * as ffmpeg from './ffmpeg'
 import * as wsHub from './wsHub'
 import * as chatBridge from './chatBridge'
+import * as systemMonitor from './systemMonitor'
 import { getResolvedConnection } from './schedule'
 import { getSettings } from './settings'
 import { logger } from '../logger'
@@ -16,7 +17,8 @@ import type { WSCommandMessage } from '../../shared/types'
 const HEARTBEAT_INTERVAL_MS = 5000
 const COMMAND_POLL_INTERVAL_MS = 3000
 const REQUEST_TIMEOUT_MS = 15000
-const MAX_EVENTS = 300
+const MAX_EVENTS = 80
+const MAX_HEARTBEAT_CHAT_MESSAGES = 20
 
 let heartbeatTimer: NodeJS.Timeout | null = null
 let commandPollTimer: NodeJS.Timeout | null = null
@@ -120,6 +122,8 @@ function buildSnapshot() {
   const next = state.getNextRoutine()
   const uploadState = upload.getUploadRuntimeState()
   const encodeState = ffmpeg.getEncodingRuntimeState()
+  const systemStats = systemMonitor.getLastStats()
+  const chatMessages = chatBridge.getChatMessages()
   return {
     machine: {
       hostname: os.hostname(),
@@ -129,6 +133,15 @@ function buildSnapshot() {
       arch: process.arch,
       pid: process.pid,
     },
+    system: systemStats ? {
+      cpuPercent: systemStats.cpuPercent,
+      memPercent: systemStats.memPercent,
+      diskFreeGB: systemStats.diskFreeGB,
+      diskTotalGB: systemStats.diskTotalGB,
+      freeBytes: systemStats.freeBytes,
+      totalBytes: systemStats.totalBytes,
+      timestamp: systemStats.timestamp,
+    } : null,
     competition: comp ? {
       id: comp.competitionId,
       name: comp.name,
@@ -157,7 +170,8 @@ function buildSnapshot() {
     audio: mapAudioLevels(),
     routines: mapRoutines(),
     chat: {
-      messages: chatBridge.getChatMessages(),
+      messages: chatMessages.slice(-MAX_HEARTBEAT_CHAT_MESSAGES),
+      messageCount: chatMessages.length,
       pinned: chatBridge.getPinnedMessages(),
     },
     routineCounts: {

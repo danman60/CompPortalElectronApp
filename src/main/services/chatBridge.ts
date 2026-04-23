@@ -65,15 +65,16 @@ function scheduleReconnect(): void {
 
 function teardownChannel(): void {
   if (channel) {
-    try { channel.unsubscribe() } catch (err) {
+    try {
+      void channel.unsubscribe().catch((err) => {
+        logger.app.warn('Chat bridge: unsubscribe error:', err instanceof Error ? err.message : err)
+      })
+    } catch (err) {
       logger.app.warn('Chat bridge: unsubscribe error:', err instanceof Error ? err.message : err)
     }
     channel = null
   }
-  if (supabase) {
-    try { supabase.removeAllChannels() } catch {}
-    supabase = null
-  }
+  supabase = null
 }
 
 function mergeMessage(msg: ChatMessage, notify = true): boolean {

@@ -10,6 +10,7 @@ import * as perf from './perfLogger'
 
 let pollTimer: NodeJS.Timeout | null = null
 let prevCpuTimes: { idle: number; total: number } | null = null
+let lastStats: SystemStats | null = null
 
 // Fix 8: disk space alert transitions
 type DiskAlertLevel = 'ok' | 'warning' | 'high' | 'critical'
@@ -87,6 +88,7 @@ function poll(): void {
     timestamp: Date.now(),
   }
 
+  lastStats = stats
   sendToRenderer(IPC_CHANNELS.SYSTEM_STATS, stats)
   perf.gauge('sys.cpu_pct', cpuPercent)
   perf.gauge('sys.mem_pct', memPercent)
@@ -155,4 +157,8 @@ export function stopMonitoring(): void {
     clearInterval(pollTimer)
     pollTimer = null
   }
+}
+
+export function getLastStats(): SystemStats | null {
+  return lastStats
 }
