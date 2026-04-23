@@ -1011,10 +1011,16 @@ export interface WSCommandMessage {
   action: 'nextFull' | 'nextRoutine' | 'prev' | 'skip'
     | 'toggleRecord' | 'startRecord' | 'stopRecord'
     | 'toggleStream' | 'saveReplay'
-    | 'pauseUploads' | 'resumeUploads' | 'reconcileMedia'
+    | 'pauseUploads' | 'resumeUploads' | 'reconcileMedia' | 'nudgeRoutine'
+    | 'pinChatMessage' | 'unpinChatMessage'
+    | 'setCameraOffset' | 'clearCameraOffsets'
     | 'toggleOverlay' | 'loadShareCode'
   element?: 'counter' | 'clock' | 'logo' | 'lowerThird'
   shareCode?: string
+  routineId?: string
+  chatMessageId?: string
+  cameraBody?: string
+  offsetMs?: number
 }
 
 export interface WSIdentifyMessage {

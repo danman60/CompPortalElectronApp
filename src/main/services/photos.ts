@@ -1255,6 +1255,20 @@ async function runImport(
     clockOffsetMs,
     matches,
   }
+  const unmatchedRatio = result.totalPhotos > 0 ? result.unmatched / result.totalPhotos : 0
+  if (result.totalPhotos >= 25 && unmatchedRatio >= 0.25) {
+    const percent = Math.round(unmatchedRatio * 100)
+    const message = `SD import warning: ${result.unmatched}/${result.totalPhotos} photos (${percent}%) did not match a recording window. Check camera clock offset.`
+    logger.photos.warn(message)
+    events.emit('import.match.warning', {
+      totalPhotos: result.totalPhotos,
+      matched: result.matched,
+      unmatched: result.unmatched,
+      unmatchedRatio,
+      clockOffsetMs,
+      message,
+    })
+  }
 
   // Update routine state with matched photos (skipped in preview mode —
   // preview only computes projected match counts + offset without touching

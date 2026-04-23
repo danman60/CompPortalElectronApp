@@ -7,6 +7,7 @@ import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabas
 import { ChatMessage, PinnedChatMessage } from '../../shared/types'
 import { getResolvedConnection } from './schedule'
 import { logger } from '../logger'
+import * as events from './events'
 
 // CompSync Supabase project (public anon key — safe to embed, RLS enforced)
 const SUPABASE_URL = 'https://cafugvuaatsgihrsmvvl.supabase.co'
@@ -23,6 +24,7 @@ let onPinChange: (() => void) | null = null
 let onMessagePush: ((msg: ChatMessage) => void) | null = null
 let onMessagePinned: ((msg: ChatMessage) => void) | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
+let pollTimer: NodeJS.Timeout | null = null
 let reconnectDelayMs = 2000  // grows on repeated failures
 let consecutiveFailures = 0
 let started = false  // user has called startChatBridge — auto-reconnect on failures
@@ -74,6 +76,61 @@ function teardownChannel(): void {
   }
 }
 
+function mergeMessage(msg: ChatMessage, notify = true): boolean {
+  if (!msg || !msg.id) return false
+  if (messages.some((existing) => existing.id === msg.id)) return false
+  messages.push(msg)
+  if (messages.length > MAX_MESSAGES) {
+    messages = messages.slice(-MAX_MESSAGES)
+  }
+  events.emit('chat.message.received', {
+    id: msg.id,
+    name: msg.name,
+    ageMs: Date.now() - (msg.timestamp || Date.now()),
+  })
+  if (notify) {
+    try { onMessagePush?.(msg) } catch {}
+  }
+  return true
+}
+
+async function backfillChatMessages(): Promise<void> {
+  const conn = getResolvedConnection()
+  if (!conn) return
+  try {
+    const response = await fetch(
+      `${conn.apiBase}/api/livestream/chat?competitionId=${encodeURIComponent(conn.competitionId)}&limit=${MAX_MESSAGES}`,
+    )
+    if (!response.ok) {
+      logger.app.warn(`Chat bridge: backfill HTTP ${response.status}`)
+      return
+    }
+    const body = await response.json() as { messages?: ChatMessage[] }
+    let merged = 0
+    for (const msg of body.messages || []) {
+      if (mergeMessage(msg)) merged++
+    }
+    events.emit('chat.backfill.ok', { merged, total: messages.length })
+  } catch (err) {
+    logger.app.warn('Chat bridge: backfill failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+function startBackfillPoller(): void {
+  if (pollTimer) return
+  void backfillChatMessages()
+  pollTimer = setInterval(() => {
+    void backfillChatMessages()
+  }, 5000)
+}
+
+function stopBackfillPoller(): void {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 function connectChannel(): void {
   const conn = getResolvedConnection()
   if (!conn) {
@@ -106,12 +163,7 @@ function connectChannel(): void {
 
   channel.on('broadcast', { event: 'chat' }, ({ payload }) => {
     const msg = payload as ChatMessage
-    if (!msg || !msg.id) return
-    messages.push(msg)
-    if (messages.length > MAX_MESSAGES) {
-      messages = messages.slice(-MAX_MESSAGES)
-    }
-    try { onMessagePush?.(msg) } catch {}
+    mergeMessage(msg)
   })
 
   channel.subscribe((status, err) => {
@@ -119,10 +171,12 @@ function connectChannel(): void {
     if (status === 'SUBSCRIBED') {
       consecutiveFailures = 0
       reconnectDelayMs = 2000
+      startBackfillPoller()
     } else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR' || status === 'CLOSED') {
       scheduleReconnect()
     }
   })
+  startBackfillPoller()
 }
 
 export function startChatBridge(): void {
@@ -142,6 +196,7 @@ export function stopChatBridge(): void {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  stopBackfillPoller()
   teardownChannel()
   logger.app.info('Chat bridge: stopped')
   messages = []

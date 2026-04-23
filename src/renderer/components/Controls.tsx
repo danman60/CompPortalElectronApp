@@ -57,6 +57,10 @@ export default function Controls(): React.ReactElement {
     }
   }
 
+  function handleClockSync(): void {
+    window.dispatchEvent(new Event('compsync:show-clock-sync'))
+  }
+
   const hotkeys = settings?.hotkeys
 
   const primaryBtn = (
@@ -118,6 +122,11 @@ export default function Controls(): React.ReactElement {
         </button>
         <button className="ctrl-btn" onClick={handleScratch}>
           {currentRoutine?.status === 'scratched' ? 'Unscratch' : 'Scratch'}
+        </button>
+      </div>
+      <div className="control-row">
+        <button className="ctrl-btn" onClick={handleClockSync}>
+          Clock Sync
         </button>
       </div>
     </div>

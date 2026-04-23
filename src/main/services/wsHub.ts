@@ -199,6 +199,55 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
         await reconciler.reconcileMedia({ scope: 'manual', silent: false })
         break
       }
+      case 'nudgeRoutine': {
+        if (!cmd.routineId) throw new Error('routineId is required')
+        const comp = stateService.getCompetition()
+        const routine = comp?.routines.find((r) => r.id === cmd.routineId)
+        if (!routine) throw new Error('Routine not found')
+        if (routine.status === 'recorded' || routine.status === 'queued') {
+          const ffmpeg = await import('./ffmpeg')
+          const queued = ffmpeg.resumeRecordedRoutines()
+          if (queued === 0) throw new Error('No recorded routine ready to encode')
+        } else if (routine.status === 'encoding') {
+          const ffmpeg = await import('./ffmpeg')
+          ffmpeg.resumeEncoding()
+        } else if (['encoded', 'uploading', 'uploaded', 'confirmed', 'failed'].includes(routine.status)) {
+          const upload = await import('./upload')
+          const result = upload.enqueueRoutine(routine, true)
+          upload.startUploads()
+          if (result.queuedJobs === 0 && result.skippedReason && result.skippedReason !== 'already-queued') {
+            throw new Error(`No upload work found for routine (${result.skippedReason})`)
+          }
+        } else {
+          const reconciler = await import('./mediaReconciler')
+          await reconciler.reconcileMedia({ scope: 'manual', silent: false })
+        }
+        break
+      }
+      case 'pinChatMessage': {
+        if (!cmd.chatMessageId) throw new Error('chatMessageId is required')
+        const ok = chatBridge.pinMessage(cmd.chatMessageId)
+        if (!ok) throw new Error('Chat message not found or already pinned')
+        break
+      }
+      case 'unpinChatMessage': {
+        if (!cmd.chatMessageId) throw new Error('chatMessageId is required')
+        const ok = chatBridge.unpinMessage(cmd.chatMessageId)
+        if (!ok) throw new Error('Pinned chat message not found')
+        break
+      }
+      case 'setCameraOffset': {
+        if (!cmd.cameraBody) throw new Error('cameraBody is required')
+        if (typeof cmd.offsetMs !== 'number' || !Number.isFinite(cmd.offsetMs)) {
+          throw new Error('offsetMs is required')
+        }
+        stateService.setCameraOffset(cmd.cameraBody, Math.round(cmd.offsetMs), 'manual')
+        break
+      }
+      case 'clearCameraOffsets': {
+        stateService.clearCameraOffsets()
+        break
+      }
     }
     broadcastState()
   } catch (err) {

@@ -4,6 +4,7 @@ import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getSettings } from './settings'
 import * as perf from './perfLogger'
+import * as events from './events'
 
 // Handle CJS←ESM interop: externalized ESM package wraps default export
 const OBSWebSocket = (OBSWebSocketDefault as any).default || OBSWebSocketDefault
@@ -23,8 +24,21 @@ export function onRecordStopped(cb: RecordingCallback): void {
 }
 
 let onAudioLevelsCb: ((levels: AudioLevel[]) => void) | null = null
+let lastAudioLevels: AudioLevel[] = []
 export function setOnAudioLevels(cb: (levels: AudioLevel[]) => void): void {
   onAudioLevelsCb = cb
+}
+
+export function getAudioRuntimeState(): {
+  levels: AudioLevel[]
+  silentSince: number | null
+  silenceAlertFired: boolean
+} {
+  return {
+    levels: lastAudioLevels.slice(),
+    silentSince,
+    silenceAlertFired,
+  }
 }
 
 let onStateChangeCb: ((state: OBSState) => void) | null = null
@@ -520,6 +534,7 @@ function registerOBSEvents(): void {
         // why cranking judge gains had no effect on the meters.
         levels: (input.inputLevelsMul as number[][]).map((ch) => ch[2] || ch[1] || ch[0] || 0),
       }))
+      lastAudioLevels = levels
       sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
       onAudioLevelsCb?.(levels)
 
@@ -537,6 +552,7 @@ function registerOBSEvents(): void {
           if (silentSince === null) silentSince = now
           else if (!silenceAlertFired && now - silentSince > 5000) {
             silenceAlertFired = true
+            events.emit('audio.flatline.warning', { silentMs: now - silentSince })
             emitRecordingAlert('warning', 'Audio signal flat-line for >5s. Check mics.')
           }
         } else {

@@ -79,6 +79,15 @@ export default function ClockSyncReminder(): React.ReactElement | null {
     }
   }, [])
 
+  useEffect(() => {
+    const show = (): void => {
+      lastActivityRef.current = Date.now()
+      setVisible(true)
+    }
+    window.addEventListener('compsync:show-clock-sync', show)
+    return () => window.removeEventListener('compsync:show-clock-sync', show)
+  }, [])
+
   // Idle watchdog: every 30s, if >10 min since last activity AND no active
   // recording AND the modal is currently hidden, re-surface it.
   useEffect(() => {

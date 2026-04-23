@@ -7,7 +7,9 @@ import * as events from './events'
 import * as upload from './upload'
 import * as ffmpeg from './ffmpeg'
 import * as wsHub from './wsHub'
+import * as chatBridge from './chatBridge'
 import { getResolvedConnection } from './schedule'
+import { getSettings } from './settings'
 import { logger } from '../logger'
 import type { WSCommandMessage } from '../../shared/types'
 
@@ -61,6 +63,57 @@ function mapQueueCounts() {
   }
 }
 
+function linearToDb(peak: number): number {
+  if (!Number.isFinite(peak) || peak <= 0) return -100
+  return Math.max(-100, Math.round(20 * Math.log10(peak) * 10) / 10)
+}
+
+function mapAudioLevels() {
+  const audioRuntime = obs.getAudioRuntimeState()
+  const mapping = getSettings().audioInputMapping || {}
+  const mapped = Object.entries(mapping)
+    .filter(([, inputName]) => Boolean(inputName))
+    .map(([role, inputName]) => {
+      const src = audioRuntime.levels.find((level) => level.inputName === inputName)
+      const peak = src?.levels.length ? Math.max(...src.levels) : 0
+      return {
+        role,
+        inputName,
+        peak,
+        db: linearToDb(peak),
+        silent: peak <= 0.001,
+      }
+    })
+  return {
+    mapped,
+    silentSince: audioRuntime.silentSince ? new Date(audioRuntime.silentSince).toISOString() : null,
+    silenceAlertFired: audioRuntime.silenceAlertFired,
+  }
+}
+
+function mapRoutines() {
+  const comp = state.getCompetition()
+  if (!comp) return []
+  return comp.routines.map((routine) => {
+    const photos = routine.photos || []
+    const videos = routine.encodedFiles || []
+    return {
+      id: routine.id,
+      entryNumber: routine.entryNumber,
+      title: routine.routineTitle,
+      studioName: routine.studioName,
+      status: routine.status,
+      mediaPackageStatus: routine.mediaPackageStatus || null,
+      notes: routine.notes || '',
+      photoCount: photos.length,
+      uploadedPhotos: photos.filter((photo) => photo.uploaded).length,
+      videoCount: videos.length,
+      uploadedVideos: videos.filter((video) => video.uploaded).length,
+      uploadProgress: routine.uploadProgress || null,
+    }
+  })
+}
+
 function buildSnapshot() {
   const comp = state.getCompetition()
   const current = state.getCurrentRoutine()
@@ -101,6 +154,12 @@ function buildSnapshot() {
     uploads: uploadState,
     encoding: encodeState,
     queue: mapQueueCounts(),
+    audio: mapAudioLevels(),
+    routines: mapRoutines(),
+    chat: {
+      messages: chatBridge.getChatMessages(),
+      pinned: chatBridge.getPinnedMessages(),
+    },
     routineCounts: {
       active: state.getActiveCount(),
       skipped: state.getSkippedCount(),
@@ -202,11 +261,26 @@ async function pollCommands(): Promise<void> {
     }
     endpointDisabledLogged = false
     const body = await response.json() as {
-      commands?: Array<{ id: string; action: WSCommandMessage['action']; issuedBy?: string }>
+      commands?: Array<{
+        id: string
+        action: WSCommandMessage['action']
+        issuedBy?: string
+        routineId?: string
+        chatMessageId?: string
+        cameraBody?: string
+        offsetMs?: number
+      }>
     }
     for (const command of body.commands || []) {
       try {
-        await wsHub.executeCommand({ type: 'command', action: command.action })
+        await wsHub.executeCommand({
+          type: 'command',
+          action: command.action,
+          routineId: command.routineId,
+          chatMessageId: command.chatMessageId,
+          cameraBody: command.cameraBody,
+          offsetMs: command.offsetMs,
+        })
         events.emit('control-room.command.completed', {
           commandId: command.id,
           action: command.action,
