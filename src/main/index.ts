@@ -28,12 +28,15 @@ import * as chatBridge from './services/chatBridge'
 import * as dayChecklist from './services/dayChecklist'
 import * as controlRoomBridge from './services/controlRoomBridge'
 import { checkAndRecover } from './services/crashRecovery'
-// Static import so electron-vite bundles the service into the main chunk.
-// Dynamic `require('./services/tabletLogServer')` preserves the string at
-// runtime and fails to resolve inside the asar.
+// Static imports so electron-vite bundles the service into the main chunk.
+// Dynamic `require('./services/X')` preserves the string at runtime and fails
+// to resolve inside the asar — caused silent-failure of debugServer,
+// mediaReconciler, tabletLogServer in production. All now static.
 import { startTabletLogServer } from './services/tabletLogServer'
 import { startLogStreamer } from './services/logStreamer'
 import { runStartupChecks } from './services/startup'
+import { startDebugServer } from './services/debugServer'
+import * as mediaReconciler from './services/mediaReconciler'
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
@@ -334,7 +337,6 @@ app.whenReady().then(async () => {
   // SSH-tunneled diagnostics. Started here so it's up before any SD insert
   // or tether event fires, and Claude (remote) can immediately query state.
   try {
-    const { startDebugServer } = require('./services/debugServer')
     startDebugServer()
   } catch (err) {
     logger.app.warn(`debugServer start failed: ${err instanceof Error ? err.message : err}`)
@@ -483,9 +485,7 @@ app.whenReady().then(async () => {
         // the app is running. Cadence + silent governed by settings.upload.
         // No-op if cadence=0 (disabled) or connection not resolved.
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
-          reconciler.startAmbientReconciler()
+          mediaReconciler.startAmbientReconciler()
         } catch (err) {
           logger.app.warn(`startAmbientReconciler failed: ${err instanceof Error ? err.message : err}`)
         }
@@ -602,9 +602,7 @@ app.on('before-quit', async (event) => {
   driveMonitor.stopMonitoring()
   // T-V7-26: stop ambient reconciler cleanly on shutdown.
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
-    reconciler.stopAmbientReconciler()
+    mediaReconciler.stopAmbientReconciler()
   } catch {}
   chatBridge.stopChatBridge()
   // await wpdBridge.stop() // WPD disabled

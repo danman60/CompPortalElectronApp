@@ -7,6 +7,7 @@ import { logger } from '../logger'
 import * as events from './events'
 import * as state from './state'
 import { getCameraBodyKey } from './photos'
+import * as upload from './upload'
 
 /**
  * Drive Monitor — detects when removable storage (SD cards, USB drives) is plugged in.
@@ -467,11 +468,9 @@ async function surveyAndReportMissingPhotos(
       return
     }
 
-    // DB cross-check — lazy import of upload.ts to avoid module-cycle risk.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const upload = require('./upload') as typeof import('./upload')
-    const { map: dbFilenamesByRoutine, endpointAvailable } = await (upload as any)
-      .fetchExistingFilenames?.(candidateIds) ?? { map: {}, endpointAvailable: false }
+    // DB cross-check via upload.fetchExistingFilenames.
+    const { map: dbFilenamesByRoutine, endpointAvailable } =
+      await upload.fetchExistingFilenames(candidateIds)
     if (!endpointAvailable) {
       logger.photos.info(
         `Missing-photo survey (${drivePath}): list-photos endpoint unavailable — skipping recovery toast (degrade to normal import flow)`,

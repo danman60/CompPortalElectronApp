@@ -27,6 +27,7 @@ import * as recovery from './services/recovery'
 import * as backup from './services/backup'
 import * as streamDeckPlugin from './services/streamDeckPlugin'
 import * as overlayPanels from './services/overlayPanels'
+import * as mediaReconciler from './services/mediaReconciler'
 import { sendToRenderer } from './ipcUtil'
 import { logger } from './logger'
 
@@ -345,9 +346,7 @@ export function registerAllHandlers(): void {
         (b && 'autoUploadAfterEncoding' in b)
       ) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
-          reconciler.restartAmbientReconciler()
+          mediaReconciler.restartAmbientReconciler()
         } catch {}
       }
     }
@@ -497,9 +496,7 @@ export function registerAllHandlers(): void {
   // T-V7-26: now routes through the unified reconciler (scope:'manual').
   safeHandle(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED, async () => {
     logIPC(IPC_CHANNELS.UPLOAD_RESUME_UNFINISHED)
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
-    const r = await reconciler.reconcileMedia({ scope: 'manual' })
+    const r = await mediaReconciler.reconcileMedia({ scope: 'manual' })
     // Return the legacy ResumeUnfinishedReport shape so the Settings.tsx
     // button UI (which expects it) keeps working unchanged.
     return {
@@ -565,9 +562,7 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.MEDIA_RECONCILE_RUN, async (scope: unknown) => {
     logIPC(IPC_CHANNELS.MEDIA_RECONCILE_RUN, { scope })
     const scopeStr = typeof scope === 'string' ? scope : 'manual'
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const reconciler = require('./services/mediaReconciler') as typeof import('./services/mediaReconciler')
-    return await reconciler.reconcileMedia({
+    return await mediaReconciler.reconcileMedia({
       scope: (scopeStr === 'boot' || scopeStr === 'ambient' || scopeStr === 'post-record' ||
               scopeStr === 'sd-plugin' || scopeStr === 'tether-error') ? scopeStr : 'manual',
     })
