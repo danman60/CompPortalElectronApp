@@ -1108,8 +1108,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     bandwidthCapBytesPerSec: 0,
     strategy: 'round-robin',
     photoPriority: 'newest-first',
+    // Retained for settings-shape backcompat; upload.ts no longer gates on these
+    // values (452a6de8 regression removed 2026-04-24).
     incrementalPublish: true,
-    incrementalPublishEvery: 20,
+    incrementalPublishEvery: 1,
     autoResumeOnBoot: true,
     reconcileCadenceMinutes: 15,
     reconcileSilent: true,

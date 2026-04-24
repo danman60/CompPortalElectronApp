@@ -750,17 +750,13 @@ async function processLoop(): Promise<void> {
       const updatedJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload' && j.status !== 'cancelled')
       const allDone = updatedJobs.every(j => j.status === 'done')
 
-      // Incremental publish trigger — photo jobs only, fires every N completions per routine
-      if (payload.type === 'photos') {
-        const settings = getSettings()
-        if (settings.upload?.incrementalPublish) {
-          const threshold = Math.max(1, settings.upload?.incrementalPublishEvery || 20)
-          const donePhotoCount = updatedJobs.filter(j => j.status === 'done' && (j.payload as UploadPayload).type === 'photos').length
-          const lastPublished = publishedPhotoCountByRoutine.get(payload.routineId) || 0
-          if (donePhotoCount - lastPublished >= threshold && !allDone) {
-            void callPluginCompletePartial(payload.routineId, uploadRunId)
-          }
-        }
+      // Fire incremental /plugin/complete on every completed photo (reverts 452a6de8
+      // regression that batched them behind a 20-photo threshold). Each call is
+      // idempotent on (media_package_id, storage_url) so duplicates are safe, and
+      // Latest Photos stays real-time during live shows. Skipped when allDone fires
+      // the final /plugin/complete just below.
+      if (payload.type === 'photos' && !allDone) {
+        void callPluginCompletePartial(payload.routineId, uploadRunId)
       }
 
       if (allDone) {

@@ -4,6 +4,108 @@ Last audited: 2026-04-19 13:08 EDT. Everything below is either OUTSTANDING or PA
 
 ---
 
+## BUG P0 2026-04-24 16:23 EDT — Hallucinated 20-photo threshold blocking Latest Photos visibility
+
+**This is a regression, not a feature.** Introduced in commit `452a6de8` (2026-04-19 14:08 UTC) which bundled three things under "feat(upload): round-robin photo upload + incremental plugin/complete + sharp thumbnail fix":
+1. Round-robin upload strategy (legitimate, user-requested)
+2. Sharp thumbnail fix (legitimate, user-requested)
+3. **`incrementalPublish: true` + `incrementalPublishEvery: 20`** (NOT requested — hallucinated optimization snuck in alongside the approved work)
+
+Operator intent recorded 2026-04-24 16:23 EDT: *"We just want that page to show the latest photos. Then as long as the app is prioritizing the latest imported photos into upload, they should appear on the page. I never asked for a photo minimum before they appear that's ridiculous."*
+
+**Symptom (UDC Toronto 2026 Day 1, live):** Photos for routines R202, R207, R211, R212, R218, R219 are successfully uploaded to R2 (confirmed via machine_logs: "[Upload] Uploaded: Q53A0XXX.JPG for routine ..."), but completely absent from CompPortal's Latest Photos view. Zero `media_packages` row, zero `media_photos` rows for those entries, yet bytes are in the bucket.
+
+**Where the regression lives (`src/main/services/upload.ts:754-764`):**
+```ts
+if (payload.type === 'photos') {
+  const settings = getSettings()
+  if (settings.upload?.incrementalPublish) {
+    const threshold = Math.max(1, settings.upload?.incrementalPublishEvery || 20)
+    const donePhotoCount = updatedJobs.filter(j => j.status === 'done' && ...).length
+    const lastPublished = publishedPhotoCountByRoutine.get(payload.routineId) || 0
+    if (donePhotoCount - lastPublished >= threshold && !allDone) {
+      void callPluginCompletePartial(payload.routineId, uploadRunId)
+    }
+  }
+}
+```
+Default threshold is 20 (`src/shared/types.ts:1112 incrementalPublishEvery: 20`). `/plugin/complete` fires **only after 20 photos** for a routine have finished uploading — OR when the routine is `allDone` (every photo processed). Until one of those conditions, CompPortal has no idea any photos exist for that routine.
+
+**Operational consequences during a live show:**
+- Round-robin upload strategy (`jobQueue.getNext` round-robin, commit `2873904`) deliberately spreads uploads across all routines, delivering small batches per routine per pass. Makes the 20-threshold issue WORSE: every routine's first 19 uploads are invisible while the round-robin distributes more work.
+- **Small routines (<20 photos total)** NEVER hit the threshold and only appear after `allDone` fires — usually tens of minutes after their first photo uploaded.
+- Latest Photos UI is useless for the most recent content — exactly when parents/SDs/CDs need it most.
+
+**Why this is wrong (operator intent, recorded 2026-04-24):** "We just want that page to show the latest photos. Then as long as the app is prioritizing the latest imported photos into upload, they should appear on the page. I never asked for a photo minimum before they appear that's ridiculous."
+
+**Fix = revert the regression.** Drop the threshold gate. After each photo completes, fire `callPluginCompletePartial` directly — no `>= threshold` check, no `incrementalPublishEvery` setting.
+
+Concrete diff in `upload.ts:753-764`:
+```ts
+// BEFORE (regression)
+if (payload.type === 'photos') {
+  const settings = getSettings()
+  if (settings.upload?.incrementalPublish) {
+    const threshold = Math.max(1, settings.upload?.incrementalPublishEvery || 20)
+    const donePhotoCount = updatedJobs.filter(...).length
+    const lastPublished = publishedPhotoCountByRoutine.get(payload.routineId) || 0
+    if (donePhotoCount - lastPublished >= threshold && !allDone) {
+      void callPluginCompletePartial(payload.routineId, uploadRunId)
+    }
+  }
+}
+
+// AFTER (revert)
+if (payload.type === 'photos' && !allDone) {
+  void callPluginCompletePartial(payload.routineId, uploadRunId)
+}
+```
+Endpoint is already idempotent on `(media_package_id, storage_url)` per line 1135-1138 of `upload.ts`, so per-photo calls are safe — just chatty. `callPluginCompletePartial` sends cumulative paths; if the same photo is reported twice in consecutive calls (common under round-robin interleaving), CompPortal upserts and no duplicates appear.
+
+**Also remove from defaults:** `incrementalPublish` and `incrementalPublishEvery` keys in `src/shared/types.ts:1111-1112`. Type definitions at types.ts:472-473 can stay or be removed for cleanliness. Do NOT bother migrating existing operator settings.json — once the code no longer reads those keys, they're inert.
+
+**Testing:** start a recording, confirm the first photo hits Latest Photos within ~2s of completing PUT to R2.
+
+**NOT fixable mid-show:** electron-store caches in-memory (`settings.ts:170 raw = store.store`). External JSON edits are ignored until process restart. Today's show continues with 20-threshold until next asar deploy + operator-initiated restart.
+
+---
+
+## FEATURE 2026-04-24 15:43 EDT — Operator-gated re-record disambiguation modal
+
+**Context (UDC Toronto 2026 Day 1):** Multiple routines this morning had mis-slotted recordings (R118 into R119's slot, R136 into R139's, R140 into R142's, R145 long-recorded both R145+R146 into R145's slot). Two downstream consequences:
+
+1. **Data mis-assignment in DB.** Photos match whichever routine's window swallowed the capture → end up on the wrong entry. Fixing after the fact requires: upload new split/archive videos to R2 → UPDATE `media_packages.video_*_path` + tighten window → UPDATE `media_photos.media_package_id` for photos outside the corrected window. Hours of post-show cleanup.
+
+2. **Inconsistent archive preservation.** R139 and R142 both have `_archive/v1/` with the pre-overwrite take (app did the right thing). R118, R119, R136, R140 do NOT have archive folders despite the same class of mistake — suggesting either app-version drift or a code path that skipped archiving. Operator remembers "the app is built to never destroy a recording" — so the content should exist *somewhere*, but the absence of a consistent `_archive` convention makes recovery brittle.
+
+**Proposed feature — non-blocking "Slot Already Recorded" modal:**
+
+When `startRecording(routineId)` is invoked on a routine whose directory already contains a completed MKV/MP4 set, the app should:
+
+1. **Not block.** Recording starts immediately; modal pops up in parallel (top-right toast-style or panel overlay, not a full-screen gate).
+2. **Show both takes side-by-side** with key signals operator needs:
+   - Existing take: duration, capture timestamp, first-frame thumbnail (reuse keyframes/keyframe_0.webp if present, else generate from MKV)
+   - New take (in progress): live duration counter + timestamp
+3. **Offer assignment UI:** two dropdowns ("Existing take → route to routine ___" and "New take → route to routine ___") pre-filled with the current and neighboring routines (±3). Operator picks.
+4. **On confirm:** app atomically:
+   - Moves the existing take's files to the chosen target routine's folder (renaming to match that routine's naming convention)
+   - Leaves the new take in the current slot (or re-routes per dropdown)
+   - Updates `state.json` routine entries: `Routine.recordingStartedAt`, `videoFiles`, `keyframes` paths
+   - On next `/plugin/complete`, the corrected assignment rides through to CompPortal — no post-show DB cleanup needed
+5. **If operator ignores modal:** both takes preserved (existing → `_archive/vN/`, new → slot); post-show reconciliation still possible.
+
+**Why this matters beyond today:** Every live-show has slot-adjacency mistakes. Doing it at the moment of re-record (when operator still remembers context) is 10× cheaper than reconstructing the mental model 6 hours later from EXIF + file mtimes.
+
+**Scope notes:**
+- UI lives in renderer (panel overlay), logic in `src/main/services/recording.ts` at the pre-start hook that currently handles `pickLongestMkv` / archive-on-re-record.
+- Must survive app restart: pending disambiguation stored in `state.pendingSlotDecisions[]`, modal re-surfaces on next launch.
+- Needs a "skip / auto-archive" checkbox for operators who just want the old CSE behavior.
+- Cross-check with CompPortal's `/api/media/cd/reassign-routine` endpoint — post-show cleanup path stays available as fallback.
+
+**Dependent bug:** archive-write logic in CSE for re-record appears inconsistent (R139/R142 archived, R118/R119/R136/R140 didn't). Root-cause before building this feature — the modal depends on the archive actually being written so the existing take is recoverable to show in the modal.
+
+---
+
 ## INCIDENT 2026-04-19 19:08 EDT — UPLOAD_ALL queued 0 routines after app restart
 
 **Symptom:** Operator restarted the app at 18:35 EDT post-show to drain remaining uploads. 33 routines had 1,384+ photos with `photo.uploaded=false` (unfinished from the Sunday SD drain). Operator clicked "Upload All"; log shows `Upload all: queued 0 routines` three times in a row. Uploads did NOT resume.
@@ -297,3 +399,45 @@ Also update the log strings / toast payload to include the applied threshold so 
 ### No action required from this inbox item today
 
 Just park it. Address when the current keyframe-backfill / migration lockstep is fully closed out.
+
+## From CompPortal-14 — 2026-04-22 11:17 EDT
+**Bug: plugin `/api/plugin/complete` unconditionally writes `media_packages.status = 'complete'`, clobbering `'published'`.**
+
+Every time the Electron capture app re-ingests a routine that's already been published to parents/SDs, the portal backend receives `status='complete'` and the routine drops out of all non-admin views until a CD re-publishes it.
+
+### Impact today (2026-04-22)
+UDC London 2026, last night around 23:09–23:10 EDT, three routines got re-ingested:
+- R618 FEEL IT STILL (The Dance Alliance) — 23:09:00
+- R626 OTIS (Absolute Dance) — 23:09:39
+- R625 FEELS LIKE HOME (Elite Dance Station) — 23:10:12
+
+By morning, all 3 had disappeared from parent + SD views (both portals filter on `status='published'`, `src/app/api/media/dancer/[dancerId]/route.ts:87` and `src/app/api/media/studio/[studioId]/route.ts:164`). CDs still saw them; parents did not. Fixed by manual SQL flip back to `'published'` — 531/531 UDC London packages now `published`.
+
+### Where the bug lives (server side)
+`CompPortal/src/app/api/plugin/complete/route.ts`, lines 139, 156, 207. Every call path writes `status: 'complete'` unconditionally in the package upsert/update.
+
+### Suggested server-side fix (not electron-side)
+Only downgrade to `'complete'` if the current row's status is a pre-publish state (`null | 'pending' | 'processing'`). If the row is already `'published'`, preserve it:
+
+```ts
+// pseudo — in CompPortal/src/app/api/plugin/complete/route.ts
+const existing = await prisma.media_packages.findUnique({
+  where: { entry_id: entryId },
+  select: { status: true },
+});
+const nextStatus = existing?.status === 'published' ? 'published' : 'complete';
+// use nextStatus in the update/upsert
+```
+
+### Electron-side asks (if anything)
+Nothing strictly required — the fix can live entirely on the CompPortal server. **But** if the Electron app has a concept of "partial re-sync" vs "initial ingest," it might be nice to emit a distinct signal (e.g. a `?mode=partial` query param or a different endpoint) so the server can reason about intent. Not a blocker; the `existing.status === 'published'` preservation check alone fixes the user-visible bug.
+
+### Repro pattern
+1. CompPortal publishes a routine (`status: 'published'`).
+2. Electron capture app opens / re-scans that routine's folder (any trigger that hits `/api/plugin/complete`).
+3. Routine flips to `'complete'`, disappears from parent + SD portals until CD re-publishes.
+
+### Context
+- CompPortal session: `CompPortal-14`, 2026-04-22.
+- Related commits: `cbd243ef` (multi-claim 403 fix), `b16134c4` (two-phase video upload), `405c7912` (signed URL TTL 6h→7d), `3ba05c75` (empty-slot video upload UI).
+- 244 BEETLEJUICE and 626 OTIS were the two routines Kiri-Lyn flagged today. Both now publish-viewable again.
