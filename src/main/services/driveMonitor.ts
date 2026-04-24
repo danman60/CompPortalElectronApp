@@ -6,8 +6,9 @@ import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import * as events from './events'
 import * as state from './state'
-import { getCameraBodyKey } from './photos'
+import { getCameraBodyKey, importPhotos } from './photos'
 import * as upload from './upload'
+import { getSettings } from './settings'
 
 /**
  * Drive Monitor — detects when removable storage (SD cards, USB drives) is plugged in.
@@ -383,7 +384,7 @@ export function computeMissingPhotosPlan(
 }
 
 /** Walk SD tree (bounded depth) collecting ALL JPEGs with mtime + body prefix. */
-function enumerateSdSamples(photoPath: string, maxDepth = 4): SdPhotoSample[] {
+async function enumerateSdSamples(photoPath: string, maxDepth = 4): Promise<SdPhotoSample[]> {
   const out: SdPhotoSample[] = []
   const pending: Array<{ dir: string; depth: number }> = [{ dir: photoPath, depth: 0 }]
   while (pending.length > 0) {
@@ -414,6 +415,11 @@ function enumerateSdSamples(photoPath: string, maxDepth = 4): SdPhotoSample[] {
         // skip unreadable files
       }
     }
+    // Yield roughly every 200 JPEGs accumulated to keep the main thread responsive
+    // on 10k+ card scans.
+    if (out.length % 200 === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
     // Safety cap so a pathological SD can't block main thread.
     if (out.length > 50000) break
   }
@@ -437,7 +443,7 @@ async function surveyAndReportMissingPhotos(
     const comp = state.getCompetition()
     if (!comp) return
 
-    const samples = enumerateSdSamples(photoPath)
+    const samples = await enumerateSdSamples(photoPath)
     if (samples.length === 0) return
 
     // Build routine survey — only routines with a recording window + a
@@ -596,8 +602,7 @@ function poll(): void {
               logger.photos.info(`Auto-import skipped for ${drive}: no competition loaded`)
               return
             }
-            const settingsMod = require('./settings') as typeof import('./settings')
-            const outputDir = settingsMod.getSettings().fileNaming?.outputDirectory
+            const outputDir = getSettings().fileNaming?.outputDirectory
             if (!outputDir) {
               logger.photos.info(`Auto-import skipped for ${drive}: outputDirectory not configured`)
               return
@@ -606,8 +611,7 @@ function poll(): void {
             logger.photos.info(
               `Auto-import: ${drive} (clock OK) — full scan with DB dedup + 5min offset gate`,
             )
-            const photoService = require('./photos') as typeof import('./photos')
-            const result = await photoService.importPhotos(
+            const result = await importPhotos(
               camera.photoPath,
               comp.routines,
               outputDir,
