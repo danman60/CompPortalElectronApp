@@ -6,7 +6,7 @@ import os from 'os'
 import { app, screen } from 'electron'
 import { WifiDisplayState, MonitorInfo } from '../../shared/types'
 import { logger } from '../logger'
-import { getSettings } from './settings'
+import { getSettings, setSettings } from './settings'
 
 let childProc: ChildProcess | null = null
 let running = false
@@ -123,6 +123,43 @@ function startDiscoveryListener(): void {
         const reply = getDiscoveryPayload()
         discoverySocket?.send(reply, 0, reply.length, rinfo.port, rinfo.address)
         logger.app.debug(`Discovery reply sent to ${rinfo.address}:${rinfo.port}`)
+
+        // Hardener: if the tablet is discovering us again while wifi-display-server
+        // is already running, it usually means the tablet's UdpReceiver was
+        // silent long enough to trigger its recovery path (15s of no video). If
+        // the tablet's source IP differs from wd.clientIp, the server has been
+        // streaming to a stale address. Persist the new IP and respawn the
+        // server pointed at it so the recovery completes without operator input.
+        try {
+          const current = getSettings()
+          const savedIp = current.wifiDisplay?.clientIp
+          if (savedIp && rinfo.address && rinfo.address !== savedIp) {
+            logger.app.warn(
+              `Tablet IP drift detected: saved=${savedIp} observed=${rinfo.address} — saving + restarting wifi-display`,
+            )
+            setSettings({
+              wifiDisplay: { ...current.wifiDisplay, clientIp: rinfo.address },
+            })
+            if (running) {
+              // Async restart — don't block the UDP handler thread.
+              void (async () => {
+                try {
+                  await stop()
+                  await start()
+                  logger.app.info(`Wifi display respawned pointed at ${rinfo.address}`)
+                } catch (err) {
+                  logger.app.warn(
+                    `Wifi display auto-respawn failed: ${err instanceof Error ? err.message : err}`,
+                  )
+                }
+              })()
+            }
+          }
+        } catch (err) {
+          logger.app.warn(
+            `Tablet IP drift handler failed: ${err instanceof Error ? err.message : err}`,
+          )
+        }
       }
     } catch {}
   })
@@ -134,6 +171,24 @@ function startDiscoveryListener(): void {
     const payload = getDiscoveryPayload()
     discoverySocket!.send(payload, 0, payload.length, DISCOVERY_PORT, '255.255.255.255')
   })
+}
+
+/**
+ * Fire a broadcast prompting any listening tablets to re-announce. Used by
+ * the "Tablet" button recovery path so operators can force the tablet's
+ * UdpReceiver back into a known-good state without restarting the app.
+ */
+export function pingTabletForDiscovery(): void {
+  try {
+    if (!discoverySocket) return
+    const payload = Buffer.from(JSON.stringify({ type: 'compsync-discover-request' }))
+    discoverySocket.send(payload, 0, payload.length, DISCOVERY_PORT, '255.255.255.255')
+    logger.app.info('Broadcast discover-request to prompt tablet re-announce')
+  } catch (err) {
+    logger.app.warn(
+      `pingTabletForDiscovery failed: ${err instanceof Error ? err.message : err}`,
+    )
+  }
 }
 
 function stopDiscoveryListener(): void {
@@ -277,6 +332,11 @@ export async function start(): Promise<void> {
     unexpectedExitAttempts = 0
     logger.app.info(`Wifi display started (PID ${childProc.pid}, monitor index ${effectiveIndex})`)
     startDiscoveryListener()
+    // Prompt any listening tablets to re-announce their current IP within a
+    // second of start — closes the "Tablet button doesn't fix it" loop when
+    // the tablet's IP drifted since the last start.
+    setTimeout(() => { pingTabletForDiscovery() }, 500)
+    setTimeout(() => { pingTabletForDiscovery() }, 2000)
   }
 
   childProc.stderr?.on('data', (data: Buffer) => {
