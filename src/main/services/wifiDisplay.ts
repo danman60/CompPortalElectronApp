@@ -17,6 +17,12 @@ let discoverySocket: dgram.Socket | null = null
 let discoveryInterval: NodeJS.Timeout | null = null
 const DISCOVERY_PORT = 5002
 
+// One-shot flag: the drift handler adopts the tablet's observed IP at most
+// once per start()/stop() cycle. Prevents a pong-match when multiple discover
+// sources (e.g. a second tablet, or a self-echo) keep bouncing clientIp back
+// and forth and respawning wifi-display-server every few seconds.
+let driftAdoptedThisSession = false
+
 let topologyListenersAttached = false
 let unexpectedExitAttempts = 0
 const MAX_UNEXPECTED_EXIT_RESTARTS = 3
@@ -97,6 +103,26 @@ function getLocalIp(): string {
   return candidates[0]?.address || '0.0.0.0'
 }
 
+/**
+ * Enumerate every non-internal IPv4 address bound to this host. Used by the
+ * discovery listener to filter out self-sourced discover-requests on Windows
+ * (UDP broadcast to 255.255.255.255 arrives back on our own socket with the
+ * source set to one of our own interface IPs — if we treat that as a new
+ * client we respawn in a loop).
+ */
+function getLocalIpv4s(): Set<string> {
+  const out = new Set<string>()
+  const interfaces = os.networkInterfaces()
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) out.add(iface.address)
+    }
+  }
+  // 127.0.0.1 is 'internal' per Node's flag, but be defensive.
+  out.add('127.0.0.1')
+  return out
+}
+
 function getDiscoveryPayload(): Buffer {
   const settings = getSettings()
   const wd = settings.wifiDisplay
@@ -119,47 +145,58 @@ function startDiscoveryListener(): void {
   discoverySocket.on('message', (msg, rinfo) => {
     try {
       const data = JSON.parse(msg.toString())
-      if (data.type === 'compsync-discover-request' && running) {
-        const reply = getDiscoveryPayload()
-        discoverySocket?.send(reply, 0, reply.length, rinfo.port, rinfo.address)
-        logger.app.debug(`Discovery reply sent to ${rinfo.address}:${rinfo.port}`)
+      if (data.type !== 'compsync-discover-request' || !running) return
 
-        // Hardener: if the tablet is discovering us again while wifi-display-server
-        // is already running, it usually means the tablet's UdpReceiver was
-        // silent long enough to trigger its recovery path (15s of no video). If
-        // the tablet's source IP differs from wd.clientIp, the server has been
-        // streaming to a stale address. Persist the new IP and respawn the
-        // server pointed at it so the recovery completes without operator input.
-        try {
-          const current = getSettings()
-          const savedIp = current.wifiDisplay?.clientIp
-          if (savedIp && rinfo.address && rinfo.address !== savedIp) {
-            logger.app.warn(
-              `Tablet IP drift detected: saved=${savedIp} observed=${rinfo.address} — saving + restarting wifi-display`,
-            )
-            setSettings({
-              wifiDisplay: { ...current.wifiDisplay, clientIp: rinfo.address },
-            })
-            if (running) {
-              // Async restart — don't block the UDP handler thread.
-              void (async () => {
-                try {
-                  await stop()
-                  await start()
-                  logger.app.info(`Wifi display respawned pointed at ${rinfo.address}`)
-                } catch (err) {
-                  logger.app.warn(
-                    `Wifi display auto-respawn failed: ${err instanceof Error ? err.message : err}`,
-                  )
-                }
-              })()
-            }
-          }
-        } catch (err) {
+      // Ignore requests sourced from one of our own IPv4 interfaces. On
+      // Windows, broadcast UDP to 255.255.255.255 loops back to this socket
+      // with rinfo.address set to a local interface IP. If we treat that as
+      // a tablet drift we respawn wifi-display-server pointed at ourselves,
+      // which then echoes again — tight respawn loop.
+      const localIps = getLocalIpv4s()
+      if (localIps.has(rinfo.address)) {
+        logger.app.debug(`Discovery request ignored (self-IP ${rinfo.address})`)
+        return
+      }
+
+      const reply = getDiscoveryPayload()
+      discoverySocket?.send(reply, 0, reply.length, rinfo.port, rinfo.address)
+      logger.app.debug(`Discovery reply sent to ${rinfo.address}:${rinfo.port}`)
+
+      // Hardener: adopt the tablet's observed IP at most ONCE per
+      // start()/stop() cycle. Respawn then lock. Previous revision respawned
+      // on every drift, which turned into a pong-match when two candidate
+      // IPs (e.g. live tablet + test tablet) kept bouncing the handler.
+      if (driftAdoptedThisSession) return
+      try {
+        const current = getSettings()
+        const savedIp = current.wifiDisplay?.clientIp
+        if (savedIp && rinfo.address && rinfo.address !== savedIp) {
+          driftAdoptedThisSession = true
           logger.app.warn(
-            `Tablet IP drift handler failed: ${err instanceof Error ? err.message : err}`,
+            `Tablet IP drift detected (one-shot): saved=${savedIp} observed=${rinfo.address} — saving + restarting wifi-display`,
           )
+          setSettings({
+            wifiDisplay: { ...current.wifiDisplay, clientIp: rinfo.address },
+          })
+          if (running) {
+            // Async restart — don't block the UDP handler thread.
+            void (async () => {
+              try {
+                await stop()
+                await start()
+                logger.app.info(`Wifi display respawned pointed at ${rinfo.address}`)
+              } catch (err) {
+                logger.app.warn(
+                  `Wifi display auto-respawn failed: ${err instanceof Error ? err.message : err}`,
+                )
+              }
+            })()
+          }
         }
+      } catch (err) {
+        logger.app.warn(
+          `Tablet IP drift handler failed: ${err instanceof Error ? err.message : err}`,
+        )
       }
     } catch {}
   })
@@ -330,13 +367,20 @@ export async function start(): Promise<void> {
     running = true
     activeMonitorIndex = effectiveIndex
     unexpectedExitAttempts = 0
+    // New start cycle — reset drift adoption so the first legitimate tablet
+    // discovery can still promote an IP once.
+    driftAdoptedThisSession = false
     logger.app.info(`Wifi display started (PID ${childProc.pid}, monitor index ${effectiveIndex})`)
     startDiscoveryListener()
-    // Prompt any listening tablets to re-announce their current IP within a
-    // second of start — closes the "Tablet button doesn't fix it" loop when
-    // the tablet's IP drifted since the last start.
-    setTimeout(() => { pingTabletForDiscovery() }, 500)
-    setTimeout(() => { pingTabletForDiscovery() }, 2000)
+    // NOTE: earlier revision broadcast two discover-requests from this host
+    // right after start() to prompt tablets to re-announce. On Windows the
+    // broadcast loops back to our own discovery socket with a local source
+    // IP, which previously tripped the drift handler into adopting our own
+    // address as clientIp — immediate respawn loop. The loopback filter in
+    // the discovery handler plus the one-shot drift flag both defend against
+    // that, but we also stop firing the self-ping by default; operators can
+    // still call pingTabletForDiscovery() manually from IPC if a future UX
+    // needs it.
   }
 
   childProc.stderr?.on('data', (data: Buffer) => {
@@ -408,6 +452,8 @@ export async function stop(): Promise<void> {
     topologyRestartTimer = null
   }
   stopDiscoveryListener()
+  // Reset drift one-shot so the next start() cycle can adopt fresh.
+  driftAdoptedThisSession = false
   logger.app.info('Stopping wifi display...')
 
   return new Promise<void>((resolve) => {
