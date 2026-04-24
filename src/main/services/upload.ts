@@ -1287,6 +1287,30 @@ async function callPluginComplete(info: {
       throw new Error(`Plugin complete failed: ${response.status} ${text}`)
     }
 
+    // Parse the response so we can surface the authoritative server-side
+    // package status on the local routine immediately. Without this the
+    // "Portal" pill stays frozen at 'none' from startup until the next
+    // schedule refetch (which only runs on app restart).
+    try {
+      const body = (await response.clone().json().catch(() => null)) as
+        | { packageId?: string; status?: string }
+        | null
+      const returned = body?.status
+      const valid = new Set(['none', 'pending', 'processing', 'ready', 'complete', 'published'])
+      if (returned && valid.has(returned)) {
+        state.setRoutineMediaPackageStatus(
+          info.routineId,
+          returned as NonNullable<Routine['mediaPackageStatus']>,
+        )
+        // Ensure the renderer's Routine row updates its Portal pill
+        // without waiting for another broadcast.
+        const fresh = state.getCompetition()?.routines.find(r => r.id === info.routineId)
+        if (fresh) broadcastRoutineUpdate(fresh)
+      }
+    } catch {
+      // Non-fatal — display lag is the only consequence.
+    }
+
     logger.upload.info(`Plugin complete success for routine ${info.routineId}`)
   } finally {
     clearTimeout(timer)

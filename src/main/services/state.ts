@@ -648,6 +648,29 @@ export function updateRoutineStatus(
   return routine
 }
 
+/**
+ * Update only mediaPackageStatus on a routine, without touching pipeline status.
+ * Used by the plugin/complete response handler so the "Portal" pill reflects
+ * the authoritative server state immediately after upload succeeds, without
+ * waiting for the next schedule refetch (which only runs on startup).
+ */
+export function setRoutineMediaPackageStatus(
+  routineId: string,
+  mediaPackageStatus: NonNullable<Routine['mediaPackageStatus']>,
+): void {
+  if (!currentCompetition) return
+  const routine = currentCompetition.routines.find((r) => r.id === routineId)
+  if (!routine) return
+  if (routine.mediaPackageStatus === mediaPackageStatus) return
+  const prev = routine.mediaPackageStatus ?? 'unset'
+  routine.mediaPackageStatus = mediaPackageStatus
+  routine.mediaUpdatedAt = new Date().toISOString()
+  logger.app.info(
+    `Routine ${routine.entryNumber} mediaPackageStatus: ${prev} → ${mediaPackageStatus}`,
+  )
+  saveState()
+}
+
 export function skipRoutine(routineId: string): void {
   updateRoutineStatus(routineId, 'skipped')
 }
