@@ -570,29 +570,35 @@ function poll(): void {
         logger.photos.info(
           `Camera drive detected: ${drive} (${label}) — ${camera.photoCount} photos in ${camera.isDcim ? 'DCIM' : 'root'}`,
         )
-        sendToRenderer(IPC_CHANNELS.DRIVE_DETECTED, {
-          drivePath: drive,
-          photoPath: camera.photoPath,
-          photoCount: camera.photoCount,
-          isDcim: camera.isDcim,
-          label,
-        })
-        events.emit('drive.detected', { drive, label, photoCount: camera.photoCount, isDcim: camera.isDcim })
-        // Orchestrate the fresh-insert flow: clock sampler + missing-photo
-        // survey run in parallel, then auto-fire importPhotos if the clock
-        // passes the day-level gate and settings allow. The toast from the
-        // survey still fires regardless so the operator can cancel or move
-        // to a wrong-day workflow.
+
+        // v15.2: Fire the main-process auto-import FIRST so importPhotos
+        // claims the import lock BEFORE the renderer's DriveAlert auto-fires
+        // its own PHOTOS_IMPORT IPC on DRIVE_DETECTED. Previously the
+        // renderer won the race (~9s head start) and the main-process call
+        // was rejected with "Already importing this folder", so the
+        // dedup-by-DB + offset-gate path never ran. A quick day-level
+        // pre-check gates wrong-day cameras; the full clock sampler + survey
+        // still run fire-and-forget AFTER for their popups.
         void (async () => {
           try {
-            const [clockRes] = await Promise.all([
-              sampleAndReportCameraClock(drive, camera.photoPath, label),
-              surveyAndReportMissingPhotos(drive, camera.photoPath),
-            ])
-
-            if (clockRes.daysOffMax > 0) {
+            // Quick pre-check: if any 2 of 3 sampled photos are not today, skip.
+            const preSamples = collectJpegSamples(camera.photoPath, 3, 3)
+            let todayHits = 0
+            for (const p of preSamples) {
+              const dt = await readExifDateTimeOriginal(p)
+              if (!dt) continue
+              const today = new Date()
+              if (
+                dt.getFullYear() === today.getFullYear() &&
+                dt.getMonth() === today.getMonth() &&
+                dt.getDate() === today.getDate()
+              ) {
+                todayHits++
+              }
+            }
+            if (preSamples.length >= 2 && todayHits < 2) {
               logger.photos.info(
-                `Auto-import skipped for ${drive}: camera clock off by ${clockRes.daysOffMax} day(s)`,
+                `Auto-import skipped for ${drive}: pre-check says <2/3 samples are today`,
               )
               return
             }
@@ -609,7 +615,7 @@ function poll(): void {
             }
 
             logger.photos.info(
-              `Auto-import: ${drive} (clock OK) — full scan with DB dedup + 5min offset gate`,
+              `Auto-import: ${drive} (pre-check OK) — full scan with DB dedup + 5min offset gate`,
             )
             const result = await importPhotos(
               camera.photoPath,
@@ -629,6 +635,21 @@ function poll(): void {
             )
           }
         })()
+
+        // v15.2: DRIVE_DETECTED + full clock sampler + missing-photo survey
+        // run AFTER the auto-import is fired. The sampler still surfaces the
+        // "N days off" popup when warranted and the survey's reconcile is
+        // still useful. Both stay fire-and-forget so they don't block.
+        sendToRenderer(IPC_CHANNELS.DRIVE_DETECTED, {
+          drivePath: drive,
+          photoPath: camera.photoPath,
+          photoCount: camera.photoCount,
+          isDcim: camera.isDcim,
+          label,
+        })
+        events.emit('drive.detected', { drive, label, photoCount: camera.photoCount, isDcim: camera.isDcim })
+        sampleAndReportCameraClock(drive, camera.photoPath, label).catch(() => {})
+        surveyAndReportMissingPhotos(drive, camera.photoPath).catch(() => {})
       }
     }
   }

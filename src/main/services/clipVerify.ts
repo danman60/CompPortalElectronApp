@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { app } from 'electron'
 import ExifReader from 'exifreader'
 import {
   PhotoMatch,
@@ -32,7 +33,27 @@ async function ensureModel(): Promise<void> {
   logger.photos.info('Loading CLIP model (Xenova/clip-vit-base-patch32)...')
   sendToRenderer(IPC_CHANNELS.CLIP_MODEL_PROGRESS, { status: 'Loading model...', progress: 0 })
 
-  const { pipeline } = await import('@huggingface/transformers')
+  const { pipeline, env } = await import('@huggingface/transformers')
+
+  // v15.2: Force cacheDir to a writable userData path BEFORE pipeline() runs.
+  // Default cacheDir resolves relative to the transformers package dir, which
+  // sits inside app.asar (read-only) in the packaged Electron app. That
+  // causes the first-run model download to fail silently and then pipeline()
+  // tries to load vision_model.onnx from inside app.asar and throws
+  // "Load model ... vision_model.onnx failed. File doesn't exist". Setting
+  // env.cacheDir to userData/clip-cache + enabling local + remote models
+  // fixes the packaged-app failure while preserving dev behavior.
+  try {
+    const cacheDir = path.join(app.getPath('userData'), 'clip-cache')
+    env.cacheDir = cacheDir
+    env.allowLocalModels = true
+    env.allowRemoteModels = true
+    logger.photos.info(`CLIP cacheDir set to ${cacheDir}`)
+  } catch (err) {
+    logger.photos.warn(
+      `Failed to set CLIP env fields: ${err instanceof Error ? err.message : err}`,
+    )
+  }
 
   clipPipeline = (await pipeline('image-feature-extraction', 'Xenova/clip-vit-base-patch32', {
     progress_callback: (progress: { status: string; progress?: number }) => {
