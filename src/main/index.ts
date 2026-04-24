@@ -477,6 +477,19 @@ app.whenReady().then(async () => {
               `Auto-resume: ${report.routinesScanned} routines scanned, ${report.photosRepaired} photos repaired, ${report.jobsQueued} jobs queued (endpoint ${report.endpointAvailable ? 'ok' : 'unavailable'})`,
             )
           }
+
+          // Wake the upload worker if the persisted job queue has pending
+          // work. Without this, a boot whose recovery passes don't enqueue
+          // new jobs (eg. asar swap mid-show — queue restored from disk but
+          // autoResume sees nothing missing) leaves the worker dormant
+          // until the next routine advance / encode-complete / pause toggle.
+          // startUploads is idempotent — it returns early if already running
+          // or if no connection is resolved.
+          const pendingUploads = jobQueue.getPending('upload').length
+          if (pendingUploads > 0) {
+            logger.app.info(`Boot: waking upload worker — ${pendingUploads} pending jobs in persisted queue`)
+            uploadService.startUploads()
+          }
         } catch (err) {
           logger.app.warn(`startup recovery sequence failed: ${err instanceof Error ? err.message : err}`)
         }
