@@ -48,7 +48,6 @@ function classifySource(message: string): LogSource {
 
 export function recordLogEvent(entry: LogEvent): void {
   try {
-    if (inHook) return
     if (!entry || typeof entry.message !== 'string') return
     buffer.push(entry)
     while (buffer.length > BUFFER_CAP) {
