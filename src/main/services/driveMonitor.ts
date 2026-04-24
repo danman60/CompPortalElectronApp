@@ -158,7 +158,7 @@ async function sampleAndReportCameraClock(
   drivePath: string,
   photoPath: string,
   label: string,
-): Promise<void> {
+): Promise<{ daysOffMax: number; sampledCount: number }> {
   try {
     // Collect a wider pool, then filter out photos already past the per-body
     // SD watermark by EXIF capture time. Without this filter, a
@@ -191,7 +191,11 @@ async function sampleAndReportCameraClock(
       logger.photos.info(
         `Drive ${drivePath}: all JPEG samples are below the SD watermark (already processed) — skipping clock check`,
       )
-      return
+      // No fresh samples to verify against; treat as clock-unknown but not
+      // day-mismatched. Auto-import gate uses daysOffMax>0 as the abort
+      // signal, so 0 here leaves the gate open (correct for re-inserts of
+      // cards already fully processed).
+      return { daysOffMax: 0, sampledCount: 0 }
     }
 
     const today = new Date()
@@ -217,11 +221,11 @@ async function sampleAndReportCameraClock(
 
     if (sampledCount === 0) {
       logger.photos.info(`Drive ${drivePath}: no EXIF timestamps in samples — skipping clock check`)
-      return
+      return { daysOffMax: 0, sampledCount: 0 }
     }
     if (daysOffMax === 0) {
       logger.photos.info(`Drive ${drivePath}: camera clock matches today (${sampledCount} samples OK)`)
-      return
+      return { daysOffMax: 0, sampledCount }
     }
 
     // Pick dominant date: highest count, tiebreaker = furthest from today.
@@ -258,11 +262,13 @@ async function sampleAndReportCameraClock(
     )
     sendToRenderer(IPC_CHANNELS.DRIVE_CAMERA_CLOCK_MISMATCH, payload)
     events.emit('drive.clockMismatch', { drivePath, label, dominantDate, todayDate, daysOffMax, sampleCount: sampledCount, sampledDates: sortedDates })
+    return { daysOffMax, sampledCount }
   } catch (err) {
     logger.photos.warn(
       `sampleAndReportCameraClock failed for ${drivePath}:`,
       err instanceof Error ? err.message : err,
     )
+    return { daysOffMax: 0, sampledCount: 0 }
   }
 }
 
@@ -566,14 +572,59 @@ function poll(): void {
           label,
         })
         events.emit('drive.detected', { drive, label, photoCount: camera.photoCount, isDcim: camera.isDcim })
-        // Background EXIF sample to catch wrong-day cameras (UDC London Cam 2
-        // disaster: 15 days off, 171 unmatchable photos). Fire-and-forget so
-        // the regular drive-detected flow isn't blocked.
-        sampleAndReportCameraClock(drive, camera.photoPath, label).catch(() => {})
-        // T-V7-25: also probe for below-min / zero-photo routines whose
-        // windows fall inside this SD's shot-time range. Independent of the
-        // clock-mismatch sampler; both fire in parallel.
-        surveyAndReportMissingPhotos(drive, camera.photoPath).catch(() => {})
+        // Orchestrate the fresh-insert flow: clock sampler + missing-photo
+        // survey run in parallel, then auto-fire importPhotos if the clock
+        // passes the day-level gate and settings allow. The toast from the
+        // survey still fires regardless so the operator can cancel or move
+        // to a wrong-day workflow.
+        void (async () => {
+          try {
+            const [clockRes] = await Promise.all([
+              sampleAndReportCameraClock(drive, camera.photoPath, label),
+              surveyAndReportMissingPhotos(drive, camera.photoPath),
+            ])
+
+            if (clockRes.daysOffMax > 0) {
+              logger.photos.info(
+                `Auto-import skipped for ${drive}: camera clock off by ${clockRes.daysOffMax} day(s)`,
+              )
+              return
+            }
+
+            const comp = state.getCompetition()
+            if (!comp) {
+              logger.photos.info(`Auto-import skipped for ${drive}: no competition loaded`)
+              return
+            }
+            const settingsMod = require('./settings') as typeof import('./settings')
+            const outputDir = settingsMod.getSettings().fileNaming?.outputDirectory
+            if (!outputDir) {
+              logger.photos.info(`Auto-import skipped for ${drive}: outputDirectory not configured`)
+              return
+            }
+
+            logger.photos.info(
+              `Auto-import: ${drive} (clock OK) — full scan with DB dedup + 5min offset gate`,
+            )
+            const photoService = require('./photos') as typeof import('./photos')
+            const result = await photoService.importPhotos(
+              camera.photoPath,
+              comp.routines,
+              outputDir,
+              {
+                dedupByDb: true,
+                autoAbortOffsetMs: 5 * 60 * 1000,
+              },
+            )
+            if ('error' in result) {
+              logger.photos.warn(`Auto-import rejected for ${drive}: ${result.error}`)
+            }
+          } catch (err) {
+            logger.photos.warn(
+              `Auto-import orchestration failed for ${drive}: ${err instanceof Error ? err.message : err}`,
+            )
+          }
+        })()
       }
     }
   }

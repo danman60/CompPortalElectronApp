@@ -6,6 +6,7 @@ import { JobRecord, JobType, JobStatus } from '../../shared/types'
 import { logger } from '../logger'
 import { getSettings } from './settings'
 import * as events from './events'
+import * as state from './state'
 
 // --- State ---
 
@@ -239,26 +240,70 @@ export function getNext(type: JobType): JobRecord | null {
   if (eligible.length === 0) return null
   if (type !== 'upload') return eligible[0]
 
-  // Round-robin strategy: honor the insertion order produced by
-  // enqueueRoundRobin (which interleaves photos across routines). Applying the
-  // global photoCaptureTime sort below would collapse that interleave to a
-  // depth-first pattern — later routines get their full burst uploaded before
-  // any other routine sees a single photo. During a live show this delays
-  // per-routine scatter on the CD media panel.
-  const uploadStrategy = getSettings().upload?.strategy ?? 'routine-batch'
-  if (uploadStrategy === 'round-robin') return eligible[0]
-
+  // Live-show drain rule: latest-routine-first, with round-robin interleave
+  // across routines. For each getNext call, pick the routine that has been
+  // served LEAST (fewest done+running photo jobs), tie-broken by highest
+  // entry_number. Within that routine, return the newest pending photo.
+  //
+  // Effect:
+  //  - A fresh SD re-import enqueues R160-R169 each with 50 photos. R116
+  //    already shipped 20. Next call picks R160 (served=0, highest entry),
+  //    then R145 (served=0, next highest), ..., cycles through newest
+  //    routines first. R116-R145 resume draining after newer routines
+  //    catch up to their served count.
+  //  - A single-routine enqueue degenerates to "newest photo in that
+  //    routine" (same as prior behavior).
+  //  - Strict FIFO is dropped for photos because it caused R160+ jobs to
+  //    sit 15+ min behind R116-R145 at UDC Toronto 2026-04-24.
+  //
+  // Non-photo uploads (videos, keyframes) stay FIFO — small in count,
+  // finish fast. The eligible[0] fallback below handles them when no
+  // photo jobs are pending.
   const priority = getSettings().upload?.photoPriority ?? 'newest-first'
-  const newestPrimaryPhoto = eligible
-    .filter((job) => {
-      const payload = job.payload as Record<string, unknown>
-      return payload.type === 'photos' && payload.isPhotoThumbRepair !== true
-    })
-    .sort((a, b) => priority === 'oldest-first'
-      ? getPhotoPriorityTs(a) - getPhotoPriorityTs(b)
-      : getPhotoPriorityTs(b) - getPhotoPriorityTs(a))[0]
+  const photoJobs = eligible.filter((job) => {
+    const payload = job.payload as Record<string, unknown>
+    return payload.type === 'photos' && payload.isPhotoThumbRepair !== true
+  })
 
-  return newestPrimaryPhoto || eligible[0]
+  if (photoJobs.length > 0) {
+    // Count done+running photo uploads per routine from the FULL job list
+    // (not just eligible) — served count reflects actual progress.
+    const servedByRoutine = new Map<string, number>()
+    for (const j of jobs) {
+      if (j.type !== 'upload') continue
+      if (j.status !== 'done' && j.status !== 'running') continue
+      const p = j.payload as Record<string, unknown>
+      if (p.type !== 'photos' || p.isPhotoThumbRepair === true) continue
+      const rid = p.routineId as string
+      servedByRoutine.set(rid, (servedByRoutine.get(rid) ?? 0) + 1)
+    }
+
+    const comp = state.getCompetition()
+    const entryByRoutineId = new Map<string, number>()
+    if (comp) {
+      for (const r of comp.routines) {
+        const en = parseInt(r.entryNumber, 10)
+        entryByRoutineId.set(r.id, Number.isFinite(en) ? en : 0)
+      }
+    }
+
+    photoJobs.sort((a, b) => {
+      const aRid = (a.payload as Record<string, unknown>).routineId as string
+      const bRid = (b.payload as Record<string, unknown>).routineId as string
+      const aServed = servedByRoutine.get(aRid) ?? 0
+      const bServed = servedByRoutine.get(bRid) ?? 0
+      if (aServed !== bServed) return aServed - bServed
+      const aEn = entryByRoutineId.get(aRid) ?? 0
+      const bEn = entryByRoutineId.get(bRid) ?? 0
+      if (aEn !== bEn) return bEn - aEn
+      return priority === 'oldest-first'
+        ? getPhotoPriorityTs(a) - getPhotoPriorityTs(b)
+        : getPhotoPriorityTs(b) - getPhotoPriorityTs(a)
+    })
+    return photoJobs[0]
+  }
+
+  return eligible[0]
 }
 
 function getPhotoPriorityTs(job: JobRecord): number {

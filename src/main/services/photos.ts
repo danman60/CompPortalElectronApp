@@ -888,6 +888,16 @@ export interface ImportPhotosOptions {
   // files so a previously-watermarked card can have specific frames
   // backfilled without disturbing the rest of the card.
   filenameAllowlist?: Set<string>
+  // Auto-import on SD re-insert: skip any photo whose basename is already in
+  // DB for the routine it matches to. Pre-fetches existing filenames from
+  // CompPortal at import start and filters in the copy loop. Differs from
+  // filenameAllowlist (which is a positive include list) — this is a negative
+  // exclude based on DB state. Safe to combine; the exclude wins.
+  dedupByDb?: boolean
+  // Auto-import safety gate: if camera clock-offset detection finds |offset|
+  // > this value (ms), abort before writing anything. Prevents wrong-time
+  // imports when auto-triggered by driveMonitor. 0 or unset = no gate.
+  autoAbortOffsetMs?: number
 }
 
 export async function importPhotos(
@@ -1345,6 +1355,23 @@ async function runImport(
   }
   const clockOffsetMs = offsetByBody.get(dominantBody) ?? 0
 
+  // Auto-import safety gate: abort before any copy/enqueue when the detected
+  // offset exceeds the configured threshold. Catches wrong-day / heavily-
+  // drifted cameras that the day-level sampler missed. Manual imports are
+  // never gated here (option unset).
+  if (opts.autoAbortOffsetMs && Math.abs(clockOffsetMs) > opts.autoAbortOffsetMs) {
+    logger.photos.warn(
+      `Auto-import aborted: detected clock offset ${Math.round(clockOffsetMs / 1000)}s exceeds ${Math.round(opts.autoAbortOffsetMs / 1000)}s threshold (folder=${folderPath})`,
+    )
+    return {
+      totalPhotos: photos.length,
+      matched: 0,
+      unmatched: photos.length,
+      clockOffsetMs,
+      matches: [],
+    }
+  }
+
   // Match photos to routines. We run matchPhotosToRoutines (or the worker
   // equivalent) once per body with that body's final offset, then stitch
   // the results back into original input order so callers referencing
@@ -1418,6 +1445,49 @@ async function runImport(
   // mkdir / copy failure for a given routine id.
   const failedRoutineIds = new Set<string>()
 
+  // Auto-import dedup: pre-fetch DB filenames per routine so we can skip
+  // photos already uploaded (by basename). One HTTP call for all routines
+  // with a matched photo. If CompPortal is unreachable we degrade to "import
+  // anyway" since upload-side dedup (sourceHash) is the second line of
+  // defense.
+  let dbExistingByRoutine: Record<string, Set<string>> = {}
+  let dedupSkippedCount = 0
+  if (opts.dedupByDb && !previewOnly) {
+    const matchedRoutineIds = new Set<string>()
+    for (const m of matches) {
+      if (m.confidence === 'unmatched') continue
+      const adjusted = new Date(m.captureTime).getTime() + clockOffsetMs
+      const win = windows.find(
+        (w) =>
+          adjusted >= w.recordingStarted.getTime() - 30000 &&
+          adjusted <= w.recordingStopped.getTime() + 30000,
+      )
+      if (win) matchedRoutineIds.add(win.routineId)
+    }
+    if (matchedRoutineIds.size > 0) {
+      try {
+        const { map, endpointAvailable } = await uploadService.fetchExistingFilenames(
+          Array.from(matchedRoutineIds),
+        )
+        if (endpointAvailable) {
+          dbExistingByRoutine = map
+          const totalExisting = Object.values(map).reduce((n: number, s: Set<string>) => n + s.size, 0)
+          logger.photos.info(
+            `Auto-import dedup: pre-fetched ${totalExisting} existing filenames across ${matchedRoutineIds.size} routine(s)`,
+          )
+        } else {
+          logger.photos.info(
+            `Auto-import dedup: list-photos endpoint unavailable — proceeding without DB filter`,
+          )
+        }
+      } catch (err) {
+        logger.photos.warn(
+          `Auto-import dedup pre-fetch failed: ${err instanceof Error ? err.message : err}`,
+        )
+      }
+    }
+  }
+
   // Copy matched photos to routine folders and generate thumbnails
   let copiedCount = 0
   let perRoutineFailures = 0
@@ -1442,6 +1512,18 @@ async function runImport(
     if (!routine) continue
 
     if (failedRoutineIds.has(routine.id)) continue
+
+    // Dedup by DB: if the basename is already recorded against this routine
+    // in CompPortal, skip the copy + enqueue. Case-sensitive compare mirrors
+    // media_photos.filename storage. Unreachable endpoint path leaves
+    // dbExistingByRoutine empty, which is a no-op here.
+    if (opts.dedupByDb) {
+      const existing = dbExistingByRoutine[routine.id]
+      if (existing && existing.has(path.basename(match.filePath))) {
+        dedupSkippedCount++
+        continue
+      }
+    }
 
     // Use existing routine output dir if available, otherwise construct from
     // settings. Routine title is sanitized for filesystem — Windows forbids
@@ -1704,7 +1786,7 @@ async function runImport(
   }
 
   logger.photos.info(
-    `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s`,
+    `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s${dedupSkippedCount > 0 ? `, dedup-skipped: ${dedupSkippedCount}` : ''}`,
   )
 
   // Advance SD watermark per camera body to the latest EXIF capture time we
