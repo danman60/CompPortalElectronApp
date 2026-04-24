@@ -94,6 +94,18 @@
         "to": "wifi-display-server.exe"
       },
       {
+        "from": "resources/libstdc++-6.dll",
+        "to": "libstdc++-6.dll"
+      },
+      {
+        "from": "resources/libgcc_s_seh-1.dll",
+        "to": "libgcc_s_seh-1.dll"
+      },
+      {
+        "from": "resources/libwinpthread-1.dll",
+        "to": "libwinpthread-1.dll"
+      },
+      {
         "from": "resources/driver-setup.exe",
         "to": "driver-setup.exe"
       },

@@ -357,12 +357,11 @@ function MissingPhotosToast(): React.ReactElement | null {
   )
 }
 
-// Re-record advisory toast: fired when main detects a suspect re-record
-// (new take > 90s AND prior routine dir had an encoded output). Purely
-// advisory — archive still proceeds as normal. Auto-dismisses after 60s.
-interface RerecEvent {
+interface RerecDecisionRequest {
+  proposalId: string
   currentRoutineId: string
   currentEntryNumber: string
+  nextEntryNumber: string | null
   priorMkvName: string | null
   priorEncodedFiles: string[]
   newMkvPath: string
@@ -370,87 +369,150 @@ interface RerecEvent {
   detectedAt: string
 }
 
-function RerecordToast(): React.ReactElement | null {
-  const [events, setEvents] = useState<RerecEvent[]>([])
+// Re-record hard-gate modal (E1): blocks post-stop processing until the
+// operator explicitly chooses between "advance to next routine" (this take
+// was meant for the next entry) or "archive prior" (legacy re-record).
+// Cannot be dismissed without a choice. Default (autofocus) = advance.
+function RerecordDecisionModal(): React.ReactElement | null {
+  const [requests, setRequests] = useState<RerecDecisionRequest[]>([])
+  const advanceBtnRef = React.useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     if (!window.api) return
-    const off = window.api.on(IPC_CHANNELS.RECORDING_REREC_SUSPECTED, (data: unknown) => {
-      const e = data as RerecEvent
-      setEvents((prev) => [...prev, e])
-      // Auto-dismiss after 60s so it doesn't linger across routines
-      setTimeout(() => {
-        setEvents((prev) => prev.filter((x) => x.detectedAt !== e.detectedAt))
-      }, 60_000)
+    const off = window.api.on(IPC_CHANNELS.RECORDING_REREC_DECISION_REQUESTED, (data: unknown) => {
+      const r = data as RerecDecisionRequest
+      setRequests((prev) => [...prev, r])
     })
     return () => { try { off() } catch {} }
   }, [])
 
-  function dismiss(detectedAt: string): void {
-    setEvents((prev) => prev.filter((x) => x.detectedAt !== detectedAt))
+  // Autofocus the safer default ("Advance") each time a new modal appears.
+  useEffect(() => {
+    if (requests.length > 0 && advanceBtnRef.current) {
+      advanceBtnRef.current.focus()
+    }
+  }, [requests.length])
+
+  function decide(proposalId: string, decision: 'advance' | 'archive'): void {
+    try {
+      (window.api as any).recordingRerecDecision(proposalId, decision)
+    } catch {
+      // ignore
+    }
+    setRequests((prev) => prev.filter((r) => r.proposalId !== proposalId))
   }
 
-  if (events.length === 0) return null
+  if (requests.length === 0) return null
+
+  // Only render the first request. Modal is strictly blocking —
+  // additional requests queue behind it and render once the current
+  // one resolves.
+  const r = requests[0]
+  const nextLabel = r.nextEntryNumber ?? '?'
+  const durMin = Math.floor(r.newDurationSec / 60)
+  const durSec = r.newDurationSec % 60
+  const durStr = durMin > 0 ? `${durMin}m ${durSec}s` : `${durSec}s`
 
   return (
     <div
       style={{
         position: 'fixed',
-        right: 16,
-        top: 80,
-        zIndex: 9998,
+        inset: 0,
+        zIndex: 10000,
+        background: 'rgba(0,0,0,0.7)',
         display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-        maxWidth: 420,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
       }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rerec-modal-title"
     >
-      {events.map((e) => (
+      <div
+        style={{
+          background: '#1a1f2e',
+          border: '2px solid #c17f00',
+          borderRadius: 10,
+          padding: 24,
+          maxWidth: 560,
+          width: '100%',
+          color: '#fff',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
+          fontSize: 14,
+          lineHeight: 1.5,
+        }}
+      >
         <div
-          key={e.detectedAt}
+          id="rerec-modal-title"
           style={{
-            background: '#2a1e08',
-            border: '1px solid #c17f00',
-            borderLeft: '4px solid #c17f00',
-            borderRadius: 6,
-            padding: '10px 12px',
-            color: '#fff',
-            fontSize: 12,
-            lineHeight: 1.4,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            fontSize: 18,
+            fontWeight: 700,
+            marginBottom: 12,
+            color: '#ffca55',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <span style={{ fontSize: 16 }}>{'\u26A0\uFE0F'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, marginBottom: 3 }}>
-                Possible missed routine advance — R{e.currentEntryNumber}
-              </div>
-              <div style={{ color: '#d4c29a' }}>
-                Prior take for R{e.currentEntryNumber} already had an encoded output
-                ({e.priorEncodedFiles.slice(0, 2).join(', ')}{e.priorEncodedFiles.length > 2 ? ', ...' : ''})
-                and the new recording is {e.newDurationSec}s long. If this was actually
-                a <strong>new routine</strong> (not a re-record), stop now, advance to the
-                next entry, and re-record. The previous take has been archived either way.
-              </div>
-            </div>
-            <button
-              onClick={() => dismiss(e.detectedAt)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#d4c29a',
-                cursor: 'pointer',
-                fontSize: 14,
-                padding: '0 4px',
-              }}
-              title="Dismiss"
-            >
-              {'\u2715'}
-            </button>
-          </div>
+          {'\u26A0\uFE0F'} Re-record or missed advance?
         </div>
-      ))}
+        <div style={{ marginBottom: 16, color: '#d4d4d4' }}>
+          R<strong>{r.currentEntryNumber}</strong> already has an encoded output
+          {' '}({r.priorEncodedFiles.slice(0, 2).join(', ')}
+          {r.priorEncodedFiles.length > 2 ? `, +${r.priorEncodedFiles.length - 2} more` : ''})
+          {' '}and the take you just stopped is <strong>{durStr}</strong> long.
+        </div>
+        <div style={{ marginBottom: 20, color: '#d4d4d4' }}>
+          This usually means you forgot to tap <strong>Next Routine</strong> before
+          starting the new take. Pick one:
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button
+            ref={advanceBtnRef}
+            onClick={() => decide(r.proposalId, 'advance')}
+            style={{
+              background: '#2d7a4f',
+              color: '#fff',
+              border: '2px solid #3fa86c',
+              padding: '14px 16px',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 14,
+              textAlign: 'left',
+            }}
+          >
+            <div style={{ fontSize: 15, marginBottom: 4 }}>
+              Advance to next routine {'\u2014'} R{nextLabel}
+            </div>
+            <div style={{ fontWeight: 400, fontSize: 12, color: '#d4f4dd' }}>
+              This new take is R{nextLabel}, not R{r.currentEntryNumber}. The prior take
+              for R{r.currentEntryNumber} is already recorded and stays as-is.
+            </div>
+          </button>
+
+          <button
+            onClick={() => decide(r.proposalId, 'archive')}
+            style={{
+              background: '#6b2a2a',
+              color: '#fff',
+              border: '2px solid #a84444',
+              padding: '14px 16px',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 14,
+              textAlign: 'left',
+            }}
+          >
+            <div style={{ fontSize: 15, marginBottom: 4 }}>
+              It{'\u2019'}s a re-record, archive the old one
+            </div>
+            <div style={{ fontWeight: 400, fontSize: 12, color: '#f4d4d4' }}>
+              Keep R{r.currentEntryNumber} = new take. Archive prior to _archive/.
+            </div>
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -875,7 +937,7 @@ export default function App(): React.ReactElement {
       <RecordingOverrunWarning />
       <ImportBusyBanner />
       <OffsetConfirmToast />
-      <RerecordToast />
+      <RerecordDecisionModal />
       <MissingPhotosToast />
       <ReconcileToast />
       <StartupToast />

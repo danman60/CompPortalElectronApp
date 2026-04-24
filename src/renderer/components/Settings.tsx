@@ -394,6 +394,46 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
+        {/* Performance — worker thread cutover (D1/D2) */}
+        <div className="settings-section">
+          <div className="settings-section-title">Performance (advanced)</div>
+          <p className="section-desc">
+            Move EXIF reading and photo-to-routine matching into worker threads so the main process stays responsive during large imports. Leave OFF until shadow-mode logs show clean parity for a few hours.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>EXIF reader worker</label>
+              <div className="toggle-row">
+                <div className="toggle-label">Use worker_threads pool for SD-card EXIF reads</div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={draft.performance?.useExifWorker ?? false}
+                    onChange={(e) => update('performance', { useExifWorker: e.target.checked })}
+                  />
+                  <span className="slider" />
+                </label>
+              </div>
+              <span className="hint">When OFF, a shadow worker still runs in parallel and logs divergences as <code>exifWorker divergence</code> / <code>exifWorker shadow parity</code> in main.log.</span>
+            </div>
+            <div className="field">
+              <label>Matcher worker</label>
+              <div className="toggle-row">
+                <div className="toggle-label">Use worker for clock-offset detection + routine matching</div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={draft.performance?.useMatcherWorker ?? false}
+                    onChange={(e) => update('performance', { useMatcherWorker: e.target.checked })}
+                  />
+                  <span className="slider" />
+                </label>
+              </div>
+              <span className="hint">When OFF, shadow worker logs <code>matcherWorker divergence</code> / <code>matcherWorker shadow parity</code>. Worker failure always falls back to inline.</span>
+            </div>
+          </div>
+        </div>
+
         {/* OBS Connection - LOWER in menu */}
         <div className="settings-section">
           <div className="settings-section-title">OBS Connection</div>

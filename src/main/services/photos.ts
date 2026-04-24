@@ -12,6 +12,16 @@ import * as uploadService from './upload'
 import * as manifest from './importManifest'
 import type { ManifestEntry } from './importManifest'
 import * as events from './events'
+import {
+  readExifBatch as workerReadExifBatch,
+  type ExifWorkerResultEntry,
+} from './exifWorkerPool'
+import {
+  runMatch as workerRunMatch,
+  type MatcherWorkerMatch,
+  type MatcherWorkerPhoto,
+  type MatcherWorkerWindow,
+} from './matcherWorkerPool'
 
 interface RecordingWindow {
   routineId: string
@@ -275,6 +285,75 @@ function getDcimFolderKey(filePath: string): string {
     }
   }
   return ''
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// D1/D2 shadow-mode helpers
+//
+// Worker cutover is gated by settings.performance.useExifWorker /
+// useMatcherWorker. When OFF (default), we still run the worker alongside
+// the inline path and log divergences so the operator can flip the flag
+// confidently. When ON, the worker is authoritative; inline path is
+// skipped. Worker failure falls back to inline even when the flag is ON.
+//
+// Divergence log format (searchable in main.log):
+//   [App] exifWorker divergence: <batchId> inline=<N> worker=<M> sampleMismatches=<list>
+//   [App] matcherWorker divergence: body=<B> offsetMs inline=<I> worker=<W> matches=<I>/<W>
+// ──────────────────────────────────────────────────────────────────────────
+
+interface ShadowExifSample {
+  path: string
+  inlineIso: string | null
+}
+
+let shadowExifBatchCounter = 0
+
+/** Fire-and-forget: worker reads the same paths, log any divergence.
+ *  Must never throw — the caller is on the hot path. */
+function fireExifShadowBatch(samples: ShadowExifSample[]): void {
+  if (samples.length === 0) return
+  const batchId = `shadow-${++shadowExifBatchCounter}`
+  const files = samples.map((s) => s.path)
+  // Pre-build inline map once — we compare by path.
+  const inlineByPath = new Map<string, string | null>()
+  for (const s of samples) inlineByPath.set(s.path, s.inlineIso)
+  workerReadExifBatch(files).then(
+    (results) => {
+      let mismatches = 0
+      const sample: Array<{ path: string; inline: string | null; worker: string | null }> = []
+      for (const r of results) {
+        const inlineIso = inlineByPath.get(r.path) ?? null
+        const workerIso = r.exifTs
+        // Both null = agreement. Both set + equal = agreement. Anything else = mismatch.
+        if (inlineIso !== workerIso) {
+          mismatches++
+          if (sample.length < 5) {
+            sample.push({ path: path.basename(r.path), inline: inlineIso, worker: workerIso })
+          }
+        }
+      }
+      if (mismatches > 0) {
+        logger.app.warn(
+          `exifWorker divergence: ${batchId} total=${results.length} mismatches=${mismatches} samples=${JSON.stringify(sample)}`,
+        )
+        events.emit('perfWorker.exif.divergence', {
+          batchId,
+          total: results.length,
+          mismatches,
+          samples: sample,
+        })
+      } else {
+        logger.app.info(
+          `exifWorker shadow parity: ${batchId} total=${results.length} agreement=100%`,
+        )
+      }
+    },
+    (err) => {
+      logger.app.warn(
+        `exifWorker shadow batch ${batchId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    },
+  )
 }
 
 async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
@@ -603,6 +682,182 @@ function matchPhotosToRoutines(
   })
 }
 
+/**
+ * D2 shadow/authoritative matcher entry.
+ *
+ * Split into two stages so the existing operator-prompt override can sit
+ * between detect and match (large offsets prompt the operator; if they
+ * reject, we match at offset=0 instead of the detected value).
+ *
+ *   resolveDetectForBody — detector stage. Returns ClockOffsetResult plus
+ *     (worker path only) a cached full-match result.
+ *   resolveMatchesForBody — match stage. Returns PhotoMatch[] for a body
+ *     at the final post-prompt offset.
+ *
+ * Flag OFF: inline is authoritative; worker fires fire-and-forget shadow.
+ * Flag ON: worker is authoritative; any worker failure falls back to inline.
+ * Worker failure NEVER crashes photo import (cross-surface contract).
+ */
+
+interface WorkerMatchCache {
+  offsetMs: number
+  matches: PhotoMatch[]
+}
+
+async function runFullMatchViaWorker(
+  bodyPhotos: { path: string; captureTime: Date; sourceHash: string }[],
+  windows: RecordingWindow[],
+  seedOffsetMs: number,
+  bodyLabel: string,
+): Promise<{
+  offsetMs: number
+  matches: PhotoMatch[]
+  detected: ClockOffsetResult
+  replayEvents: Array<{ kind: string; payload: Record<string, unknown> }>
+  logs: Array<{ level: 'info' | 'warn'; msg: string }>
+} | null> {
+  try {
+    const photosPayload: MatcherWorkerPhoto[] = bodyPhotos.map((p) => ({
+      path: p.path,
+      captureTimeIso: p.captureTime.toISOString(),
+    }))
+    const windowsPayload: MatcherWorkerWindow[] = windows.map((w) => ({
+      routineId: w.routineId,
+      entryNumber: w.entryNumber,
+      recordingStartedIso: w.recordingStarted.toISOString(),
+      recordingStoppedIso: w.recordingStopped.toISOString(),
+    }))
+    const resp = await workerRunMatch({
+      photos: photosPayload,
+      windows: windowsPayload,
+      seedOffsetMs,
+    })
+    const mappedMatches: PhotoMatch[] = resp.matches.map((m: MatcherWorkerMatch) => ({
+      filePath: m.filePath,
+      captureTime: m.captureTime,
+      confidence: m.confidence,
+      uploaded: m.uploaded,
+      matchedRoutineId: m.matchedRoutineId,
+    }))
+    return {
+      offsetMs: resp.offset.offsetMs,
+      matches: mappedMatches,
+      detected: {
+        offsetMs: resp.offset.offsetMs,
+        bestScore: resp.offset.bestScore,
+        zeroScore: resp.offset.zeroScore,
+        totalPhotos: resp.offset.totalPhotos,
+      },
+      replayEvents: resp.events.map((e) => ({ kind: e.kind, payload: e.payload })),
+      logs: resp.logs,
+    }
+  } catch (err) {
+    logger.app.warn(
+      `matcherWorker run failed for body=${bodyLabel}: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return null
+  }
+}
+
+async function resolveDetectForBody(
+  bodyPhotos: { path: string; captureTime: Date; sourceHash: string }[],
+  windows: RecordingWindow[],
+  seedOffsetMs: number,
+  bodyLabel: string,
+): Promise<{ detected: ClockOffsetResult; workerMatchCache: WorkerMatchCache | null }> {
+  const settings = getSettings()
+  const useWorker = !!settings.performance?.useMatcherWorker
+
+  if (useWorker) {
+    const workerOut = await runFullMatchViaWorker(
+      bodyPhotos,
+      windows,
+      seedOffsetMs,
+      bodyLabel,
+    )
+    if (workerOut) {
+      // Replay captured logs + events on the main thread so downstream
+      // consumers see identical side effects.
+      for (const l of workerOut.logs) {
+        if (l.level === 'info') logger.photos.info(l.msg)
+        else logger.photos.warn(l.msg)
+      }
+      for (const ev of workerOut.replayEvents) {
+        events.emit(ev.kind, ev.payload)
+      }
+      return {
+        detected: workerOut.detected,
+        workerMatchCache: { offsetMs: workerOut.offsetMs, matches: workerOut.matches },
+      }
+    }
+    logger.app.warn(`matcherWorker fallback to inline for body=${bodyLabel}`)
+  }
+
+  // Inline authoritative.
+  const detected = detectClockOffset(
+    bodyPhotos.map((p) => ({ path: p.path, captureTime: p.captureTime })),
+    windows,
+    seedOffsetMs,
+  )
+
+  if (!useWorker) {
+    // Fire-and-forget shadow.
+    runFullMatchViaWorker(bodyPhotos, windows, seedOffsetMs, bodyLabel).then((workerOut) => {
+      if (!workerOut) return
+      if (workerOut.offsetMs !== detected.offsetMs) {
+        logger.app.warn(
+          `matcherWorker divergence: body=${bodyLabel} ` +
+            `offset inline=${detected.offsetMs} worker=${workerOut.offsetMs} ` +
+            `totalPhotos=${bodyPhotos.length}`,
+        )
+        events.emit('perfWorker.matcher.divergence', {
+          body: bodyLabel,
+          inlineOffsetMs: detected.offsetMs,
+          workerOffsetMs: workerOut.offsetMs,
+          totalPhotos: bodyPhotos.length,
+          reason: 'offsetMs',
+        })
+      } else {
+        logger.app.info(
+          `matcherWorker shadow parity: body=${bodyLabel} offsetMs=${detected.offsetMs} totalPhotos=${bodyPhotos.length}`,
+        )
+      }
+    })
+  }
+  return { detected, workerMatchCache: null }
+}
+
+async function resolveMatchesForBody(
+  bodyPhotos: { path: string; captureTime: Date; sourceHash: string }[],
+  windows: RecordingWindow[],
+  finalOffsetMs: number,
+  bodyLabel: string,
+  workerMatchCache: WorkerMatchCache | null,
+): Promise<PhotoMatch[]> {
+  const settings = getSettings()
+  const useWorker = !!settings.performance?.useMatcherWorker
+
+  // Worker already computed matches at this exact offset in the detect stage.
+  if (workerMatchCache && workerMatchCache.offsetMs === finalOffsetMs) {
+    return workerMatchCache.matches
+  }
+
+  if (useWorker) {
+    // Re-run worker with the overridden offset as seed.
+    const workerOut = await runFullMatchViaWorker(bodyPhotos, windows, finalOffsetMs, bodyLabel)
+    if (workerOut && workerOut.offsetMs === finalOffsetMs) {
+      return workerOut.matches
+    }
+    // Fall through to inline at finalOffsetMs.
+  }
+
+  return matchPhotosToRoutines(
+    bodyPhotos.map((p) => ({ path: p.path, captureTime: p.captureTime })),
+    windows,
+    finalOffsetMs,
+  )
+}
+
 // FIFO queue for sequential imports — supports multi-SD insertion where the
 // operator plugs in 2+ cards at once. Each queued import waits for the
 // previous to finish so state.json writes, job queue, and offset detector
@@ -827,6 +1082,46 @@ async function runImport(
   let firstCaptureTime: string | null = null
   let lastCaptureTime: string | null = null
   const maxCaptureByBody: Record<string, { lastCaptureTime: string; lastFilename?: string }> = {}
+
+  // D1 worker cutover. When settings.performance.useExifWorker is ON we
+  // authoritatively read via the pool and fall back to inline only if the
+  // worker rejects. When OFF we keep inline authoritative and periodically
+  // fire a shadow batch for divergence telemetry.
+  const perfSettings = getSettings().performance
+  const useExifWorkerAuthoritative = !!perfSettings?.useExifWorker
+  const exifWorkerCache = new Map<string, string | null>()
+  async function readExifViaWorkerBatch(paths: string[]): Promise<void> {
+    try {
+      const results = await workerReadExifBatch(paths)
+      for (const r of results) {
+        exifWorkerCache.set(r.path, r.exifTs)
+      }
+    } catch (err) {
+      logger.app.warn(
+        `exifWorker authoritative batch failed (${paths.length} files) — falling back to inline: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      // Leave cache empty for these paths; readers below fall through to inline.
+    }
+  }
+  if (useExifWorkerAuthoritative && partitionedPaths.length > 0) {
+    const BATCH = 500
+    for (let s = 0; s < partitionedPaths.length; s += BATCH) {
+      if (signal.aborted) break
+      await readExifViaWorkerBatch(partitionedPaths.slice(s, s + BATCH))
+      if (s % (BATCH * 4) === 0) await yieldToEventLoop()
+    }
+  }
+
+  // Shadow-mode accumulator (flag OFF). Buffers up to 500 samples then
+  // dispatches asynchronously; divergences logged by fireExifShadowBatch.
+  const shadowBuf: ShadowExifSample[] = []
+  const SHADOW_BATCH = 500
+  function flushShadowBuf(): void {
+    if (shadowBuf.length === 0) return
+    const samples = shadowBuf.splice(0, shadowBuf.length)
+    fireExifShadowBatch(samples)
+  }
+
   for (let i = 0; i < partitionedPaths.length; i++) {
     if (signal.aborted) {
       logger.photos.warn(`Import cancelled during EXIF read at ${i}/${partitionedPaths.length}`)
@@ -837,7 +1132,23 @@ async function runImport(
       skippedDupes++
       continue
     }
-    const captureTime = await getPhotoCaptureTime(partitionedPaths[i])
+    // Flag ON: use worker cache (if present). On miss (worker batch failed)
+    // fall through to inline. Flag OFF: inline authoritative + shadow.
+    let captureTime: Date | null = null
+    if (useExifWorkerAuthoritative && exifWorkerCache.has(partitionedPaths[i])) {
+      const iso = exifWorkerCache.get(partitionedPaths[i]) ?? null
+      captureTime = iso ? new Date(iso) : null
+      if (captureTime && isNaN(captureTime.getTime())) captureTime = null
+    } else {
+      captureTime = await getPhotoCaptureTime(partitionedPaths[i])
+      if (!useExifWorkerAuthoritative) {
+        shadowBuf.push({
+          path: partitionedPaths[i],
+          inlineIso: captureTime ? captureTime.toISOString() : null,
+        })
+        if (shadowBuf.length >= SHADOW_BATCH) flushShadowBuf()
+      }
+    }
     if (captureTime) {
       const captureIsoForRange = captureTime.toISOString()
       if (!firstCaptureTime || captureIsoForRange < firstCaptureTime) firstCaptureTime = captureIsoForRange
@@ -892,6 +1203,8 @@ async function runImport(
       await yieldToEventLoop()
     }
   }
+  // Flush any residual shadow samples.
+  if (!useExifWorkerAuthoritative) flushShadowBuf()
   if (skippedWrongDate > 0) {
     logger.photos.info(`Skipped ${skippedWrongDate} photos with non-today EXIF dates`)
   }
@@ -942,9 +1255,18 @@ async function runImport(
   }
 
   const offsetByBody = new Map<string, number>()
+  // D2: when the matcher worker flag is ON, resolveDetectForBody also returns
+  // a cached worker match-list we can reuse in the match stage below.
+  const workerCacheByBody = new Map<string, WorkerMatchCache | null>()
   for (const [body, bodyPhotos] of photosByBody.entries()) {
     const seed = body !== '_unknown' ? (state.getCameraOffset(body)?.offsetMs ?? 0) : 0
-    const detected = detectClockOffset(bodyPhotos, windows, seed)
+    const { detected, workerMatchCache } = await resolveDetectForBody(
+      bodyPhotos,
+      windows,
+      seed,
+      body,
+    )
+    workerCacheByBody.set(body, workerMatchCache)
     let finalOffset = detected.offsetMs
 
     // Offset confirmation: large offsets (abs > threshold) prompt the
@@ -1007,15 +1329,23 @@ async function runImport(
   }
   const clockOffsetMs = offsetByBody.get(dominantBody) ?? 0
 
-  // Match photos to routines. We run matchPhotosToRoutines once per body
-  // with that body's offset, then stitch the results back into original
-  // input order so callers referencing photos[i] ↔ matches[i] stay valid.
+  // Match photos to routines. We run matchPhotosToRoutines (or the worker
+  // equivalent) once per body with that body's final offset, then stitch
+  // the results back into original input order so callers referencing
+  // photos[i] ↔ matches[i] stay valid.
   const matches = new Array<PhotoMatch>(photos.length)
   const matchesByBody = new Map<string, PhotoMatch[]>()
   const bodyIndexCursor = new Map<string, number>()
   for (const [body, bodyPhotos] of photosByBody.entries()) {
     const bodyOffset = offsetByBody.get(body) ?? 0
-    const bodyMatches = matchPhotosToRoutines(bodyPhotos, windows, bodyOffset)
+    const cached = workerCacheByBody.get(body) ?? null
+    const bodyMatches = await resolveMatchesForBody(
+      bodyPhotos,
+      windows,
+      bodyOffset,
+      body,
+      cached,
+    )
     matchesByBody.set(body, bodyMatches)
     bodyIndexCursor.set(body, 0)
   }

@@ -667,6 +667,15 @@ export function registerAllHandlers(): void {
     return { ok: true }
   })
 
+  // E1: re-record hard-gate decision — operator chose 'advance' (this take
+  // belongs to next routine) or 'archive' (legacy re-record overwrite).
+  safeHandle(IPC_CHANNELS.RECORDING_REREC_DECISION, async (proposalId: unknown, decision: unknown) => {
+    logIPC(IPC_CHANNELS.RECORDING_REREC_DECISION, { proposalId, decision })
+    const d = decision === 'advance' || decision === 'archive' ? decision : 'archive'
+    recording.resolveRerecDecision(proposalId as string, d)
+    return { ok: true }
+  })
+
   safeHandle(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS, async () => {
     logIPC(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS)
     stateService.clearSdWatermarks()

@@ -93,6 +93,57 @@ function stopRecordingWatchdog(): void {
   stuckAlertFired = false
 }
 
+// --- Re-record hard-gate decision registry (E1) ---
+// When we detect a suspect re-record (new take > 90s AND prior routine dir
+// has an encoded output), post-stop processing fires a modal to the renderer
+// and awaits an operator decision. Keyed by proposalId so multiple in-flight
+// prompts (pathological, but safe) don't clobber each other.
+type RerecDecision = 'advance' | 'archive'
+const rerecDecisionResolvers = new Map<string, (d: RerecDecision) => void>()
+let rerecProposalCounter = 0
+
+export function resolveRerecDecision(proposalId: string, decision: RerecDecision): void {
+  const fn = rerecDecisionResolvers.get(proposalId)
+  if (!fn) return
+  rerecDecisionResolvers.delete(proposalId)
+  fn(decision)
+}
+
+async function requestRerecDecision(payload: {
+  currentRoutineId: string
+  currentEntryNumber: string
+  nextEntryNumber: string | null
+  priorMkvName: string | null
+  priorEncodedFiles: string[]
+  newMkvPath: string
+  newDurationSec: number
+}): Promise<RerecDecision> {
+  const proposalId = `rerec-${Date.now()}-${++rerecProposalCounter}`
+  const detectedAt = new Date().toISOString()
+  return new Promise<RerecDecision>((resolve) => {
+    // Safety timeout — if the operator never clicks (unattended laptop,
+    // renderer crashed mid-show), default to 'archive' (legacy behavior) so
+    // we never leave post-stop processing permanently stalled. 2 minutes
+    // mirrors the photos-offset-proposal timeout.
+    const timeout = setTimeout(() => {
+      if (rerecDecisionResolvers.has(proposalId)) {
+        rerecDecisionResolvers.delete(proposalId)
+        logger.app.warn(`Re-record decision ${proposalId} timed out after 120s — defaulting to 'archive'`)
+        resolve('archive')
+      }
+    }, 120_000)
+    rerecDecisionResolvers.set(proposalId, (d) => {
+      clearTimeout(timeout)
+      resolve(d)
+    })
+    sendToRenderer(IPC_CHANNELS.RECORDING_REREC_DECISION_REQUESTED, {
+      proposalId,
+      detectedAt,
+      ...payload,
+    })
+  })
+}
+
 async function reconcileOrphanedRecording(): Promise<void> {
   if (!activeRecordingRoutineId || !recordStartedAt) return
   const searchDirs: string[] = []
@@ -463,7 +514,9 @@ export async function handleRecordingStopped(
     }
 
     const comp = state.getCompetition()
-    const routine = comp?.routines.find((r) => r.id === routineId) ?? null
+    // `routine` / `routineDir` / `fileName` may be retargeted mid-flow when
+    // the operator chooses "Advance" in the re-record decision modal (E1).
+    let routine = comp?.routines.find((r) => r.id === routineId) ?? null
 
     if (!routine) {
       logger.app.warn(`Recording stopped for unknown routine ${routineId} — raw file preserved at: ${outputPath}`)
@@ -501,13 +554,13 @@ export async function handleRecordingStopped(
 
     const settings = getSettings()
 
-    const routineDir = getRoutineOutputDir(routine, outputPath)
+    let routineDir = getRoutineOutputDir(routine, outputPath)
     if (!routineDir) {
       logger.app.warn('No output directory available — skipping file organization')
       broadcastFullState()
       return
     }
-    const fileName = buildFileName(routine)
+    let fileName = buildFileName(routine)
 
     logger.app.info(`Routine dir: ${routineDir}`)
 
@@ -531,66 +584,134 @@ export async function handleRecordingStopped(
         }
       } catch {}
 
-      // Re-record heuristic (T-H1/F1): if the new take is > 90s AND the
-      // existing routine dir holds a non-.mkv output (typically a
-      // performance.mp4 from a finished prior encode), the operator has
-      // likely started recording a NEW routine without tapping Next. Fire
-      // an advisory IPC so the renderer can toast the operator. Default
-      // behavior (silent archive) still runs. No corrective action is
-      // taken here — purely informational — to keep this change safe for
-      // live shows. The operator can manually advance if it's indeed a
-      // new routine; otherwise the archive-as-re-record path is correct.
+      // Re-record heuristic (E1): if the new take is > 90s AND the existing
+      // routine dir holds a non-.mkv output (typically a performance.mp4 from
+      // a finished prior encode), the operator has likely started recording
+      // the NEXT routine without tapping "Next Routine". Hard-gate: pause
+      // post-stop processing, prompt the operator via blocking modal, and
+      // branch on their choice:
+      //   - 'archive' → legacy behavior: archive prior, new take replaces.
+      //   - 'advance' → skip archive, call state.advanceToNext(), move the
+      //     new MKV into the NEW current routine's dir. Prior stays intact
+      //     as the canonical take for the previously-current routine.
+      let rerecDecision: RerecDecision = 'archive'
+      let rerecAdvancedToRoutine: Routine | null = null
       try {
         const NEW_DURATION_THRESHOLD_SEC = 90
         if (durationSec > NEW_DURATION_THRESHOLD_SEC) {
           const priorEncoded = preArchiveFiles.some((f) => /\.(mp4|webm|mov)$/i.test(f.name))
           if (priorEncoded) {
             const priorMkv = preArchiveFiles.find((f) => /\.mkv$/i.test(f.name))
-            sendToRenderer(IPC_CHANNELS.RECORDING_REREC_SUSPECTED, {
+            const peekNext = state.getNextRoutine()
+            logger.app.warn(
+              `Re-record SUSPECT: routine ${routine.entryNumber} had encoded output AND new take is ${durationSec}s. ` +
+              `Awaiting operator decision (advance | archive).`,
+            )
+            rerecDecision = await requestRerecDecision({
               currentRoutineId: routine.id,
               currentEntryNumber: routine.entryNumber,
+              nextEntryNumber: peekNext?.entryNumber ?? null,
               priorMkvName: priorMkv?.name ?? null,
               priorEncodedFiles: preArchiveFiles
                 .filter((f) => /\.(mp4|webm|mov)$/i.test(f.name))
                 .map((f) => f.name),
               newMkvPath: outputPath,
               newDurationSec: durationSec,
-              detectedAt: new Date().toISOString(),
             })
-            logger.app.warn(
-              `Re-record SUSPECT: routine ${routine.entryNumber} had encoded output AND new take is ${durationSec}s. ` +
-              `Advising operator via toast. Archive proceeds as normal.`,
-            )
+            logger.app.info(`Re-record decision for routine ${routine.entryNumber}: ${rerecDecision}`)
           }
         }
       } catch (err) {
         logger.app.warn(`Re-record heuristic failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
       }
 
-      await archiveExistingFiles(routineDir)
-
-      // Clear stale upload jobs and photo state from previous recording
-      const oldJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
-      for (const job of oldJobs) {
-        jobQueue.updateStatus(job.id, 'cancelled')
+      if (rerecDecision === 'advance') {
+        // Operator confirmed this take belongs to the NEXT routine. Leave
+        // the prior encoded output in place (canonical for the originally-
+        // current routine). Advance state and retarget this take to the
+        // new current routine's dir. E2: CompPortal's plugin API auto-
+        // creates the media_packages row on first upload-url call for the
+        // new entryId, so no pre-upload provisioning is required here.
+        rerecAdvancedToRoutine = state.advanceToNext()
+        if (!rerecAdvancedToRoutine) {
+          logger.app.error(
+            `Re-record advance requested but no next routine available — falling back to archive for ${routine.entryNumber}`,
+          )
+          rerecDecision = 'archive'
+        } else {
+          logger.app.info(
+            `Re-record ADVANCE: leaving prior take intact for R${routine.entryNumber}. ` +
+            `New take retargeted to R${rerecAdvancedToRoutine.entryNumber}.`,
+          )
+        }
       }
-      state.updateRoutineStatus(routine.id, routine.status, {
-        photos: undefined,
-        encodedFiles: undefined,
-        uploadProgress: undefined,
-        error: undefined,
-      })
-      logger.app.info(`Archived existing files to ${routineDir}/_archive — cleared ${oldJobs.length} old upload jobs`)
-      try {
-        const events = require('./events') as typeof import('./events')
-        events.emit('recording.archived', {
-          routineId: routine.id,
-          entryNumber: routine.entryNumber,
-          routineDir,
-          archivedFiles: preArchiveFiles,
-          cancelledUploadJobs: oldJobs.length,
+
+      if (rerecDecision === 'archive') {
+        await archiveExistingFiles(routineDir)
+
+        // Clear stale upload jobs and photo state from previous recording
+        const oldJobs = jobQueue.getByRoutine(routine.id).filter(j => j.type === 'upload')
+        for (const job of oldJobs) {
+          jobQueue.updateStatus(job.id, 'cancelled')
+        }
+        state.updateRoutineStatus(routine.id, routine.status, {
+          photos: undefined,
+          encodedFiles: undefined,
+          uploadProgress: undefined,
+          error: undefined,
         })
-      } catch {}
+        logger.app.info(`Archived existing files to ${routineDir}/_archive — cleared ${oldJobs.length} old upload jobs`)
+        try {
+          const events = require('./events') as typeof import('./events')
+          events.emit('recording.archived', {
+            routineId: routine.id,
+            entryNumber: routine.entryNumber,
+            routineDir,
+            archivedFiles: preArchiveFiles,
+            cancelledUploadJobs: oldJobs.length,
+          })
+        } catch {}
+      }
+
+      // If operator chose to advance, retarget the remainder of post-stop
+      // processing at the NEW current routine. Rebind `routine` and
+      // `routineDir` so the file move, state updates, and auto-encode all
+      // run against the advanced routine. Prior routine keeps its existing
+      // canonical encoded output untouched.
+      if (rerecDecision === 'advance' && rerecAdvancedToRoutine) {
+        // Undo the early "recorded" update we applied to the PRIOR routine
+        // before we knew the decision. Its canonical encodedFiles are
+        // already present and its status should reflect whatever it was
+        // (likely 'uploaded' or 'encoded'). Clearing the raw outputPath
+        // prevents downstream reconcilers from picking up a path that is
+        // about to be renamed into a different routine's dir.
+        const priorRoutine = routine
+        try {
+          state.updateRoutineStatus(priorRoutine.id, priorRoutine.status, {
+            outputPath: priorRoutine.outputPath,
+            recordingStoppedAt: priorRoutine.recordingStoppedAt,
+          })
+        } catch (err) {
+          logger.app.warn(`Failed to revert prior-routine state for ${priorRoutine.entryNumber}: ${err instanceof Error ? err.message : err}`)
+        }
+        routine = rerecAdvancedToRoutine
+        // Ensure the advanced routine is marked as the current recorded one
+        // with the fresh stop timestamp. outputPath is overwritten below
+        // once the MKV is moved into the new routine dir.
+        state.updateRoutineStatus(routine.id, 'recorded', {
+          recordingStoppedAt: timestamp,
+          outputPath,
+        })
+        const newDir = getRoutineOutputDir(routine, outputPath)
+        if (!newDir) {
+          logger.app.warn('Advance-retarget: no output directory for new current routine — aborting move')
+          broadcastFullState()
+          return
+        }
+        routineDir = newDir
+        fileName = buildFileName(routine)
+        logger.app.info(`Advance-retarget: routine dir now ${routineDir}, fileName ${fileName}`)
+      }
     }
 
     // Create routine directory

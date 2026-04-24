@@ -543,6 +543,13 @@ export interface AppSettings {
     brandFont: string
     brandLogoUrl: string
   }
+  // Performance / worker-thread opt-in flags. Default OFF so the hot path
+  // keeps running inline until shadow-mode logs confirm parity. Flip via
+  // Settings → Performance after a few hours of clean shadow telemetry.
+  performance: {
+    useExifWorker: boolean    // D1: route EXIF reads through worker_threads pool
+    useMatcherWorker: boolean // D2: route detectClockOffset + window assignment through worker
+  }
 }
 
 // --- IPC Channels ---
@@ -568,6 +575,8 @@ export const IPC_CHANNELS = {
   RECORDING_SCRATCH: 'recording:scratch',
   RECORDING_UNSCRATCH: 'recording:unscratch',
   RECORDING_REREC_SUSPECTED: 'recording:rerec-suspected',
+  RECORDING_REREC_DECISION_REQUESTED: 'recording:rerec-decision-requested',
+  RECORDING_REREC_DECISION: 'recording:rerec-decision',
 
   // FFmpeg
   FFMPEG_ENCODE: 'ffmpeg:encode',
@@ -1169,6 +1178,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     brandColors: [],
     brandFont: '',
     brandLogoUrl: '',
+  },
+  performance: {
+    // D1/D2 worker-thread cutover — default OFF. Shadow-mode still runs the
+    // worker alongside the inline path to log divergences even when these
+    // are false. Flip to true after shadow logs show 0 divergences.
+    useExifWorker: false,
+    useMatcherWorker: false,
   },
 }
 

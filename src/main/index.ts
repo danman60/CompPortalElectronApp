@@ -28,6 +28,10 @@ import * as chatBridge from './services/chatBridge'
 import * as dayChecklist from './services/dayChecklist'
 import * as controlRoomBridge from './services/controlRoomBridge'
 import { checkAndRecover } from './services/crashRecovery'
+// Static import so electron-vite bundles the service into the main chunk.
+// Dynamic `require('./services/tabletLogServer')` preserves the string at
+// runtime and fails to resolve inside the asar.
+import { startTabletLogServer } from './services/tabletLogServer'
 import { runStartupChecks } from './services/startup'
 
 function nextTick(): Promise<void> {
@@ -333,6 +337,11 @@ app.whenReady().then(async () => {
     startDebugServer()
   } catch (err) {
     logger.app.warn(`debugServer start failed: ${err instanceof Error ? err.message : err}`)
+  }
+  try {
+    startTabletLogServer()
+  } catch (err) {
+    logger.app.warn(`tabletLogServer start failed: ${err instanceof Error ? err.message : err}`)
   }
   controlRoomBridge.start()
   // WPD/MTP disabled — using folder-watch mode instead

@@ -8,7 +8,15 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // D1/D2: worker_threads entrypoints — emitted as out/main/workers/<name>.js
+          // so exifWorkerPool.ts / matcherWorkerPool.ts can resolve them relative
+          // to __dirname at runtime.
+          'workers/exifReader': resolve(__dirname, 'src/main/workers/exifReader.ts'),
+          'workers/matcher': resolve(__dirname, 'src/main/workers/matcher.ts')
+        },
+        output: {
+          entryFileNames: '[name].js'
         }
       }
     }

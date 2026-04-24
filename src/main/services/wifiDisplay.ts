@@ -17,6 +17,59 @@ let discoverySocket: dgram.Socket | null = null
 let discoveryInterval: NodeJS.Timeout | null = null
 const DISCOVERY_PORT = 5002
 
+let topologyListenersAttached = false
+let unexpectedExitAttempts = 0
+const MAX_UNEXPECTED_EXIT_RESTARTS = 3
+let topologyRestartTimer: NodeJS.Timeout | null = null
+
+/**
+ * Pick a safe monitor index from current Electron screen state.
+ * - Returns saved if still in range and the display is still present.
+ * - Otherwise returns the primary display's position in getAllDisplays().
+ * - Returns null only if no displays are connected at all.
+ */
+function validateMonitorIndex(saved: number | null): number | null {
+  const displays = screen.getAllDisplays()
+  if (displays.length === 0) return null
+  if (saved !== null && saved >= 0 && saved < displays.length) return saved
+
+  const primaryId = screen.getPrimaryDisplay().id
+  const primaryIdx = displays.findIndex((d) => d.id === primaryId)
+  const fallback = primaryIdx >= 0 ? primaryIdx : 0
+  logger.app.warn(
+    `wifi display monitorIndex ${saved} invalid for ${displays.length} connected displays — falling back to primary (index ${fallback})`,
+  )
+  return fallback
+}
+
+function scheduleTopologyRestart(reason: string): void {
+  if (!running) return
+  if (topologyRestartTimer) clearTimeout(topologyRestartTimer)
+  // Debounce — display-added/removed often fires multiple times in a burst
+  topologyRestartTimer = setTimeout(() => {
+    topologyRestartTimer = null
+    if (!running) return
+    logger.app.info(`Restarting wifi display after ${reason}`)
+    stop()
+      .then(() => new Promise<void>((r) => setTimeout(r, 500)))
+      .then(() => start())
+      .catch((err) => logger.app.error(`wifi display restart failed after ${reason}: ${err}`))
+  }, 750)
+}
+
+function attachTopologyListeners(): void {
+  if (topologyListenersAttached) return
+  topologyListenersAttached = true
+  screen.on('display-added', (_event, display) => {
+    logger.app.info(`Display added: id=${display.id} ${display.size.width}x${display.size.height}`)
+    scheduleTopologyRestart('display-added')
+  })
+  screen.on('display-removed', (_event, display) => {
+    logger.app.info(`Display removed: id=${display.id}`)
+    scheduleTopologyRestart('display-removed')
+  })
+}
+
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces()
   const candidates: { address: string; priority: number }[] = []
@@ -53,6 +106,7 @@ function getDiscoveryPayload(): Buffer {
     videoPort: wd.videoPort,
     touchPort: wd.touchPort,
     wsPort: 9877,
+    tabletLogPort: 8766,
     name: os.hostname(),
   }))
 }
@@ -89,9 +143,31 @@ function stopDiscoveryListener(): void {
 
 const PID_FILE = 'wifi-display.pid'
 const BINARY_NAME = 'wifi-display-server.exe'
+// mingw runtime DLLs shipped alongside the cross-compiled Rust binary. They
+// live in extraResources and must sit next to the exe at spawn time, so we
+// copy them into userData together with the exe.
+const RUNTIME_DLLS = ['libstdc++-6.dll', 'libgcc_s_seh-1.dll', 'libwinpthread-1.dll']
 
 function getPidFilePath(): string {
   return path.join(app.getPath('userData'), PID_FILE)
+}
+
+function copyRuntimeDllsIfNeeded(srcDir: string, destDir: string): void {
+  for (const dllName of RUNTIME_DLLS) {
+    const src = path.join(srcDir, dllName)
+    const dst = path.join(destDir, dllName)
+    if (!fs.existsSync(src)) continue
+    try {
+      const srcStat = fs.statSync(src)
+      const dstExists = fs.existsSync(dst)
+      if (!dstExists || fs.statSync(dst).size !== srcStat.size) {
+        fs.copyFileSync(src, dst)
+        logger.app.info(`Copied ${dllName} to userData`)
+      }
+    } catch (err) {
+      logger.app.warn(`Failed to copy ${dllName} to userData: ${err}`)
+    }
+  }
 }
 
 function getBinaryPath(): string {
@@ -109,6 +185,7 @@ function getBinaryPath(): string {
         fs.copyFileSync(resourcePath, userDataCopy)
         logger.app.info(`Copied ${BINARY_NAME} to userData`)
       }
+      copyRuntimeDllsIfNeeded(path.dirname(resourcePath), path.dirname(userDataCopy))
       resolvedBinaryPath = userDataCopy
       return resolvedBinaryPath
     } catch (err) {
@@ -164,12 +241,18 @@ export async function start(): Promise<void> {
   const wd = settings.wifiDisplay
   const binaryPath = getBinaryPath()
 
-  if (wd.monitorIndex === null) {
-    throw new Error('No monitor selected for wifi display')
+  attachTopologyListeners()
+
+  const effectiveIndex = validateMonitorIndex(wd.monitorIndex)
+  if (effectiveIndex === null) {
+    throw new Error('No displays connected — cannot start wifi display')
+  }
+  if (effectiveIndex !== wd.monitorIndex) {
+    logger.app.info(`wifi display using healed monitor index ${effectiveIndex} (saved was ${wd.monitorIndex})`)
   }
 
   const args = [
-    '--monitor-index', String(wd.monitorIndex),
+    '--monitor-index', String(effectiveIndex),
     '--bitrate', String(wd.bitrate),
     '--fps', String(wd.fps),
     '--video-port', String(wd.videoPort),
@@ -190,31 +273,56 @@ export async function start(): Promise<void> {
   if (childProc.pid) {
     writePid(childProc.pid)
     running = true
-    activeMonitorIndex = wd.monitorIndex
-    logger.app.info(`Wifi display started (PID ${childProc.pid})`)
+    activeMonitorIndex = effectiveIndex
+    unexpectedExitAttempts = 0
+    logger.app.info(`Wifi display started (PID ${childProc.pid}, monitor index ${effectiveIndex})`)
     startDiscoveryListener()
   }
 
   childProc.stderr?.on('data', (data: Buffer) => {
     const line = data.toString().trim()
     if (line) {
-      logger.app.debug(`[wifi-display] ${line}`)
+      // Bumped to warn so binary stderr (usually errors / notable events) is
+      // visible in main.log without requiring a log-level change. One-line per
+      // write so grep for `[wifi-display]` catches everything.
+      logger.app.warn(`[wifi-display] ${line}`)
     }
   })
 
   childProc.stdout?.on('data', (data: Buffer) => {
     const line = data.toString().trim()
     if (line) {
-      logger.app.debug(`[wifi-display] ${line}`)
+      // Bumped to info so binary stdout (startup banners, "touch listener on
+      // port N", frame stats) lands in main.log by default.
+      logger.app.info(`[wifi-display] ${line}`)
     }
   })
 
   childProc.on('exit', (code, signal) => {
     logger.app.info(`Wifi display exited (code=${code}, signal=${signal})`)
+    const wasRunning = running
     running = false
     activeMonitorIndex = null
     childProc = null
     clearPid()
+
+    // Auto-restart on unexpected exit — covers cases where the chosen monitor
+    // becomes uncapturable (DXGI failure, DWM glitch, display hot-unplug race).
+    // SIGTERM/SIGKILL means stop() asked — don't restart.
+    const wasIntentional = signal === 'SIGTERM' || signal === 'SIGKILL'
+    if (wasRunning && !wasIntentional && unexpectedExitAttempts < MAX_UNEXPECTED_EXIT_RESTARTS) {
+      unexpectedExitAttempts++
+      logger.app.warn(
+        `Unexpected wifi display exit (code=${code}) — restart attempt ${unexpectedExitAttempts}/${MAX_UNEXPECTED_EXIT_RESTARTS} in 2s`,
+      )
+      setTimeout(() => {
+        start().catch((err) => logger.app.error(`Auto-restart failed: ${err}`))
+      }, 2000)
+    } else if (wasRunning && !wasIntentional) {
+      logger.app.error(
+        `Wifi display exceeded ${MAX_UNEXPECTED_EXIT_RESTARTS} restart attempts — giving up until user re-enables in Settings`,
+      )
+    }
   })
 
   childProc.on('error', (err) => {
@@ -235,6 +343,10 @@ export async function stop(): Promise<void> {
   const proc = childProc
   childProc = null
 
+  if (topologyRestartTimer) {
+    clearTimeout(topologyRestartTimer)
+    topologyRestartTimer = null
+  }
   stopDiscoveryListener()
   logger.app.info('Stopping wifi display...')
 
@@ -294,6 +406,10 @@ export function killOrphanedProcess(): void {
 }
 
 export function cleanup(): void {
+  if (topologyRestartTimer) {
+    clearTimeout(topologyRestartTimer)
+    topologyRestartTimer = null
+  }
   stopDiscoveryListener()
   if (childProc) {
     try {
