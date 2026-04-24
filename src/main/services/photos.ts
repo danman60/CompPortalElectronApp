@@ -39,6 +39,22 @@ interface ImportResult {
   cancelled?: boolean
 }
 
+/**
+ * Sanitize a string for use as a single Windows path component. Windows
+ * forbids < > : " / \ | ? * anywhere in a filename, and trailing spaces or
+ * dots cause "can't create file" errors when the full path is used. We
+ * replace each reserved char with _ and trim tail whitespace/dots. This
+ * used to be missing from the import folder builder, which meant a routine
+ * titled 'CAN YOU DO THIS?' crashed the entire SD import at mkdir.
+ */
+function sanitizeFsPathComponent(s: string): string {
+  return s
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/[\s.]+$/g, '')
+    .trim() || '_'
+}
+
 async function yieldToEventLoop(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
@@ -1397,8 +1413,14 @@ async function runImport(
 
   const manifestEntries: ManifestEntry[] = []
 
+  // Track routines that can't be written to so we skip them for the rest of
+  // the batch without spamming the log for every photo. Populated on first
+  // mkdir / copy failure for a given routine id.
+  const failedRoutineIds = new Set<string>()
+
   // Copy matched photos to routine folders and generate thumbnails
   let copiedCount = 0
+  let perRoutineFailures = 0
   for (const match of matches) {
     if (signal.aborted) {
       logger.photos.warn(`Import cancelled during copy at ${copiedCount}/${matches.length}`)
@@ -1419,17 +1441,32 @@ async function runImport(
     const routine = routines.find((r) => r.id === matchedWindow.routineId)
     if (!routine) continue
 
-    // Use existing routine output dir if available, otherwise construct from settings
+    if (failedRoutineIds.has(routine.id)) continue
+
+    // Use existing routine output dir if available, otherwise construct from
+    // settings. Routine title is sanitized for filesystem — Windows forbids
+    // < > : " / \ | ? * in paths, so a routine titled 'CAN YOU DO THIS?'
+    // would otherwise kill the entire import at mkdir. We replace reserved
+    // chars with _ and trim trailing whitespace/dots (also Windows-illegal).
     const baseDir = routine.outputDir
       ? routine.outputDir
       : path.join(
           outputDir,
-          `${routine.entryNumber}_${routine.routineTitle.replace(/\s+/g, '_')}_${routine.studioCode}`,
+          `${routine.entryNumber}_${sanitizeFsPathComponent(routine.routineTitle)}_${sanitizeFsPathComponent(routine.studioCode || '')}`,
         )
     const routineDir = path.join(baseDir, 'photos')
 
-    if (!fs.existsSync(routineDir)) {
-      await fs.promises.mkdir(routineDir, { recursive: true })
+    try {
+      if (!fs.existsSync(routineDir)) {
+        await fs.promises.mkdir(routineDir, { recursive: true })
+      }
+    } catch (mkdirErr) {
+      perRoutineFailures++
+      failedRoutineIds.add(routine.id)
+      logger.photos.error(
+        `Skipping routine #${routine.entryNumber} "${routine.routineTitle}": mkdir failed for ${routineDir}: ${mkdirErr instanceof Error ? mkdirErr.message : mkdirErr}`,
+      )
+      continue
     }
 
     // Preserve original camera filename end-to-end (operator directive
@@ -1453,11 +1490,20 @@ async function runImport(
         logger.photos.warn(`Filename collision for ${originalBasename} in ${routineDir}; suffixing as _dup${collisionCounter}`)
       }
     }
-    if (!previewOnly) {
-      await fs.promises.copyFile(sourceForCopy, destFile)
+    try {
+      if (!previewOnly) {
+        await fs.promises.copyFile(sourceForCopy, destFile)
+      }
+      match.sourcePath = sourceForCopy
+      match.filePath = destFile
+    } catch (copyErr) {
+      perRoutineFailures++
+      failedRoutineIds.add(routine.id)
+      logger.photos.error(
+        `Skipping routine #${routine.entryNumber} "${routine.routineTitle}": copyFile failed ${originalBasename} → ${destFile}: ${copyErr instanceof Error ? copyErr.message : copyErr}`,
+      )
+      continue
     }
-    match.sourcePath = sourceForCopy
-    match.filePath = destFile
 
     // Thumbnail generation moved to the upload worker (T-H17, 2026-04-19).
     // Main-thread sharp calls during bulk SD imports used to starve IPC
@@ -1793,7 +1839,7 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
     const outputDir = getSettings().fileNaming.outputDirectory
     const baseDir = routine.outputDir
       ? routine.outputDir
-      : path.join(outputDir, `${routine.entryNumber}_${routine.routineTitle.replace(/\s+/g, '_')}_${routine.studioCode}`)
+      : path.join(outputDir, `${routine.entryNumber}_${sanitizeFsPathComponent(routine.routineTitle)}_${sanitizeFsPathComponent(routine.studioCode || '')}`)
     const photoDir = path.join(baseDir, 'photos')
     if (!fs.existsSync(photoDir)) await fs.promises.mkdir(photoDir, { recursive: true })
 
