@@ -821,11 +821,15 @@ async function processLoop(): Promise<void> {
               if (!photoStoragePaths.includes(sp)) {
                 photoStoragePaths.push(sp)
                 photoThumbnailStoragePaths.push(tsp || '')
-                // Look up capture time from routine.photos keyed by filePath/storagePath
+                // Look up capture time from routine.photos keyed by filePath/storagePath,
+                // fall back to the payload (set at enqueue from fresh EXIF read) when
+                // state.photos has been wiped mid-upload (SD re-ingest, re-record, restart race).
+                // Observed 2026-04-24: 27% of UDC Toronto photos landed with NULL captured_at
+                // because state.photos.find() returned undefined for in-flight upload bursts.
                 const photo = routineState?.photos?.find(
                   (p) => p.storagePath === sp || p.filePath === jp.filePath,
                 )
-                photoCapturedAt.push(photo?.captureTime || '')
+                photoCapturedAt.push(photo?.captureTime || jp.photoCaptureTime || '')
               }
             } else if (jp.role) {
               storagePaths[jp.role] = sp
@@ -1180,8 +1184,9 @@ async function callPluginCompletePartial(routineId: string, uploadRunId: string)
       if (!photoStoragePaths.includes(sp)) {
         photoStoragePaths.push(sp)
         photoThumbnailStoragePaths.push(tsp || '')
+        // Fall back to payload captureTime when state lookup fails (see upload.ts:820 comment)
         const photo = routine.photos?.find(p => p.storagePath === sp || p.filePath === jp.filePath)
-        photoCapturedAt.push(photo?.captureTime || '')
+        photoCapturedAt.push(photo?.captureTime || jp.photoCaptureTime || '')
       }
     } else if (jp.role) {
       storagePaths[jp.role] = sp
@@ -1366,10 +1371,11 @@ export async function retryOrphanedCompletions(): Promise<number> {
         } else if (jp.type === 'photos') {
           photoStoragePaths.push(sp)
           photoThumbnailStoragePaths.push(tsp || '')
+          // Fall back to payload captureTime when state lookup fails (see upload.ts:820 comment)
           const photo = routine.photos?.find(
             (p) => p.storagePath === sp || p.filePath === jp.filePath,
           )
-          photoCapturedAt.push(photo?.captureTime || '')
+          photoCapturedAt.push(photo?.captureTime || jp.photoCaptureTime || '')
         } else if (jp.role) {
           storagePaths[jp.role] = sp
         }
