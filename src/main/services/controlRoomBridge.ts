@@ -1,3 +1,9 @@
+// Plugin endpoints used by this machine:
+//   POST /api/plugin/control-room/heartbeat   — snapshot push (this file)
+//   GET  /api/plugin/control-room/commands    — command pull  (this file)
+//   POST /api/plugin/control-room/commands    — command ack   (this file)
+//   POST /api/plugin/control-room/logs        — batched log events
+//                                                (see services/logStreamer.ts)
 import os from 'os'
 import { app } from 'electron'
 import * as state from './state'

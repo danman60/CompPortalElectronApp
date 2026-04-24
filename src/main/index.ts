@@ -32,6 +32,7 @@ import { checkAndRecover } from './services/crashRecovery'
 // Dynamic `require('./services/tabletLogServer')` preserves the string at
 // runtime and fails to resolve inside the asar.
 import { startTabletLogServer } from './services/tabletLogServer'
+import { startLogStreamer } from './services/logStreamer'
 import { runStartupChecks } from './services/startup'
 
 function nextTick(): Promise<void> {
@@ -344,6 +345,11 @@ app.whenReady().then(async () => {
     logger.app.warn(`tabletLogServer start failed: ${err instanceof Error ? err.message : err}`)
   }
   controlRoomBridge.start()
+  try {
+    startLogStreamer()
+  } catch (err) {
+    logger.app.warn(`logStreamer start failed: ${err instanceof Error ? err.message : err}`)
+  }
   // WPD/MTP disabled — using folder-watch mode instead
   // tether.initWPDHandlers()
   // wpdBridge.startMonitor().catch((err) => {
