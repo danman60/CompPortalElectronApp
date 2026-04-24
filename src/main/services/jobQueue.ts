@@ -239,6 +239,15 @@ export function getNext(type: JobType): JobRecord | null {
   if (eligible.length === 0) return null
   if (type !== 'upload') return eligible[0]
 
+  // Round-robin strategy: honor the insertion order produced by
+  // enqueueRoundRobin (which interleaves photos across routines). Applying the
+  // global photoCaptureTime sort below would collapse that interleave to a
+  // depth-first pattern — later routines get their full burst uploaded before
+  // any other routine sees a single photo. During a live show this delays
+  // per-routine scatter on the CD media panel.
+  const uploadStrategy = getSettings().upload?.strategy ?? 'routine-batch'
+  if (uploadStrategy === 'round-robin') return eligible[0]
+
   const priority = getSettings().upload?.photoPriority ?? 'newest-first'
   const newestPrimaryPhoto = eligible
     .filter((job) => {
