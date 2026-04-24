@@ -1545,6 +1545,8 @@ function buildOverlayHTML(): string {
   let currentChatFireAnim = '';
   let lastChatFireId = '';
   let typewriterTimer = null;
+  let lastLtFingerprint = '';
+  let lastLtAnimConfigPrint = '';
   let countdownInterval = null;
   let timeDateInterval = null;
 
@@ -1626,9 +1628,6 @@ function buildOverlayHTML(): string {
     if (o.clock.visible) clockEl.classList.add('visible');
     else clockEl.classList.remove('visible');
 
-    // Clear typewriter before applying new state
-    clearTypewriter();
-
     // Animation timing from animConfig
     var durVal = (o.animConfig && o.animConfig.animationDuration) || 0.5;
     var dur = durVal + 's';
@@ -1636,10 +1635,45 @@ function buildOverlayHTML(): string {
     var ease = easingMap[(o.animConfig && o.animConfig.animationEasing)] || 'ease';
 
     const ltEl = document.getElementById('lt');
-    ltEl.style.setProperty('--anim-dur', dur);
-    ltEl.style.setProperty('--anim-ease', ease);
 
-    if (o.lowerThird.visible) {
+    // Idempotency guard: the recording-timer broadcasts state ~1Hz while
+    // recording. Without this guard every broadcast re-ran the LT setup
+    // (text wipe, typewriter restart, RAF add-visible). Typewriter then
+    // flashed once per second. Only re-render the LT block when the fire
+    // payload actually changes (entry, title, dancers, studio, category,
+    // flags, animation type, visibility). Broadcasts that don't touch the
+    // lower third become no-ops here.
+    var ltFingerprint = o.lowerThird.visible
+      ? [
+          'v',
+          o.lowerThird.entryNumber,
+          o.lowerThird.routineTitle,
+          o.lowerThird.dancers,
+          o.lowerThird.studioName,
+          o.lowerThird.category,
+          o.lowerThird.animation || 'random',
+          o.lowerThird.showEntryNumber === false ? 0 : 1,
+          o.lowerThird.showRoutineTitle === false ? 0 : 1,
+          o.lowerThird.showDancers === false ? 0 : 1,
+          o.lowerThird.showStudioName === false ? 0 : 1,
+          o.lowerThird.showCategory === false ? 0 : 1,
+        ].join('|')
+      : 'hidden';
+    var ltAnimConfigPrint = dur + '|' + ease;
+
+    if (ltAnimConfigPrint !== lastLtAnimConfigPrint) {
+      ltEl.style.setProperty('--anim-dur', dur);
+      ltEl.style.setProperty('--anim-ease', ease);
+      lastLtAnimConfigPrint = ltAnimConfigPrint;
+    }
+
+    if (ltFingerprint === lastLtFingerprint) {
+      // No LT-relevant change — skip entirely (no clearTypewriter, no
+      // classList churn, no text reset, no RAF).
+    } else if (o.lowerThird.visible) {
+      lastLtFingerprint = ltFingerprint;
+      // Genuine fire or routine-data change: (re)run setup.
+      clearTypewriter();
       if (!currentAnim) {
         var anim = o.lowerThird.animation || 'random';
         if (anim === 'random') {
@@ -1714,9 +1748,13 @@ function buildOverlayHTML(): string {
       ltMeta.textContent = metaParts.filter(Boolean).join(' \\u2014 ');
       ltMeta.style.display = metaParts.length === 0 ? 'none' : '';
     } else {
+      lastLtFingerprint = ltFingerprint;
+      clearTypewriter();
       ltEl.classList.remove('visible');
       if (currentAnim) {
-        setTimeout(() => { ltEl.classList.remove(currentAnim); currentAnim = ''; }, 600);
+        var clearAnimLt = currentAnim;
+        currentAnim = '';
+        setTimeout(() => { ltEl.classList.remove(clearAnimLt); }, 600);
       }
     }
 
