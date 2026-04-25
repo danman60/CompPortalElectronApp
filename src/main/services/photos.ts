@@ -1071,6 +1071,45 @@ async function runImport(
     )
   }
 
+  // Filename-based pre-dedup. When dedupByDb is set, skip any SD photo whose
+  // basename already appears in any routine's photos[] (regardless of upload
+  // status). This avoids reading EXIF and computing source hashes on photos
+  // we've already processed once. Operator directive 2026-04-25: cameras
+  // produce sequential names that don't realistically collide; SDs retain
+  // originals so any rare collision is recoverable. Re-importing previously-
+  // imported names is itself the bigger risk (lost photos via re-match).
+  let skippedByFilenameDedup = 0
+  if (opts.dedupByDb) {
+    const seenBasenames = new Set<string>()
+    for (const r of routines) {
+      const ps = r.photos
+      if (!ps) continue
+      for (const p of ps) {
+        if (p.sourcePath) {
+          seenBasenames.add(path.basename(p.sourcePath).toUpperCase())
+        }
+        if (p.filePath) {
+          seenBasenames.add(path.basename(p.filePath).toUpperCase())
+        }
+      }
+    }
+    if (seenBasenames.size > 0) {
+      const filtered: string[] = []
+      for (const fp of partitionedPaths) {
+        if (seenBasenames.has(path.basename(fp).toUpperCase())) {
+          skippedByFilenameDedup++
+          continue
+        }
+        filtered.push(fp)
+      }
+      partitionedPaths.length = 0
+      partitionedPaths.push(...filtered)
+      logger.photos.info(
+        `Filename pre-dedup: skipped ${skippedByFilenameDedup} already-imported names; ${partitionedPaths.length} new files to scan`,
+      )
+    }
+  }
+
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
     stage: 'scanning',
     total: filePaths.length,

@@ -37,6 +37,7 @@ import { startLogStreamer } from './services/logStreamer'
 import { runStartupChecks } from './services/startup'
 import { startDebugServer } from './services/debugServer'
 import * as mediaReconciler from './services/mediaReconciler'
+import * as photos from './services/photos'
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
@@ -65,6 +66,10 @@ process.on('unhandledRejection', (reason) => {
 
 let mainWindow: BrowserWindow | null = null
 let powerBlockerId: number | null = null
+// Set once the operator confirms a close-with-pending-work in the
+// confirmation dialog so the close handler doesn't re-prompt on the second
+// 'close' event that follows event.preventDefault.
+let closeConfirmed = false
 
 function isElevated(): boolean {
   if (process.platform !== 'win32') return true
@@ -188,6 +193,66 @@ function createWindow(): void {
   mainWindow.on('minimize', () => obs.setPreviewPaused(true))
   mainWindow.on('show', () => obs.setPreviewPaused(false))
   mainWindow.on('restore', () => obs.setPreviewPaused(false))
+
+  // Close confirmation when background work is in progress. Operator
+  // directive 2026-04-25: warn the user that the app is intended to finish
+  // imports / encodes / uploads before close, but make the "Close anyway"
+  // path one-click easy. The job queue persists to disk and resumes on
+  // restart, so closing isn't destructive — it just pauses progress.
+  mainWindow.on('close', (event) => {
+    if (closeConfirmed) return
+    let pendingEncodes = 0
+    let pendingUploads = 0
+    let pendingPhotoImports = 0
+    let activeImportRunning = false
+    try {
+      pendingEncodes = jobQueue.getPending('encode').length + jobQueue.getRunning('encode').length
+      pendingUploads = jobQueue.getPending('upload').length + jobQueue.getRunning('upload').length
+      pendingPhotoImports =
+        jobQueue.getPending('photo-import').length + jobQueue.getRunning('photo-import').length
+      activeImportRunning = photos.isImportRunning()
+    } catch (err) {
+      logger.app.warn(`close-confirm work-summary failed: ${err instanceof Error ? err.message : err}`)
+    }
+    const totalActive =
+      pendingEncodes + pendingUploads + pendingPhotoImports + (activeImportRunning ? 1 : 0)
+    if (totalActive === 0) return  // nothing pending — close silently
+
+    const target = mainWindow ?? BrowserWindow.getFocusedWindow()
+    if (!target) return  // no window to attach the dialog to — let it close
+    const detailLines: string[] = []
+    if (pendingUploads > 0) detailLines.push(`• ${pendingUploads.toLocaleString()} upload jobs`)
+    if (pendingEncodes > 0) detailLines.push(`• ${pendingEncodes.toLocaleString()} encode jobs`)
+    if (pendingPhotoImports > 0) detailLines.push(`• ${pendingPhotoImports.toLocaleString()} photo-import jobs`)
+    if (activeImportRunning) detailLines.push(`• A live SD import is running`)
+    const detail =
+      detailLines.join('\n') +
+      '\n\n' +
+      'CompSync Media is intended to finish all background work before closing. ' +
+      'The job queue is persisted to disk and will resume on restart, but closing ' +
+      'now pauses imports / encoding / uploading until you reopen.'
+
+    const response = dialog.showMessageBoxSync(target, {
+      type: 'warning',
+      title: 'CompSync Media — work in progress',
+      message: 'There are still jobs running.',
+      detail,
+      buttons: ['Close anyway', 'Leave open (recommended)'],
+      defaultId: 0,  // Enter = Close anyway (operator-friendly one-click close)
+      cancelId: 1,
+      noLink: true,
+    })
+
+    if (response === 1) {
+      // Leave open — cancel the close
+      event.preventDefault()
+    } else {
+      closeConfirmed = true
+      logger.app.info(
+        `Close confirmed by operator with pending work: uploads=${pendingUploads}, encodes=${pendingEncodes}, photo-imports=${pendingPhotoImports}, importRunning=${activeImportRunning}`,
+      )
+    }
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
