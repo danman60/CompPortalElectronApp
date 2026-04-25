@@ -481,13 +481,17 @@ function scheduleIdleSelfHeal(): void {
     if (isPaused || isUploading || !hasResolvedUploadConnection()) return
     if (getSettings().behavior.autoUploadAfterEncoding === false) return
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
-      void reconciler.reconcileMedia({
-        scope: 'ambient',
-        silent: true,
-      }).catch((err: unknown) => {
-        logger.upload.warn(`idle self-heal reconcile failed: ${err instanceof Error ? err.message : err}`)
+      // Dynamic import (not require) so electron-vite's bundler emits the
+      // chunk and the asar resolver finds it at runtime.
+      void import('./mediaReconciler').then((reconciler) =>
+        reconciler.reconcileMedia({
+          scope: 'ambient',
+          silent: true,
+        }).catch((err: unknown) => {
+          logger.upload.warn(`idle self-heal reconcile failed: ${err instanceof Error ? err.message : err}`)
+        }),
+      ).catch((err: unknown) => {
+        logger.upload.warn(`idle self-heal load failed: ${err instanceof Error ? err.message : err}`)
       })
     } catch (err) {
       logger.upload.warn(`idle self-heal reconcile bootstrap failed: ${err instanceof Error ? err.message : err}`)
@@ -910,13 +914,13 @@ async function processLoop(): Promise<void> {
           // to catch plugin/complete partial failures or any drift the
           // server-side ingest introduced. Silent — log-only.
           try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
-            void reconciler.reconcileMedia({
-              scope: 'post-record',
-              routineIds: [payload.routineId],
-              silent: true,
-            }).catch(() => {})
+            void import('./mediaReconciler').then((reconciler) =>
+              reconciler.reconcileMedia({
+                scope: 'post-record',
+                routineIds: [payload.routineId],
+                silent: true,
+              }).catch(() => {}),
+            ).catch(() => {})
           } catch {}
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err)
@@ -1746,8 +1750,10 @@ export async function autoResumeUnfinished(): Promise<ResumeUnfinishedReport> {
     logger.upload.info('Auto-resume on boot disabled via setting — skipping')
     return { routinesScanned: 0, photosRepaired: 0, photosQueued: 0, jobsQueued: 0, endpointAvailable: false, error: 'disabled' }
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
+  // Dynamic import (not require) so the bundler emits the chunk and the
+  // asar resolver can find it at runtime. require('./mediaReconciler')
+  // throws Cannot-find-module inside packaged asar (v15.5 boot regression).
+  const reconciler = await import('./mediaReconciler')
   const r = await reconciler.reconcileMedia({ scope: 'boot' })
   return {
     routinesScanned: r.scanned,

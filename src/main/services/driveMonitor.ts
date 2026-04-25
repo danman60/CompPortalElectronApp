@@ -526,14 +526,14 @@ async function surveyAndReportMissingPhotos(
     // heal any drift the reconciler can catch without an import (stale
     // uploaded:false flags for photos already in DB, etc).
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const reconciler = require('./mediaReconciler') as typeof import('./mediaReconciler')
       const routineIds = plan.routines.map((r) => r.routineId)
-      void reconciler.reconcileMedia({
-        scope: 'sd-plugin',
-        routineIds,
-        silent: false,
-      }).catch(() => {})
+      void import('./mediaReconciler').then((reconciler) =>
+        reconciler.reconcileMedia({
+          scope: 'sd-plugin',
+          routineIds,
+          silent: false,
+        }).catch(() => {}),
+      ).catch(() => {})
     } catch {}
   } catch (err) {
     logger.photos.warn(
@@ -676,12 +676,20 @@ export function startMonitoring(): void {
     return
   }
 
-  // Silently record startup-mounted drives so only FRESH insertions trigger
-  // the auto-import pipeline. Operator directive 2026-04-19: SDs already
-  // plugged in at boot should NOT fire import popups — operator may be
-  // intentionally keeping an SD mounted between sessions (e.g. yesterday's
-  // SD, a backup drive with DCIM, a photo archive on USB). Only eject +
-  // re-insert (or a brand-new insert) counts as "actively inserted".
+  // Reversed 2026-04-25: previously knownDrives was primed with all
+  // currently-mounted drives at boot so only FRESH (eject + re-insert)
+  // insertions fired DRIVE_DETECTED. That meant if the operator left SDs
+  // plugged in overnight (or the app crashed and was relaunched) the
+  // already-mounted SDs were silent and required physical re-seating to
+  // trigger import.
+  //
+  // Operator directive 2026-04-25: treat already-mounted SDs at boot the
+  // same as fresh insertions. Two existing safeguards prevent bad imports:
+  //   (1) pre-check in poll() — rejects when <2/3 sampled EXIF dates are
+  //       today (yesterday's SD or archive USB will fail the gate).
+  //   (2) dedupByDb in importPhotos — already-uploaded photos are skipped.
+  // knownDrives is left empty so the first poll() tick fires DRIVE_DETECTED
+  // for every mounted camera drive.
   const initialDrives = getWindowsDrives()
   const startupCameraDrives: string[] = []
   for (const drive of initialDrives) {
@@ -691,15 +699,13 @@ export function startMonitoring(): void {
         startupCameraDrives.push(drive)
       }
     } catch {
-      // fall through; drive still added to knownDrives below via currentSet
+      // fall through
     }
   }
-  // Prime knownDrives with ALL currently-mounted drives (camera or not) so
-  // the first poll() tick doesn't mis-fire DRIVE_DETECTED for startup state.
-  knownDrives = new Set(initialDrives)
+  knownDrives = new Set<string>()
   logger.photos.info(
     `Drive monitor started — ${initialDrives.length} mounted drive(s), ${startupCameraDrives.length} camera-looking; ` +
-    `silent at boot (only fresh insertions fire DRIVE_DETECTED)`,
+    `boot-mounted SDs will fire DRIVE_DETECTED on first poll (today-pre-check + dedup-by-DB gate re-imports)`,
   )
   pollTimer = setInterval(poll, POLL_INTERVAL_MS)
 }
