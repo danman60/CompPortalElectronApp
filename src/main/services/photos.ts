@@ -1078,36 +1078,40 @@ async function runImport(
   // produce sequential names that don't realistically collide; SDs retain
   // originals so any rare collision is recoverable. Re-importing previously-
   // imported names is itself the bigger risk (lost photos via re-match).
+  // Filename pre-dedup. Always runs (was gated by dedupByDb in v15.7 — the
+  // re-import disaster of 2026-04-24 showed every import path needs this).
+  // 2026-04-25 directive: a photo on the SD whose camera filename was EVER
+  // imported into ANY routine — past or present, dup-suffixed or not —
+  // must NEVER be re-imported. Strip `_dupN` from both sides before
+  // comparison so a state record of `Q53A0001_dup3.JPG` matches an SD's
+  // plain `Q53A0001.JPG`.
+  const dupSuffixRe = /_dup[0-9]+/
+  const stripDupAndUpper = (name: string): string =>
+    path.basename(name).replace(dupSuffixRe, '').toUpperCase()
   let skippedByFilenameDedup = 0
-  if (opts.dedupByDb) {
-    const seenBasenames = new Set<string>()
-    for (const r of routines) {
-      const ps = r.photos
-      if (!ps) continue
-      for (const p of ps) {
-        if (p.sourcePath) {
-          seenBasenames.add(path.basename(p.sourcePath).toUpperCase())
-        }
-        if (p.filePath) {
-          seenBasenames.add(path.basename(p.filePath).toUpperCase())
-        }
-      }
+  const seenBasenames = new Set<string>()
+  for (const r of routines) {
+    const ps = r.photos
+    if (!ps) continue
+    for (const p of ps) {
+      if (p.sourcePath) seenBasenames.add(stripDupAndUpper(p.sourcePath))
+      if (p.filePath) seenBasenames.add(stripDupAndUpper(p.filePath))
     }
-    if (seenBasenames.size > 0) {
-      const filtered: string[] = []
-      for (const fp of partitionedPaths) {
-        if (seenBasenames.has(path.basename(fp).toUpperCase())) {
-          skippedByFilenameDedup++
-          continue
-        }
-        filtered.push(fp)
+  }
+  if (seenBasenames.size > 0) {
+    const filtered: string[] = []
+    for (const fp of partitionedPaths) {
+      if (seenBasenames.has(stripDupAndUpper(fp))) {
+        skippedByFilenameDedup++
+        continue
       }
-      partitionedPaths.length = 0
-      partitionedPaths.push(...filtered)
-      logger.photos.info(
-        `Filename pre-dedup: skipped ${skippedByFilenameDedup} already-imported names; ${partitionedPaths.length} new files to scan`,
-      )
+      filtered.push(fp)
     }
+    partitionedPaths.length = 0
+    partitionedPaths.push(...filtered)
+    logger.photos.info(
+      `Filename pre-dedup: skipped ${skippedByFilenameDedup} already-imported names (dup-suffix-aware); ${partitionedPaths.length} new files to scan`,
+    )
   }
 
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
@@ -1530,6 +1534,7 @@ async function runImport(
   // Copy matched photos to routine folders and generate thumbnails
   let copiedCount = 0
   let perRoutineFailures = 0
+  let skippedDiskExists = 0
   for (const match of matches) {
     if (signal.aborted) {
       logger.photos.warn(`Import cancelled during copy at ${copiedCount}/${matches.length}`)
@@ -1597,19 +1602,20 @@ async function runImport(
     // applied ONLY at download time in CompPortal. Benefits: grep works,
     // burst-sequence adjacency preserved, duplicate-SD detection trivial
     // (same camera + same filename = already imported), recovery is a LOT
-    // easier. Collision handling: if two SDs carry overlapping Lumix
-    // counters within one routine, suffix with _dup{N}.
+    // easier.
+    //
+    // 2026-04-25 directive: NEVER create _dupN copies. If a file with the
+    // same basename already exists in the routine's photos folder, treat
+    // it as already imported and SKIP. The SD card retains the original;
+    // duplicate-imports were the root cause of 9k+ wasted upload jobs and
+    // 43k+ wasted disk files. Original camera filename + EXIF is the
+    // ground truth — anything beyond that is a re-import.
     const sourceForCopy = match.filePath
     const originalBasename = path.basename(sourceForCopy)
-    let destFile = path.join(routineDir, originalBasename)
-    let collisionCounter = 0
-    while (fs.existsSync(destFile)) {
-      collisionCounter++
-      const parsed = path.parse(originalBasename)
-      destFile = path.join(routineDir, `${parsed.name}_dup${collisionCounter}${parsed.ext}`)
-      if (collisionCounter === 1) {
-        logger.photos.warn(`Filename collision for ${originalBasename} in ${routineDir}; suffixing as _dup${collisionCounter}`)
-      }
+    const destFile = path.join(routineDir, originalBasename)
+    if (fs.existsSync(destFile)) {
+      skippedDiskExists++
+      continue
     }
     try {
       if (!previewOnly) {
@@ -1682,14 +1688,13 @@ async function runImport(
       await fs.promises.mkdir(orphanDir, { recursive: true })
     }
     // Preserve original camera filename for orphans too — same rationale
-    // as matched photos. Collision handling suffixes with _dup{N}.
+    // as matched photos. 2026-04-25 directive: SKIP if it already exists,
+    // never create _dupN copies. The SD retains the original.
     const orphanOriginal = path.basename(sourceForCopy)
-    let orphanDest = path.join(orphanDir, orphanOriginal)
-    let orphanCollisionN = 0
-    while (fs.existsSync(orphanDest)) {
-      orphanCollisionN++
-      const parsed = path.parse(orphanOriginal)
-      orphanDest = path.join(orphanDir, `${parsed.name}_dup${orphanCollisionN}${parsed.ext}`)
+    const orphanDest = path.join(orphanDir, orphanOriginal)
+    if (fs.existsSync(orphanDest)) {
+      skippedDiskExists++
+      continue
     }
     if (!previewOnly) {
       await fs.promises.copyFile(sourceForCopy, orphanDest)
@@ -1825,7 +1830,7 @@ async function runImport(
   }
 
   logger.photos.info(
-    `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s${dedupSkippedCount > 0 ? `, dedup-skipped: ${dedupSkippedCount}` : ''}`,
+    `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s${dedupSkippedCount > 0 ? `, dedup-skipped: ${dedupSkippedCount}` : ''}${skippedDiskExists > 0 ? `, disk-exists-skipped: ${skippedDiskExists}` : ''}`,
   )
 
   // Advance SD watermark per camera body to the latest EXIF capture time we
@@ -1968,14 +1973,17 @@ export async function reassignOrphan(orphanPath: string, routineId: string): Pro
     // Preserve original camera filename on reassign (same rationale as
     // main import loop). `orphanPath` already carries the native camera
     // basename under `_orphans/<runId>/`; promote it verbatim into the
-    // routine's photos dir. Collision → _dup{N} suffix.
+    // routine's photos dir. 2026-04-25 directive: if a file with the same
+    // basename already exists in the routine's photos folder, treat it as
+    // already-reassigned and skip; the orphan stays where it is rather
+    // than spawning a _dupN copy.
     const originalBasename = path.basename(orphanPath)
-    let destFile = path.join(photoDir, originalBasename)
-    let collisionN = 0
-    while (fs.existsSync(destFile)) {
-      collisionN++
-      const parsed = path.parse(originalBasename)
-      destFile = path.join(photoDir, `${parsed.name}_dup${collisionN}${parsed.ext}`)
+    const destFile = path.join(photoDir, originalBasename)
+    if (fs.existsSync(destFile)) {
+      logger.photos.info(
+        `Reassign skipped: ${originalBasename} already exists in routine ${routineId} photos dir`,
+      )
+      return { ok: false, error: 'already-exists' }
     }
     await fs.promises.rename(orphanPath, destFile).catch(async () => {
       // Cross-device fallback: copy + unlink.
