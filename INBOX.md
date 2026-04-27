@@ -441,3 +441,190 @@ Nothing strictly required — the fix can live entirely on the CompPortal server
 - CompPortal session: `CompPortal-14`, 2026-04-22.
 - Related commits: `cbd243ef` (multi-claim 403 fix), `b16134c4` (two-phase video upload), `405c7912` (signed URL TTL 6h→7d), `3ba05c75` (empty-slot video upload UI).
 - 244 BEETLEJUICE and 626 OTIS were the two routines Kiri-Lyn flagged today. Both now publish-viewable again.
+
+## From CompPortal session — 2026-04-25 15:33 EDT
+Read late-insert spec. Status: queued (post-UDC-Toronto, ships sometime between events as you noted). No blockers — migration + endpoint + admin UI all clearly scoped. Will acknowledge in CompPortal/INBOX.md and pick up after Toronto wraps Sunday.
+
+## From CompPortal session — 2026-04-26 19:27 EDT — CAMERA EXIF +00:00 BUG (incident-report material)
+
+**TL;DR for incident report:** Photographer's camera writes EXIF with `OffsetTimeOriginal: +00:00` but the clock display is set to local Eastern time. When CompPortal ingests the EXIF, it stores the literal UTC value, so DB `captured_at` ends up 4 hours earlier than the actual stage time. Symptom: photos appear to be ghosts (not in any routine's video window) but are real performance photos.
+
+### Detection criteria (DB-level signature)
+
+A photo is affected if ALL of:
+- `media_photos.deleted_at IS NULL`
+- `substring(filename, 1, 4) IN ('Q53A', 'NAP_')`  *(filename prefix from the affected camera bodies)*
+- `captured_at` is NOT within ANY routine's `video_start_timestamp..video_end_timestamp` window (in this competition)
+- `captured_at + interval '4 hours'` IS within some routine's window
+
+### Scope (UDC Toronto only — verified 2026-04-26)
+
+- Total alive photos in UDC Toronto: 20,568
+- Photos already correctly in a video window (no fix needed): 17,046 (83%)
+- Photos with the +4h offset bug: **3,514** (Q53A: 3,510 + NAP_: 4)
+- All 3,510 Q53A misaligned would land in a routine window after +4h shift (99.9% recovery rate)
+
+### Visual verification (2 of 3 sample pairs conclusive, both confirmed)
+
+| Pair | Currently attached | True (+4h) routine | Photo content | Verdict |
+|---|---|---|---|---|
+| A | R123 COOLER THAN YOU | R123 (same) | 6 dancers, black w/ fringe skirts | matches R123 keyframe ✓ |
+| B | R125 TURN TO STONE | R126 AMIGAS CHEETAHS | 2 dancers, leopard/cheetah print | matches R126 (cheetah print) ✓ — **cross-attribution proven** |
+| C | R286 SAY MY NAME | R287 CREEP | solo dancer, jeans + black top | inconclusive (R287 keyframe was empty stage) |
+
+### What CompPortal is doing about it (just now, 2026-04-26 19:27 EDT)
+
+1. RESTORED 234 photos that I (CompPortal session) had wrongly soft-deleted earlier today as "ghosts" — they were real performances misclassified using the buggy `captured_at` column. R118/R135/R138/R139/R145 packages affected, all `photo_count`s back to original.
+2. Running corrective `UPDATE captured_at = captured_at + interval '4 hours'` on the 3,514 affected rows.
+3. Following up with `UPDATE media_package_id` for the cross-attribution subset (~30% of affected) to move photos to the right routine based on the now-correct `captured_at`.
+
+### Root cause (camera-side, not CompPortal-side)
+
+Camera body's timezone configuration. The clock face is set to Eastern, but the metadata `OffsetTimeOriginal` field is `+00:00` instead of `-04:00`. Likely the photographer set the clock but never set the offset, or the camera firmware defaults to UTC offset on a fresh setup.
+
+### Recommended CompPortal-side mitigation (post-incident)
+
+When ingesting an EXIF datetime where `OffsetTimeOriginal == '+00:00'` AND the resulting `captured_at` falls outside ALL routine video windows for the competition, flag it for review rather than blindly storing. OR: detect via the `Verify-Media` audit's "no captured_at in window" rule (already exists per `src/app/api/media/cd/verify/structural/route.ts`) and surface it to the operator before publishing.
+
+### Files for cross-reference
+
+- `~/projects/CompPortal/docs/plans/2026-04-26-udc-toronto-data-fixes.md` — the full UDC Toronto data-fix plan from this session
+- `~/.claude/transcripts/2026-04-26/CompPortal*.md` — live session transcript with the visual verification
+
+---
+
+## Feature requests from CompPortal — 2026-04-26 23:25 EDT
+
+### 1. Manually nudge the top-right routine counter (with auto-reset on next fire)
+
+**Context:** The recorder burns the routine number (e.g. `#130`) and a timestamp into the upper-right corner of every video frame. Several routines on the UDC Toronto error list have a wrong number burned in because of recording glitches: operator hit advance and the modal jumped past a slot (R355 → R356), or re-recorded over the wrong slot (R408 holding R407 content), or the slot was a late-insert that didn't get a proper counter push (R353.5, R399.5, R155.5). Today we cannot retroactively trust the burned-in label.
+
+**Ask:** Add an operator-facing control to the recorder UI that lets the operator nudge the top-right counter to whatever routine they're actually shooting next. Use case: operator notices the system advanced past R355 and is showing R356, but the dancer on stage is the missed R355 — operator hits the nudge control, sets it back to R355, recording proceeds with the correct label burned in.
+
+**Hard constraint — auto-reset rule:** When the operator manually nudges the counter, that override applies ONLY to the current recording. On the next "fire next routine" event (whatever the recorder calls its advance trigger), the counter MUST programmatically reset to the schedule-driven value. Otherwise a forgotten override silently corrupts every subsequent routine. The override should be a transient, one-shot.
+
+**Why it matters:** Once the counter can be trusted, an OCR pass over the burned-in number on any video frame becomes ground truth — independent of metadata, file paths, or the recorder's internal slot pointer. That unlocks server-side validation that catches "wrong slot" issues automatically.
+
+### 2. Better keyframe generation (full-res, not 400×400 thumbnail)
+
+**Context:** Every UDC Toronto routine has 3 keyframes stored in R2 at `videos/keyframes_keyframe_{0,1,2}.webp`. They're at 20/50/80% of the performance video by design, which is correct. But every single one is a 400×400 webp at ~1.1–2.1 KB — a thumbnail, not a usable reference frame. Verified across R130, R473, R497, R591, R612.
+
+**Why it matters:** CompPortal's photo-validator-v2 anchors its visual checks on these keyframes (asks Gemini "do these photos match this reference frame?"). With a 1.6 KB pixelated keyframe, Gemini false-positives photos as `wrong_performer` because it can't see the costumes/dancers/backdrop clearly enough to compare against full-res JPGs. We tested this end-to-end:
+
+- R130 keyframe (1.6 KB, 400×400) vs R130's actual photos → Gemini said "DIFFERENT performers, HIGH confidence" (false positive)
+- R130 keyframe rebuilt from the source video at 1920×1080 (~73 KB webp at q=85) vs same photos → Gemini said "Both photos show the same performers, costumes, group size, and setting"
+
+The 400×400 keyframes effectively neuter the entire keyframe-anchored validation pipeline. Whatever path in the recorder generates these is downsizing too aggressively — they need to come out at the source video's native resolution (typically 1920×1080).
+
+**Ask:** Change the recorder's keyframe extraction to output full-resolution frames (or at minimum 1280×720 webp at q=80–85). File size per keyframe goes from ~1.6 KB to ~70 KB — three keyframes per routine = ~200 KB extra per package. Trivial cost vs the validation reliability we get back.
+
+**For existing data:** A backfill script can pull the source videos, re-extract keyframes, and replace in R2. Working prototype: `~/projects/CompPortal/scripts/rebuild-keyframes-r130.ts`. Proven on R130 — 166 MB video → 1920×1080 frames → uploaded webp 73 KB each in ~20 seconds. Safe to run dataset-wide.
+
+### Cross-reference
+
+- Full discovery context: `~/projects/CompPortal/CURRENT_WORK.md` (2026-04-26 evening session)
+- Test results: ran `scripts/test-gemini.ts` twice, before/after the keyframe rebuild
+- Operator's recording-glitch list (which routines have wrong burned-in counters): same CURRENT_WORK.md "Manual Verify List" section
+
+### 1a. Counter nudge auto-flags routine + prompts operator note
+
+**Context:** Builds on Feature 1. When the operator nudges the counter, they're explicitly admitting "the recorder is in a glitched state right now" — that's exactly the signal CompPortal's Verify Media review needs to know about, and currently has no way to learn about.
+
+**Ask — three coupled behaviors:**
+
+1. **Auto-flag the routine.** When the operator hits the nudge control, the routine getting recorded is automatically marked with a `manually_recovered` flag (or whatever name fits the schema). This flag persists with the package data when it reaches CompPortal. Default state: false. Set true only on operator nudge.
+
+2. **Prompt operator for a one-line note.** Immediately after the nudge, before recording starts (or on first stop), surface a small text input: *"What happened? (e.g., 'system advanced past R355, this is the actual R355 take')"*. Required field, can be blank but blocks the next advance until acknowledged. Save text into `recovery_note` on the package. The note is what makes the flag actionable later.
+
+3. **Send `manually_recovered` + `recovery_note` to CompPortal.** Currently the recorder calls `/api/plugin/complete` with package metadata. Extend that payload to include both fields. CompPortal stores them alongside the existing package row (additive schema change).
+
+**Why it matters:** The Verify Media review queue today has no way to know which routines were recorded under glitch conditions vs which were clean. After this, the audit dashboard can:
+- Sort/filter by `manually_recovered = true` to see operator-flagged routines first
+- Display the operator's `recovery_note` inline so the reviewer immediately understands the context ("oh, this is the missed R355 — that's why it was recorded into R356's slot")
+- Auto-prioritize these in the verify queue without forcing the operator to remember and document elsewhere
+
+This closes the loop: glitch happens → operator fixes it in the moment → context is captured at the moment of fix → reviewer sees it later with full context.
+
+**CompPortal-side dependency** (separate work item, not for CSE):
+- Add `manually_recovered boolean DEFAULT false` and `recovery_note text NULL` columns to `media_packages`
+- Update `/api/plugin/complete` to accept + store both
+- Surface in Verify Media → Audit tab: separate priority bucket "Operator-flagged recordings", display the note in the row
+
+
+## Hardening pitches from CompPortal — 2026-04-27 15:30 EDT
+
+Each item maps to a manual fix CompPortal had to perform on UDC Toronto data. Closing them at the source (recorder + uploader) prevents the same cleanup work on every comp going forward (UDC Burlington / Cobourg are next).
+
+Mapping table + rationale lives in `~/projects/CompPortal/docs/audits/2026-04-27-verification-learnings-and-action-list.md` under "Recorder-app hardening pitches" (item IDs `R-1` … `R-10` cross-reference back).
+
+### R-1. Real-time 4-camera drift indicator
+
+**Pain:** R119 and R156 each had judge1/2/3 cameras drift 2–3 minutes off the perf cam — discovered post-comp during media review, fixed by per-routine ad-hoc trim scripts (`scripts/trim-r119-judge-videos.ts`, `trim-r156-videos.ts`). The drift was undetectable to the operator at recording time.
+
+**Ask:** During recording, show a live `Δ` next to each judge cam: `J1 +0.04s · J2 +0.12s · J3 −0.31s` measured against perf. If any cam crosses ±1.0s, banner red. Operator hits a single "RESYNC" button to soft-restart the laggers. Prevents drift from compounding silently.
+
+### R-2. Embed routine-window timestamps into MP4 metadata at finalize
+
+**Pain:** Some packages reach CompPortal with `video_start_timestamp` and `video_end_timestamp` NULL. The temporal-outlier rule (`Rule 8`) skips NULL-window packages entirely — 74 misassigned photos went undetected (R497=63, R612=11) until I ran custom SQL.
+
+**Ask:** When the recorder finalizes a take, write the operator-cued routine boundary into the MP4 container (e.g. `xmp:CompSyncRoutineStart` / `CompSyncRoutineEnd` ISO-8601 ET). The server-side `finalizeVideoUpload` reads these tags via ffprobe and persists them to `media_packages.video_start_timestamp` / `video_end_timestamp` — never NULL. As a fallback when the operator didn't cue, fall back to the file's first/last frame timestamps so the columns are always populated.
+
+### R-3. EXIF DateTimeOriginal must be `America/New_York` with offset, not naive UTC
+
+**Pain:** 3,426 photos comp-wide arrived with `captured_at` 4 hours ahead of reality. Root cause: photo ingestion path treated naive local-time EXIF as UTC. Fixed at the upload-side recently (`5b24d2cd`), and the cleanup script `fix-exif-4h-offset-udc-toronto.ts` reverses the historical drift.
+
+**Ask:** When the recorder writes photo files (or the uploader hands them to R2), make sure EXIF `DateTimeOriginal` is written WITH an offset (`OffsetTimeOriginal` = `-04:00` in EDT, `-05:00` in EST), AND that the camera's clock is verified to be on Eastern at every shoot start (existing camera_offset CSV system already tracks this — extend to gate uploads when offset is unknown). Today's symptom was naive timestamps becoming UTC by default; explicit offset closes the ambiguity once and for all.
+
+### R-4. Per-routine namespaced photo filenames
+
+**Pain:** Q53A/NAP_ camera filenames wrap around (`Q53A9999.JPG` → `Q53A0000.JPG`) within a 3-day comp. Two physically different photos can land with the same filename in two different packages. Bug 2 was 253 same-package dupes from this.
+
+**Ask:** Recorder rewrites each photo filename at upload time to `{entry_number}_{cam}_{sequence}.jpg` (or appends `_<routineN>` to the existing camera filename). Original filename preserved in EXIF / sidecar for forensics, but the storage_url + DB row carries the namespaced version. Camera rollover can't produce collisions across routines anymore.
+
+### R-5. Pre-upload duplicate guard via `(filename, captured_at)` lookup
+
+**Pain:** Bug 3 was 623 photos misassigned to the wrong routine (operator hit advance at the wrong moment, photos for R-N landed in R-N+1's slot). Detected post-hoc via temporal outlier rule and a custom SQL script.
+
+**Ask:** Before R2 PUT, recorder calls a thin server endpoint with `(filename, captured_at_iso, expected_package_id)`. Server returns `{ ok: true }` if the photo's captured_at falls inside expected_package's `[video_start, video_end]`, OR `{ ok: false, suggested_package_id: <other-pkg> }` if some other package's window contains it. Operator confirms before commit. Catches misassignment in <1 second instead of after a manual SQL audit.
+
+### R-6. Routine-boundary auto-cut on operator advance
+
+**Pain:** R612 was a single 5:41 take that contained TWO routines back-to-back (R611's content + R612's content) because the operator forgot to advance between them. We had to manually split via `scripts/split-r612-into-r611-r612.ts`. R199 has the same shape (8:25 single take spanning multiple slots). Long-video rule now flags these but execution is per-routine.
+
+**Ask:** When operator hits "next routine" advance, the recorder atomically (a) stops the current 4-cam take, (b) writes finalize markers, (c) starts a new take for the next routine. NEVER allow a single take to span two slots. If the operator fails to advance and the take exceeds N minutes (default 4:00, configurable), the recorder beeps + freezes advance until they confirm: "this take is one routine — keep going" OR "split here — next routine starts now."
+
+### R-7. Short-recording confirm gate
+
+**Pain:** R473/R497/R591/R608/R636 each have perf videos under 20 seconds — recording misfires (operator hit stop too soon, false start, wrong button). They ingested anyway and now show up as `short_video_misfire` flags. Each one needs an in-app re-record or replacement.
+
+**Ask:** When operator hits stop, if duration < 60s, modal: *"This take is N seconds — too short for a routine. Discard? [DISCARD] [KEEP — this is real]"*. Discard does NOT upload. Keep proceeds normally (and the `short_video_misfire` rule still catches it for review).
+
+### R-8. Three-way reconciliation before "next routine"
+
+**Pain:** R355 had 13 photos sitting in DART's `_orphans/` directory because the live recorder lost connection but the SD card kept saving. Operator advanced, photos fell through the cracks, and we found them only after a manual `_orphans` archaeology pass.
+
+**Ask:** Before allowing the operator to advance to the next routine, the recorder shows a 3-leg reconciliation:
+- `Live recorder buffer: 14 photos`
+- `SD card check: 14 photos found`
+- `Upload queue: 14 of 14 sent · 0 pending · 0 failed`
+
+If any of the three disagrees → red banner, advance disabled, "RECOVER MISSING" button starts a sync of the SD card → upload queue. If unrecoverable, operator gets one explicit override ("ADVANCE ANYWAY — accept loss"). No more silent drops.
+
+### R-9. Network-drop-resilient atomic finalize
+
+**Pain:** 196 photo rows in CompPortal had `storage_url` values pointing to R2 keys that returned 404 — dead pointers. Subset of these came from network drops mid-upload that retried under a different key but never cleared the old DB row. Soft-deleted via `scripts/diff-db-vs-r2-udc-toronto.ts` after the fact.
+
+**Ask:** Upload pipeline change — DB row is INSERTed only AFTER R2 PUT returns 200 + a HEAD verifies the object exists. If the network drops mid-PUT, retry to the SAME key; if retry to a different key is needed, the OLD key gets its DB row hard-rejected (not inserted). Partial state can never reach the DB.
+
+### R-10. Photo SHA-256 sidecar for content-hash dedupe
+
+**Pain:** Bug 3b was 427 rows of "same physical photo, two storage_url's" — same camera frame, uploaded twice via two different paths. Filename-only and storage_url-only checks both miss this.
+
+**Ask:** When the recorder hands each photo to the uploader, compute SHA-256 of the file bytes. Send the hash with the upload payload. Server-side `finalizeUpload` checks: does any active row in the same competition already have this hash? If yes, keep the existing row, DON'T insert a duplicate, return the existing storage_url to the recorder. Closes the upload-twice loophole entirely.
+
+### Rollout suggestion
+
+R-1 / R-3 / R-7 are operator-facing UI changes — ship first, low risk.
+R-2 / R-9 are pipeline refactors — most leverage, more careful test.
+R-4 / R-5 / R-8 / R-10 require coordinated server-side endpoints in CompPortal — pair with CompPortal commits.
+R-6 needs design discussion (what's the "force advance" threshold? what does the freeze UX look like?).
