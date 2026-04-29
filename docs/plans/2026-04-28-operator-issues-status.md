@@ -25,7 +25,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A16 | SHIPPED | CSE `9655253 make LT iframe render idempotent` | LT overlay glitch fix |
 | A17 | OPEN | — | no startup-modal consolidation commits |
 | A18 | OPEN | — | no chat-as-admin in CSE |
-| A19 | OPEN | — | no purple chat-pin styling commit |
+| A19 | SHIPPED | CSE `b28608d fix(chat): A19 swap chat pin styling from amber to brand purple` | 4 #ffc107 occurrences swapped to --stream-purple (#a855f7) |
 | A20 | OPEN | — | pending-vs-actual count discrepancy not addressed |
 | A21 | OPEN | — | no tablet-button always-on/1-click restart commits |
 | A22 | PARTIAL | CSE `1b98ab8 fix wifi-display respawn loop` / `9297a4f auto-respawn on tablet-IP drift` | respawn fixes landed; baseline display still flaky |
@@ -43,17 +43,17 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A34 | OPEN | — | no app-state vs DB-state guard commit |
 | A35 | OPEN | — | no SCRATCHED CSE→portal sync commit |
 | A36 | SHIPPED | CP `53b2635f photographer camera-clock sync page` | mobile sync page shipped |
-| A37 | OPEN | — | no operator close-out checklist commit |
-| A38 | OPEN | — | no auto-skip scratched on NEXT commit |
+| A37 | SHIPPED | CSE `7b57839 (snapshot)` | EndOfDayModal.tsx + dayChecklist.ts implemented; auto-fires after last routine recorded; IPC + preload wired (App.tsx:932) |
+| A38 | SHIPPED | present in `state.ts` (snapshot) | `getVisibleRoutines()` filters scratched/skipped; defensive walk at state.ts:644-654 advances past scratched currentRoutineId |
 | A39 | SHIPPED | CSE `9859f0f v14: fix Portal pill stuck at 'none' after successful upload` | portal status accuracy fix |
-| A40 | OPEN | — | no dual-counter regression commit |
+| A40 | BLOCKED | — | spec says operator says done but no counter-related commit found 2026-04-23..now; transcript only has "Investigate, dual counter numbers came back" 2026-04-25 15:36 EDT — meaning unclear; needs operator clarification on what "dual counter regression" refers to before verifying |
 | A41 | OPEN | — | no NEXT AWARDS label commit |
 | A42 | OPEN | — | no SD-press checkmark removal commit |
 | A43 | OPEN | — | no DART CPU mitigation commit |
 | A44 | OPEN | — | no SD swap reminder row commit |
 | A45 | N/A | — | discussion of MKV preservation; no code expected |
 | A46 | OPEN | — | manual counter-nudge field not built |
-| A47 | OPEN | — | no audio-silent banner change commit |
+| A47 | CLOSED | — | Stream Deck variant shipped; "no re-record button on banner" rule baked into A53/A55 design; no further work per spec |
 | A48 | OPEN | — | fetch-failed on app load not addressed |
 | A49 | N/A | — | pre-show checklist is operator process |
 | A50 | PARTIAL | CSE `b5872b0 v15.2: CLIP cacheDir + auto-import wins renderer race` | cacheDir change may address model path; not confirmed fix for missing onnx |
