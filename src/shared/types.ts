@@ -535,6 +535,10 @@ export interface AppSettings {
     // photos via this toggle (e.g. for forensic recovery). Default false
     // (= always skip) which matches the operator's stated workflow.
     includePriorDayPhotos: boolean
+    // Test harness hooks (2026-04-29): when ON, /debug/test/* POST endpoints
+    // are exposed for autonomous test scenarios. Default OFF — these
+    // endpoints can mutate state and MUST NOT be reachable in production.
+    testHooksEnabled: boolean
   }
   nextSequence: {
     stopRecording: boolean
@@ -1241,6 +1245,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoImportOnDrive: true,
     compStateDriftCheck: false,
     includePriorDayPhotos: false,
+    testHooksEnabled: false,
   },
   nextSequence: {
     stopRecording: true,

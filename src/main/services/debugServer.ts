@@ -31,6 +31,18 @@ import { logger } from '../logger'
 import * as state from './state'
 import * as jobQueue from './jobQueue'
 import * as events from './events'
+import {
+  handleTestRecordingStart,
+  handleTestRecordingStop,
+  handleTestImportPhotos,
+  handleTestInjectTake,
+  handleTestClearState,
+  handleTestDispatchDecision,
+  handleTestTriggerAudioAudit,
+  handleTestSetWatermark,
+  handleTestClearWatermarks,
+  handleSnapshot,
+} from './debugTestRoutes'
 
 const PORT = 8765
 const HOST = '127.0.0.1'
@@ -265,7 +277,7 @@ function handleIndex(_req: IncomingMessage, res: ServerResponse): void {
   })
 }
 
-type Handler = (req: IncomingMessage, res: ServerResponse) => void
+type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
 const ROUTES: Record<string, Handler> = {
   '/': handleIndex,
   '/debug': handleIndex,
@@ -279,6 +291,19 @@ const ROUTES: Record<string, Handler> = {
   '/debug/health': handleHealth,
   '/debug/offsets': handleOffsets,
   '/debug/watermarks': handleWatermarks,
+  '/debug/snapshot': handleSnapshot,
+}
+
+const POST_ROUTES: Record<string, Handler> = {
+  '/debug/test/recording/start': handleTestRecordingStart,
+  '/debug/test/recording/stop': handleTestRecordingStop,
+  '/debug/test/import-photos': handleTestImportPhotos,
+  '/debug/test/inject-take': handleTestInjectTake,
+  '/debug/test/clear-state': handleTestClearState,
+  '/debug/test/dispatch-decision': handleTestDispatchDecision,
+  '/debug/test/trigger-audio-audit': handleTestTriggerAudioAudit,
+  '/debug/test/set-watermark': handleTestSetWatermark,
+  '/debug/test/clear-watermarks': handleTestClearWatermarks,
 }
 
 export function startDebugServer(): void {
@@ -287,21 +312,38 @@ export function startDebugServer(): void {
     const startNs = Date.now()
     const url = req.url || '/'
     const pathname = url.split('?')[0]
-    const handler = ROUTES[pathname] || null
 
     events.emit('debugServer.request', { method: req.method, path: pathname })
 
-    if (!handler) {
-      sendJson(res, 404, { error: 'unknown route', available: Object.keys(ROUTES) })
-      return
+    let handler: Handler | null = null
+    if (req.method === 'GET') {
+      handler = ROUTES[pathname] || null
+    } else if (req.method === 'POST') {
+      handler = POST_ROUTES[pathname] || null
     }
-    if (req.method !== 'GET') {
-      sendJson(res, 405, { error: 'method not allowed (GET only)' })
+
+    if (!handler) {
+      sendJson(res, 404, {
+        error: `unknown route ${req.method} ${pathname}`,
+        availableGet: Object.keys(ROUTES),
+        availablePost: Object.keys(POST_ROUTES),
+      })
       return
     }
 
     try {
-      handler(req, res)
+      const result = handler(req, res)
+      // Test routes return promises — handle rejection.
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((err) => {
+          logger.app.warn(`debugServer: async handler ${pathname} threw`, err)
+          try {
+            if (!res.headersSent) {
+              sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+            }
+          } catch {}
+        })
+      }
     } catch (err) {
       logger.app.warn(`debugServer: handler ${pathname} threw`, err)
       try {
