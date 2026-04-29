@@ -11,6 +11,7 @@ import * as state from './state'
 import * as uploadService from './upload'
 import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate, pickLongestMkv } from './recording'
+import * as schedule from './schedule'
 
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
