@@ -19,7 +19,7 @@ import { getSettings } from './settings'
 import * as schedule from './schedule'
 import { postNowPlaying } from './compPortal'
 import { dialog, BrowserWindow } from 'electron'
-import { IPC_CHANNELS, Routine, type ActiveTake } from '../../shared/types'
+import { IPC_CHANNELS, Routine, type ActiveTake, type RoutineStatus } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 
@@ -587,6 +587,76 @@ export async function handleRecordingStopped(
 
     if (!routine) {
       logger.app.warn(`Recording stopped for unknown routine ${routineId} — raw file preserved at: ${outputPath}`)
+      return
+    }
+
+    // Phase 4.2 (2026-04-29): sub-5s silent auto-discard. If the take is
+    // shorter than the configured threshold (default 5s), it's almost
+    // certainly an accidental tap-stop or false-start. Move the raw mkv to
+    // a per-comp discard folder, leave the prior take untouched, and skip
+    // ALL post-stop processing (no modal, no encoding, no upload, no
+    // pipeline activity). The Take entity stays in state.takes[] with
+    // archivedPath set + currentRoutineId cleared so photos shot during
+    // its (very short) window don't bind to anything.
+    const takeStartedAtForDiscard = activeTake?.startedAt
+      ? new Date(activeTake.startedAt)
+      : routine.recordingStartedAt ? new Date(routine.recordingStartedAt) : null
+    const stopTimeForDiscard = new Date(timestamp)
+    const earlyDurationSec = takeStartedAtForDiscard
+      ? Math.round((stopTimeForDiscard.getTime() - takeStartedAtForDiscard.getTime()) / 1000)
+      : Infinity
+    const SUB_DISCARD_THRESHOLD_SEC = 5
+    if (earlyDurationSec < SUB_DISCARD_THRESHOLD_SEC) {
+      try {
+        const outputDirRoot = settings.fileNaming?.outputDirectory
+        if (outputDirRoot) {
+          const discardDir = path.join(outputDirRoot, '_discard')
+          if (!fs.existsSync(discardDir)) {
+            await fs.promises.mkdir(discardDir, { recursive: true })
+          }
+          const ts = new Date().toISOString().replace(/[:.]/g, '-')
+          const discardName = `${ts}_${earlyDurationSec}s_${path.basename(outputPath)}`
+          const discardPath = path.join(discardDir, discardName)
+          await waitForFileLock(outputPath)
+          try {
+            await fs.promises.rename(outputPath, discardPath)
+          } catch (renameErr: unknown) {
+            const code = (renameErr as NodeJS.ErrnoException).code
+            if (code === 'EXDEV') {
+              await fs.promises.copyFile(outputPath, discardPath)
+              await fs.promises.unlink(outputPath)
+            } else {
+              throw renameErr
+            }
+          }
+          logger.app.info(`Phase 4.2 sub-5s discard: ${earlyDurationSec}s take → ${discardPath}`)
+          if (activeTake?.takeId) {
+            state.setTakeStopped(activeTake.takeId, timestamp, null)
+            state.setTakeArchived(activeTake.takeId, discardPath)
+            state.setTakeRoutine(activeTake.takeId, null, undefined)
+          }
+        } else {
+          logger.app.warn(`Phase 4.2 sub-5s discard: no outputDirectory configured — leaving raw at ${outputPath}`)
+        }
+      } catch (err) {
+        logger.app.warn(`Phase 4.2 sub-5s discard failed (raw preserved): ${err instanceof Error ? err.message : err}`)
+      }
+      // Restore prior routine state — sub-5s never advances the slot.
+      // handleRecordingStarted set the routine to 'recording' with the new
+      // startedAt; we revert to the prior status. If a prior take had
+      // finalized (recordingStoppedAt set on the routine), restore to
+      // 'recorded'; otherwise back to 'pending'.
+      try {
+        const priorStatus: RoutineStatus = routine.recordingStoppedAt ? 'recorded' : 'pending'
+        const revertPatch: Partial<Routine> = priorStatus === 'pending'
+          ? { recordingStartedAt: undefined, recordingStoppedAt: undefined }
+          : {}
+        state.updateRoutineStatus(routine.id, priorStatus, revertPatch)
+      } catch (err) {
+        logger.app.warn(`Phase 4.2 sub-5s revert routine status failed: ${err instanceof Error ? err.message : err}`)
+      }
+      take.clearActiveTake()
+      broadcastFullState()
       return
     }
 
