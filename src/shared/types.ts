@@ -524,6 +524,11 @@ export interface AppSettings {
     compactMode: boolean
     allowNonElevated: boolean
     autoImportOnDrive: boolean
+    // Phase 1.4 / 1.6: optimistic offline-first sync. On boot, hit
+    // /api/plugin/comp-fingerprint on CompPortal. If hash differs from the
+    // last-known local hash, defer queue resume + show "Server state changed"
+    // banner. Default off until CompPortal endpoint lands.
+    compStateDriftCheck: boolean
   }
   nextSequence: {
     stopRecording: boolean
@@ -712,6 +717,12 @@ export const IPC_CHANNELS = {
   // Phase 1.1: 60-min photo-import stall banner (visual only, dismissible).
   // Fires once per stall episode; bumpActivity('photoImport') re-arms.
   PHOTO_IMPORT_STALL: 'pipeline:photo-import-stall',
+  // Phase 1.4/1.6: server-side state drift detected (CompPortal fingerprint
+  // changed since last close). Renderer surfaces banner + Refresh action.
+  COMP_STATE_DRIFT_DETECTED: 'comp:state-drift-detected',
+  COMP_STATE_DRIFT_REFRESH_REQUEST: 'comp:state-drift-refresh-request',
+  COMP_STATE_DRIFT_DISMISS: 'comp:state-drift-dismiss',
+  COMP_STATE_DRIFT_RESOLVED: 'comp:state-drift-resolved',
 
   // Item 17 / A54: click-to-reassign + active take broadcast
   RECORDING_REASSIGN_TARGET: 'recording:reassign-target',
@@ -1209,6 +1220,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     compactMode: false,
     allowNonElevated: false,
     autoImportOnDrive: true,
+    compStateDriftCheck: false,
   },
   nextSequence: {
     stopRecording: true,

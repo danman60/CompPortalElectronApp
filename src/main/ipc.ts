@@ -1258,6 +1258,20 @@ export function registerAllHandlers(): void {
     return { ok: true, importKicked }
   })
 
+  // Phase 1.4 / 1.6: drift refresh + dismiss handlers.
+  safeHandle(IPC_CHANNELS.COMP_STATE_DRIFT_REFRESH_REQUEST, async () => {
+    logIPC(IPC_CHANNELS.COMP_STATE_DRIFT_REFRESH_REQUEST)
+    const driftMod = await import('./services/compStateSync')
+    await driftMod.applyRefresh()
+    return { ok: true }
+  })
+  safeHandle(IPC_CHANNELS.COMP_STATE_DRIFT_DISMISS, async () => {
+    logIPC(IPC_CHANNELS.COMP_STATE_DRIFT_DISMISS)
+    const driftMod = await import('./services/compStateSync')
+    driftMod.dismissForSession()
+    return { ok: true }
+  })
+
   // AUTO TOGGLE: flip the global autoEncode/autoUpload setting and fire a
   // kick as a side effect. Operator UI right-clicks UPLOAD or PROCESS button
   // (Nudge in current implementation) → toggle relevant flag → kick.

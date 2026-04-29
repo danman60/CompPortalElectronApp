@@ -27,6 +27,8 @@ function HardeningBanners(): React.ReactElement | null {
   const [stateRecovered, setStateRecovered] = useState<string | null>(null)
   const [flatChannels, setFlatChannels] = useState<Set<string>>(new Set())
   const [photoStall, setPhotoStall] = useState<{ ageMin: number } | null>(null)
+  const [compDrift, setCompDrift] = useState<{ serverLastDbWriteAt: string } | null>(null)
+  const [compDriftBusy, setCompDriftBusy] = useState(false)
 
   useEffect(() => {
     if (!window.api) return
@@ -77,6 +79,14 @@ function HardeningBanners(): React.ReactElement | null {
       const d = data as { ageMin: number; lastActivityMs: number }
       setPhotoStall({ ageMin: d.ageMin })
     }))
+    offs.push(window.api.on(IPC_CHANNELS.COMP_STATE_DRIFT_DETECTED, (data: unknown) => {
+      const d = data as { serverLastDbWriteAt: string }
+      setCompDrift({ serverLastDbWriteAt: d.serverLastDbWriteAt })
+    }))
+    offs.push(window.api.on(IPC_CHANNELS.COMP_STATE_DRIFT_RESOLVED, () => {
+      setCompDrift(null)
+      setCompDriftBusy(false)
+    }))
     return () => {
       for (const off of offs) {
         try { off() } catch {}
@@ -107,6 +117,30 @@ function HardeningBanners(): React.ReactElement | null {
     text: `Photo import stalled — no new photos in ${photoStall.ageMin} min. Check SD card / reconcile via PIPE chip → Kick All Stages.`,
     onDismiss: () => setPhotoStall(null),
   })
+  // Phase 1.4 / 1.6: drift banner with two distinct actions (Refresh + Skip).
+  // Rendered AFTER the standard banners list so the banners-loop renders the
+  // text + dismiss-X consistently; the action buttons are appended in the
+  // map() below as a side-rendered button group.
+  let compDriftBannerEntry: typeof banners[number] | null = null
+  if (compDrift) {
+    compDriftBannerEntry = {
+      key: 'comp-drift',
+      bg: '#7a3a00',
+      text: `Server state changed since last close (${new Date(compDrift.serverLastDbWriteAt).toLocaleString()}). Refresh local state to avoid stale-job conflicts.`,
+    }
+    banners.push(compDriftBannerEntry)
+  }
+  async function handleDriftRefresh(): Promise<void> {
+    if (compDriftBusy) return
+    setCompDriftBusy(true)
+    try { await (window.api as any).compStateDriftRefresh() } catch {}
+    // The COMP_STATE_DRIFT_RESOLVED event will clear state.
+  }
+  async function handleDriftSkip(): Promise<void> {
+    if (compDriftBusy) return
+    setCompDriftBusy(true)
+    try { await (window.api as any).compStateDriftDismiss() } catch {}
+  }
   for (const ch of flatChannels) {
     banners.push({
       key: `flat-${ch}`,
@@ -185,14 +219,42 @@ function HardeningBanners(): React.ReactElement | null {
           }}
         >
           <span>{b.text}</span>
-          {b.onDismiss && (
-            <button
-              onClick={b.onDismiss}
-              style={{ background: 'transparent', color: '#fff', border: '1px solid rgba(255,255,255,0.4)', padding: '2px 8px', cursor: 'pointer', fontSize: '11px' }}
-            >
-              Dismiss
-            </button>
-          )}
+          <span style={{ display: 'inline-flex', gap: 6 }}>
+            {b.key === 'comp-drift' && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleDriftRefresh}
+                  disabled={compDriftBusy}
+                  style={{
+                    background: 'rgba(255,255,255,0.15)', color: '#fff',
+                    border: '1px solid rgba(255,255,255,0.5)', padding: '2px 10px',
+                    cursor: compDriftBusy ? 'wait' : 'pointer', fontSize: '11px',
+                    fontWeight: 700, borderRadius: 3,
+                  }}
+                >Refresh</button>
+                <button
+                  type="button"
+                  onClick={handleDriftSkip}
+                  disabled={compDriftBusy}
+                  style={{
+                    background: 'transparent', color: '#fff',
+                    border: '1px solid rgba(255,255,255,0.4)', padding: '2px 10px',
+                    cursor: compDriftBusy ? 'wait' : 'pointer', fontSize: '11px',
+                    borderRadius: 3,
+                  }}
+                >Skip</button>
+              </>
+            )}
+            {b.onDismiss && (
+              <button
+                onClick={b.onDismiss}
+                style={{ background: 'transparent', color: '#fff', border: '1px solid rgba(255,255,255,0.4)', padding: '2px 8px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                Dismiss
+              </button>
+            )}
+          </span>
         </div>
       ))}
     </div>

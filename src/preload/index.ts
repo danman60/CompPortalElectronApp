@@ -145,6 +145,9 @@ const api = {
   jobQueueKick: () => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_KICK),
   jobQueueAutoToggle: (kind: 'encode' | 'upload') =>
     ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_AUTO_TOGGLE, kind),
+  // Phase 1.4 / 1.6 — comp-state drift sync
+  compStateDriftRefresh: () => ipcRenderer.invoke(IPC_CHANNELS.COMP_STATE_DRIFT_REFRESH_REQUEST),
+  compStateDriftDismiss: () => ipcRenderer.invoke(IPC_CHANNELS.COMP_STATE_DRIFT_DISMISS),
   // Drag/drop ordering (item 5)
   stateSetDisplayOrder: (routineIds: string[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATE_SET_DISPLAY_ORDER, routineIds),

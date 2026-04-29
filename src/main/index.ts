@@ -345,6 +345,16 @@ app.whenReady().then(async () => {
   // A56: pipeline health monitor — periodic evaluator + IPC broadcast
   void import('./services/pipelineHealth').then((m) => m.init()).catch(() => {})
 
+  // Phase 1.4 / 1.6: optimistic offline-first sync. Fires after persisted
+  // state has loaded + the renderer has resolved CompPortal connection.
+  // Feature-flag gated; silent no-op until operator opts in via Settings AND
+  // CompPortal lands /api/plugin/comp-fingerprint.
+  setTimeout(() => {
+    void import('./services/compStateSync')
+      .then((m) => m.checkOnBoot())
+      .catch((err) => logger.app.warn(`compStateSync.checkOnBoot failed: ${err instanceof Error ? err.message : err}`))
+  }, 5000)
+
   // Kill orphaned FFmpeg from previous crash
   ffmpegService.killOrphanedProcess()
   wifiDisplay.killOrphanedProcess()
