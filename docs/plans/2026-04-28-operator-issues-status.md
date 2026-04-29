@@ -21,7 +21,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A12 | OPEN | — | no scan-resumability/sequential-name log commits |
 | A13 | SHIPPED | CSE `6d13db4 close-confirmation dialog + filename pre-dedup` | close confirm landed |
 | A14 | PARTIAL | CSE `e08e2d2 yield enumerateSdSamples` | yielding may help freeze; not explicitly framed as freeze fix |
-| A15 | OPEN | — | no IMPORT COMPLETE wording/semantics commits |
+| A15 | SHIPPED | CSE (this commit) | photos.ts emits new stages: copying (with mid-loop progress every 10), queueing (mid-loop every 3), done (canRemoveCard=true after copy + queue both finish). Pill: "Safe to remove" replaces "Import Complete — Remove SD Card"; "No new photos in folder — N already imported" when partitionedPaths==0 && skippedByFilenameDedup>0 |
 | A16 | SHIPPED | CSE `9655253 make LT iframe render idempotent` | LT overlay glitch fix |
 | A17 | OPEN | — | no startup-modal consolidation commits |
 | A18 | OPEN | — | no chat-as-admin in CSE |

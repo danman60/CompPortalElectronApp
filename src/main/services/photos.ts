@@ -1086,6 +1086,35 @@ async function runImport(
     )
   }
 
+  // A15 / Northstar UX: distinct toast for "all dedup-skipped" case. When
+  // pre-dedup leaves zero files to scan AND we DID skip some by filename,
+  // operator was previously shown "Import Complete: 0 matched, 0 unmatched"
+  // which hid the fact that files were dedup-skipped. Emit a terminal stage
+  // with noNewFiles=true so the pill renders "No new photos in folder — N
+  // already imported" and short-circuit. Truly empty folder (skipped=0) falls
+  // through normally — operator selected a wrong folder, regular flow handles.
+  if (partitionedPaths.length === 0 && skippedByFilenameDedup > 0) {
+    logger.photos.info(
+      `Import skipping all paths — every file (${skippedByFilenameDedup}) was already imported by filename`,
+    )
+    sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+      stage: 'done',
+      total: skippedByFilenameDedup,
+      current: skippedByFilenameDedup,
+      canRemoveCard: true,
+      noNewFiles: true,
+      skippedDedup: skippedByFilenameDedup,
+      message: `No new photos in folder — ${skippedByFilenameDedup} already imported`,
+    })
+    return {
+      totalPhotos: 0,
+      matched: 0,
+      unmatched: 0,
+      clockOffsetMs: 0,
+      matches: [],
+    }
+  }
+
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
     stage: 'scanning',
     total: filePaths.length,
@@ -1519,6 +1548,14 @@ async function runImport(
   let copiedCount = 0
   let perRoutineFailures = 0
   let skippedDiskExists = 0
+  // A15 stage emit — total reflects matchable matches; copying loop skips
+  // unmatched + dedup'd internally so current may not reach total exactly.
+  const matchableCount = matches.filter((m) => m.confidence !== 'unmatched').length
+  sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+    stage: 'copying',
+    total: matchableCount,
+    current: 0,
+  })
   for (const match of matches) {
     if (signal.aborted) {
       logger.photos.warn(`Import cancelled during copy at ${copiedCount}/${matches.length}`)
@@ -1633,6 +1670,15 @@ async function runImport(
     })
 
     copiedCount++
+    // A15 stage progress emit — every 10 photos to avoid IPC spam during
+    // multi-thousand-photo imports.
+    if (copiedCount % 10 === 0) {
+      sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+        stage: 'copying',
+        total: matchableCount,
+        current: copiedCount,
+      })
+    }
     // Aggressive yield — every photo, not every 10. Live-show UX: operator
     // must be able to click overlay/counter buttons WHILE import runs.
     // (2026-04-19 freeze incident during UDC London Sunday: H:\ → F:\
@@ -1784,6 +1830,13 @@ async function runImport(
   const settings = getSettings()
   if (!previewOnly && settings.behavior.autoUploadAfterEncoding) {
     const strategy = settings.upload?.strategy || 'routine-batch'
+    // A15 stage emit — total = routines that need queuing.
+    const routinesToQueue = photosByRoutine.size
+    sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+      stage: 'queueing',
+      total: routinesToQueue,
+      current: 0,
+    })
     if (strategy === 'round-robin') {
       const routinesWithPhotos: Routine[] = []
       for (const [routineId] of photosByRoutine) {
@@ -1794,6 +1847,12 @@ async function runImport(
         uploadService.enqueueRoundRobin(routinesWithPhotos)
         uploadService.startUploads()
       }
+      // Round-robin enqueues all at once — emit final tick for the pill.
+      sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+        stage: 'queueing',
+        total: routinesToQueue,
+        current: routinesToQueue,
+      })
     } else {
       let enqueued = 0
       for (const [routineId] of photosByRoutine) {
@@ -1808,10 +1867,25 @@ async function runImport(
         // Yield every 3 routines so renderer IPC gets a breath.
         if (enqueued % 3 === 0) {
           await yieldToEventLoop()
+          sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+            stage: 'queueing',
+            total: routinesToQueue,
+            current: enqueued,
+          })
         }
       }
     }
   }
+
+  // A15 / Northstar UX: emit terminal "done" stage AFTER copy + queue both
+  // complete. Operator can safely remove card once this fires (uploads run
+  // async after; pulling card is OK — local copies + queue are durable).
+  sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
+    stage: 'done',
+    total: copiedCount,
+    current: copiedCount,
+    canRemoveCard: true,
+  })
 
   logger.photos.info(
     `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s${dedupSkippedCount > 0 ? `, dedup-skipped: ${dedupSkippedCount}` : ''}${skippedDiskExists > 0 ? `, disk-exists-skipped: ${skippedDiskExists}` : ''}`,

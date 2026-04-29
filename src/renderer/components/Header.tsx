@@ -447,6 +447,7 @@ function ImportPill(): React.ReactElement | null {
     s.stage === 'scanning' || s.stage === 'reading-exif' ? 'Scanning'
       : s.stage === 'matching' ? 'Matching'
       : s.stage === 'copying' ? 'Copying'
+      : s.stage === 'queueing' ? 'Queueing'
       : s.stage === 'uploading' ? 'Uploading'
       : 'Importing'
 
@@ -476,7 +477,11 @@ function ImportPill(): React.ReactElement | null {
         {isComplete ? (
           <>
             <span className="import-pill-remove-icon" aria-hidden>{'\u23CF'}</span>
-            <span>Import Complete — Remove SD Card</span>
+            <span>
+              {s.noNewFiles
+                ? `No new photos in folder${s.skippedDedup ? ` — ${s.skippedDedup} already imported` : ''}`
+                : 'Safe to remove'}
+            </span>
           </>
         ) : (
           <>

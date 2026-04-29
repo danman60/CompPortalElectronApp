@@ -17,6 +17,10 @@ type MinimizedImportState = {
   message: string
   driveKey: string | null
   canRemoveCard?: boolean
+  // A15 Northstar UX: distinguish "all dedup-skipped, no new files imported" from
+  // "imported N matched". Operator needs different messaging at end of import.
+  noNewFiles?: boolean
+  skippedDedup?: number
 }
 let minimizedState: MinimizedImportState = {
   active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null, canRemoveCard: false,
@@ -124,7 +128,15 @@ export default function DriveAlert(): React.ReactElement | null {
     const unsubWPD = (): void => {}
 
     const unsubProgress = window.api.on('photos:progress', (data: unknown) => {
-      const p = data as { stage: string; total: number; current: number }
+      const p = data as {
+        stage: string
+        total: number
+        current: number
+        canRemoveCard?: boolean
+        noNewFiles?: boolean
+        skippedDedup?: number
+        message?: string
+      }
       setProgress((prev) => ({
         ...prev,
         stage: p.stage as ImportProgress['stage'],
@@ -134,17 +146,21 @@ export default function DriveAlert(): React.ReactElement | null {
           ? `Scanning ${p.total} photos...`
           : p.stage === 'reading-exif'
             ? `Reading EXIF ${p.current}/${p.total}...`
-            : prev.message,
+            : p.message ?? prev.message,
       }))
       // Mirror progress into the module-level snapshot so the Header pill
       // can render independently of whether the modal is open or minimized.
       setMinimized({
+        active: true,
         stage: p.stage,
         current: p.current,
         total: p.total,
         message: p.stage === 'scanning'
           ? `Scanning ${p.total}...`
           : `${p.current}/${p.total}`,
+        canRemoveCard: p.canRemoveCard,
+        noNewFiles: p.noNewFiles,
+        skippedDedup: p.skippedDedup,
       })
     })
 
