@@ -584,6 +584,15 @@ export interface AppSettings {
     silenceMinDurationSec: number       // sec; default 10
     loudnessCheckEnabled: boolean       // A55: mean RMS via volumedetect
     loudnessFloorDb: number             // dB; default -40
+    // Phase 5.3.1 Tier-1 (2026-04-29) — audio stream bitrate sanity floor.
+    // Cheapest signal — catches truly broken streams (input disconnected,
+    // muted at the source, encoder fed silence so VBR went to ~0). AAC
+    // silence still encodes at ~96 kbps, so a threshold well below that
+    // (default 16 kbps) only fires on actually-broken streams. Tier-2
+    // silencedetect catches loud-then-silent; Tier-1 catches "stream is
+    // not real audio."
+    bitrateCheckEnabled: boolean        // default true
+    bitrateFloorKbps: number            // default 16
   }
 }
 
@@ -716,6 +725,7 @@ export const IPC_CHANNELS = {
   AUDIO_IDENTICAL_TRACKS_DETECTED: 'audio:identical-tracks-detected',
   AUDIO_SILENCE_DETECTED: 'audio:silence-detected',
   AUDIO_LOW_LOUDNESS_DETECTED: 'audio:low-loudness-detected',
+  AUDIO_LOW_BITRATE_DETECTED: 'audio:low-bitrate-detected',
   AUDIO_AUDIT_PASS: 'audio:audit-pass',
 
   // A56: universal pipeline detector (narrow slice — header chip)
@@ -1280,6 +1290,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     silenceMinDurationSec: 10,
     loudnessCheckEnabled: true,
     loudnessFloorDb: -40,
+    bitrateCheckEnabled: true,
+    bitrateFloorKbps: 16,
   },
 }
 

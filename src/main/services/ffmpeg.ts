@@ -419,6 +419,60 @@ function detectSilenceFraction(
   })
 }
 
+/**
+ * Phase 5.3.1 Tier-1 audio sanity (2026-04-29).
+ *
+ * Read the audio stream's bit_rate via ffmpeg -i and compare against a
+ * configured floor. Returns the kbps as a number, null on parse failure.
+ *
+ * Threshold context: AAC encoded silence still runs at ~96 kbps because the
+ * codec stamps full silence frames. A stream coming back at <16 kbps is
+ * almost certainly broken (input disconnected, encoder fed nothing,
+ * stream-only-metadata). This check is FAST (~200ms) — runs on every
+ * encoded MP4 alongside silencedetect / volumedetect.
+ *
+ * Cheaper than silencedetect (no full file scan), and catches a different
+ * failure class: silencedetect needs contiguous silence ≥ minDurationSec,
+ * but if the entire stream is broken/null, the silencedetect output may
+ * be inconclusive. Bitrate check is unambiguous on truly-broken streams.
+ */
+function measureAudioBitrateKbps(ffmpegPath: string, mp4Path: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffmpegPath,
+      ['-hide_banner', '-i', mp4Path],
+      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+    )
+    let stderr = ''
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    proc.on('close', () => {
+      // ffmpeg writes "Stream #0:1: Audio: aac, 44100 Hz, stereo, fltp, 128 kb/s"
+      // Match the audio stream line and extract kbps. Multi-stream takes the
+      // first audio occurrence.
+      const m = stderr.match(/Audio:[^,]*,[^,]*,[^,]*,[^,]*,\s*(\d+)\s*kb\/s/)
+      if (m) {
+        const kbps = parseInt(m[1], 10)
+        if (!isNaN(kbps)) {
+          resolve(kbps)
+          return
+        }
+      }
+      // Fallback: simpler match if ffmpeg output format varies
+      const m2 = stderr.match(/Audio:.*?(\d+)\s*kb\/s/)
+      if (m2) {
+        const kbps = parseInt(m2[1], 10)
+        if (!isNaN(kbps)) {
+          resolve(kbps)
+          return
+        }
+      }
+      resolve(null)
+    })
+    proc.on('error', () => resolve(null))
+    setTimeout(() => { proc.kill(); resolve(null) }, 30000)
+  })
+}
+
 /** Measure mean RMS volume in dBFS. Returns 0 on failure (treat as inconclusive). */
 function measureMeanRmsDb(ffmpegPath: string, mp4Path: string): Promise<number | null> {
   return new Promise((resolve) => {
@@ -533,6 +587,24 @@ async function runAudioAudit(
         }
       } catch (err) {
         logger.ffmpeg.warn(`A55 loudness failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+    if (cfg.bitrateCheckEnabled) {
+      try {
+        const kbps = await measureAudioBitrateKbps(ffmpegPath, ef.filePath)
+        if (kbps !== null && kbps < cfg.bitrateFloorKbps) {
+          anyFinding = true
+          logger.ffmpeg.warn(
+            `Phase 5.3.1 bitrate: routine ${entryNumber} ${ef.role} audio ${kbps} kbps < ${cfg.bitrateFloorKbps} kbps floor`,
+          )
+          sendToRenderer(IPC_CHANNELS.AUDIO_LOW_BITRATE_DETECTED, {
+            routineId, entryNumber, role: ef.role,
+            kbps,
+            thresholdKbps: cfg.bitrateFloorKbps,
+          })
+        }
+      } catch (err) {
+        logger.ffmpeg.warn(`Phase 5.3.1 bitrate failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
       }
     }
   }

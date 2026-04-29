@@ -7,6 +7,14 @@ import type {
   AudioAuditPassEvent,
 } from '../../shared/types'
 
+interface AudioLowBitrateEvent {
+  routineId: string
+  entryNumber: string
+  role: string
+  kbps: number
+  thresholdKbps: number
+}
+
 /**
  * A53 / A55 — post-encode audio audit findings.
  *
@@ -26,6 +34,7 @@ interface RoutineFindings {
   identicalPairs: Array<[string, string]>
   silentRoles: Array<{ role: string; silentFraction: number; noiseFloorDb: number }>
   lowLoudnessRoles: Array<{ role: string; meanRmsDb: number; thresholdDb: number }>
+  lowBitrateRoles: Array<{ role: string; kbps: number; thresholdKbps: number }>
 }
 
 function summarize(f: RoutineFindings): string {
@@ -42,6 +51,10 @@ function summarize(f: RoutineFindings): string {
     const roles = f.lowLoudnessRoles.map((l) => `${l.role}(${l.meanRmsDb.toFixed(0)}dB)`).join(', ')
     parts.push(`low: ${roles}`)
   }
+  if (f.lowBitrateRoles.length > 0) {
+    const roles = f.lowBitrateRoles.map((b) => `${b.role}(${b.kbps}kbps)`).join(', ')
+    parts.push(`broken stream: ${roles}`)
+  }
   return parts.join(' · ')
 }
 
@@ -57,7 +70,7 @@ export default function AudioAuditBanner(): React.ReactElement | null {
     function ensure(id: string, entry: string): RoutineFindings {
       let cur = byRoutine.get(id)
       if (!cur) {
-        cur = { routineId: id, entryNumber: entry, identicalPairs: [], silentRoles: [], lowLoudnessRoles: [] }
+        cur = { routineId: id, entryNumber: entry, identicalPairs: [], silentRoles: [], lowLoudnessRoles: [], lowBitrateRoles: [] }
       }
       return cur
     }
@@ -99,11 +112,24 @@ export default function AudioAuditBanner(): React.ReactElement | null {
         return next
       })
     })
+    const offBitrate = window.api.on(IPC_CHANNELS.AUDIO_LOW_BITRATE_DETECTED, (data: unknown) => {
+      const ev = data as AudioLowBitrateEvent
+      setByRoutine((prev) => {
+        const next = new Map(prev)
+        const cur = next.get(ev.routineId) ?? ensure(ev.routineId, ev.entryNumber)
+        cur.lowBitrateRoles = [
+          ...cur.lowBitrateRoles.filter((b) => b.role !== ev.role),
+          { role: ev.role, kbps: ev.kbps, thresholdKbps: ev.thresholdKbps },
+        ]
+        next.set(ev.routineId, { ...cur })
+        return next
+      })
+    })
     const offPass = window.api.on(IPC_CHANNELS.AUDIO_AUDIT_PASS, (data: unknown) => {
       setPass(data as AudioAuditPassEvent)
       setPassFading(false)
     })
-    return () => { try { offId() } catch {}; try { offSil() } catch {}; try { offLoud() } catch {}; try { offPass() } catch {} }
+    return () => { try { offId() } catch {}; try { offSil() } catch {}; try { offLoud() } catch {}; try { offBitrate() } catch {}; try { offPass() } catch {} }
   // intentionally not depending on byRoutine; ensure() reads via setState callback
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
