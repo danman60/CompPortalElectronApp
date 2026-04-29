@@ -1224,8 +1224,14 @@ export function registerAllHandlers(): void {
   // KICK QUEUE: re-fire all schedulers regardless of internal idle/sleep
   // state. Used when the operator can see things sitting (jobs queued but
   // nothing running) and wants to nudge it without restarting the app.
+  //
+  // 2026-04-29: extended to cover photo-import in addition to encode + upload.
+  // Operator wanted "kick any stalled phase" — previously only ffmpeg + upload
+  // queues were kicked. Now also re-fires auto-import for any mounted camera
+  // drive (idempotent via dedupByDb + importLock).
   safeHandle(IPC_CHANNELS.JOB_QUEUE_KICK, async () => {
     logIPC(IPC_CHANNELS.JOB_QUEUE_KICK)
+    let importKicked = 0
     try {
       const ffmpegMod = await import('./services/ffmpeg')
       ffmpegMod.resumeRecordedRoutines()
@@ -1239,7 +1245,17 @@ export function registerAllHandlers(): void {
     } catch (err) {
       logger.app.warn(`kick: startUploads failed: ${err instanceof Error ? err.message : err}`)
     }
-    return { ok: true }
+    try {
+      const driveMonitor = await import('./services/driveMonitor')
+      const result = await driveMonitor.kickPhotoImports()
+      importKicked = result.kicked
+      if (result.reasons.length > 0) {
+        logger.app.info(`kick: photo-import skip reasons: ${result.reasons.join('; ')}`)
+      }
+    } catch (err) {
+      logger.app.warn(`kick: photo-import resume failed: ${err instanceof Error ? err.message : err}`)
+    }
+    return { ok: true, importKicked }
   })
 
   // AUTO TOGGLE: flip the global autoEncode/autoUpload setting and fire a

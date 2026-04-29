@@ -7,7 +7,7 @@ import ShowControlRail from './components/ShowControlRail'
 import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
-import DriveAlert, { setImportPillActiveFromHeader } from './components/DriveAlert'
+import DriveAlert, { setImportPillActiveFromHeader, useImportMinimizedState } from './components/DriveAlert'
 import FirstRunSetup from './components/FirstRunSetup'
 import OrphanReview, { openOrphanReview } from './components/OrphanReview'
 import ClockSyncReminder from './components/ClockSyncReminder'
@@ -656,15 +656,28 @@ function OffsetConfirmToast(): React.ReactElement | null {
   )
 }
 
-// Import busy banner: pings main every 2s. If RTT > 500ms, shows a sticky banner
-// telling the operator that controls may lag. Banner auto-clears when RTT drops
-// back under 250ms. Non-blocking; does not prevent any action.
+// Import busy banner: pings main every 2s. If RTT > 500ms AND an import is
+// actively running, shows a sticky banner telling the operator that controls
+// may lag. Banner auto-clears when RTT drops back under 250ms or the import
+// finishes. Non-blocking; does not prevent any action.
+//
+// 2026-04-29: gated on `importActive` after operator reported the banner
+// firing with no imports running. Main RTT can spike from any blocking work
+// (encode worker, ffmpeg init, IPC backlog), so this banner is now scoped
+// strictly to the import path.
 function ImportBusyBanner(): React.ReactElement | null {
   const [busy, setBusy] = useState(false)
   const [lastRttMs, setLastRttMs] = useState<number>(0)
+  const importState = useImportMinimizedState()
+  const importActive = importState.active && importState.stage !== 'done'
 
   useEffect(() => {
     if (!window.api) return
+    if (!importActive) {
+      // No import running — don't ping, don't show. Reset busy if leaving import.
+      setBusy(false)
+      return
+    }
     let cancelled = false
 
     async function tick(): Promise<void> {
@@ -693,9 +706,9 @@ function ImportBusyBanner(): React.ReactElement | null {
       clearInterval(id)
       clearTimeout(warmup)
     }
-  }, [])
+  }, [importActive])
 
-  if (!busy) return null
+  if (!busy || !importActive) return null
 
   return (
     <div

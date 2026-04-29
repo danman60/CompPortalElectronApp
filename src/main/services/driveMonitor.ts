@@ -664,6 +664,50 @@ export function dismissDrive(drivePath: string): void {
   logger.photos.info(`Drive dismissed: ${drivePath}`)
 }
 
+/**
+ * Kick photo-import: re-fire auto-import for any currently-mounted camera
+ * drive. Used when the operator sees a card sitting and wants to nudge a
+ * stalled import without ejecting + re-inserting the SD.
+ *
+ * Safe to call even mid-import: the importLock + dedupByDb gate skip work
+ * already in progress or already imported.
+ */
+export async function kickPhotoImports(): Promise<{ kicked: number; reasons: string[] }> {
+  if (process.platform !== 'win32') {
+    return { kicked: 0, reasons: ['not-windows'] }
+  }
+  const drives = getWindowsDrives()
+  const reasons: string[] = []
+  let kicked = 0
+  for (const drive of drives) {
+    try {
+      const camera = isCameraDrive(drive)
+      if (camera.photoCount <= 0) continue
+      const comp = state.getCompetition()
+      if (!comp) {
+        reasons.push(`${drive}: no competition loaded`)
+        continue
+      }
+      const outputDir = getSettings().fileNaming?.outputDirectory
+      if (!outputDir) {
+        reasons.push(`${drive}: outputDirectory not configured`)
+        continue
+      }
+      logger.photos.info(`kickPhotoImports: re-firing auto-import for ${drive}`)
+      kicked++
+      void importPhotos(camera.photoPath, comp.routines, outputDir, {
+        dedupByDb: true,
+        autoAbortOffsetMs: 5 * 60 * 1000,
+      }).catch((err) => {
+        logger.photos.warn(`kickPhotoImports: ${drive} failed: ${err instanceof Error ? err.message : err}`)
+      })
+    } catch (err) {
+      reasons.push(`${drive}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return { kicked, reasons }
+}
+
 export function startMonitoring(): void {
   if (pollTimer) return
   if (process.platform !== 'win32') {

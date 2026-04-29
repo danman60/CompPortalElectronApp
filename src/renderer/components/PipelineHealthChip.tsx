@@ -41,7 +41,22 @@ function formatAge(lastMs: number): string {
 export default function PipelineHealthChip(): React.ReactElement | null {
   const [snap, setSnap] = useState<PipelineHealthSnapshot | null>(null)
   const [open, setOpen] = useState(false)
+  const [kicking, setKicking] = useState(false)
+  const [kickedAt, setKickedAt] = useState<number>(0)
   const wrapRef = useRef<HTMLDivElement>(null)
+
+  async function handleKick(): Promise<void> {
+    if (kicking) return
+    setKicking(true)
+    try {
+      await (window.api as any).jobQueueKick()
+      setKickedAt(Date.now())
+    } catch {
+      // logged server-side
+    } finally {
+      setKicking(false)
+    }
+  }
 
   useEffect(() => {
     if (!window.api) return
@@ -146,6 +161,42 @@ export default function PipelineHealthChip(): React.ReactElement | null {
               </div>
             </div>
           ))}
+          <div
+            style={{
+              marginTop: 8,
+              paddingTop: 8,
+              borderTop: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+            }}
+          >
+            <button
+              type="button"
+              onClick={handleKick}
+              disabled={kicking}
+              title="Re-fire encode + upload + photo-import schedulers. Use when any stage looks stuck."
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--accent, #6366f1)',
+                borderRadius: 4,
+                padding: '4px 10px',
+                color: 'var(--accent, #a5b4fc)',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: kicking ? 'wait' : 'pointer',
+                opacity: kicking ? 0.6 : 1,
+              }}
+            >
+              {kicking ? 'Kicking…' : 'Kick All Stages'}
+            </button>
+            {kickedAt > 0 && (
+              <span style={{ opacity: 0.6, fontSize: 10 }}>
+                kicked {formatAge(kickedAt)} ago
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>

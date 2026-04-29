@@ -452,6 +452,30 @@ function ImportPill(): React.ReactElement | null {
       : s.stage === 'uploading' ? 'Uploading'
       : 'Importing'
 
+  // NORTH STAR §3.2: watermark-resume label. When this card has been seen
+  // before and we're in the early scan/EXIF stage, surface the resume point
+  // so the operator sees "Resuming from 14:32 (NAP_5074) — N to scan" instead
+  // of the generic "Scanning N/N". Falls back to the generic verb path for
+  // copying/queueing/uploading stages where the resume info is no longer the
+  // load-bearing detail.
+  let resumeLabel: string | null = null
+  if (
+    s.watermarkResume &&
+    s.watermarkLastCaptureTime &&
+    (s.stage === 'scanning' || s.stage === 'reading-exif')
+  ) {
+    try {
+      const dt = new Date(s.watermarkLastCaptureTime)
+      const hh = String(dt.getHours()).padStart(2, '0')
+      const mm = String(dt.getMinutes()).padStart(2, '0')
+      const fname = s.watermarkLastFilename ? ` (${s.watermarkLastFilename})` : ''
+      const count = s.total > 0 ? ` — ${s.total} to scan` : ''
+      resumeLabel = `Resuming from ${hh}:${mm}${fname}${count}`
+    } catch {
+      resumeLabel = null
+    }
+  }
+
   async function handleCancel(e: React.MouseEvent): Promise<void> {
     e.stopPropagation()
     if (!confirm(`Cancel photo import?\n\n${label}`)) return
@@ -487,7 +511,7 @@ function ImportPill(): React.ReactElement | null {
         ) : (
           <>
             <span className="import-pill-dot" />
-            <span>{stageVerb} {label}{s.total > 0 ? ` (${pct}%)` : ''}</span>
+            <span>{resumeLabel ?? `${stageVerb} ${label}${s.total > 0 ? ` (${pct}%)` : ''}`}</span>
           </>
         )}
         {!isComplete && s.total > 0 && (
@@ -592,17 +616,9 @@ export default function Header(): React.ReactElement {
 
         <div className="header-right topband-actions">
           <ActionBar />
-          <button
-            className="compact-toggle-btn"
-            onClick={async (e) => {
-              e.stopPropagation()
-              try { await (window.api as any).jobQueueKick() } catch { /* logged server-side */ }
-            }}
-            title="Force the encode + upload queues to run again. Use when jobs look stuck."
-            style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
-          >
-            Kick Queue
-          </button>
+          {/* Kick Queue moved into PIPE chip popover (2026-04-29) — operator
+              wanted unified entry-point for stalled-pipe nudge. Now also
+              kicks photo-import in addition to encode + upload. */}
           <button
             className="compact-toggle-btn"
             onClick={handleOverlayMode}

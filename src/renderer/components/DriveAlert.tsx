@@ -21,6 +21,12 @@ type MinimizedImportState = {
   // "imported N matched". Operator needs different messaging at end of import.
   noNewFiles?: boolean
   skippedDedup?: number
+  // NORTH STAR §3.2: watermark-resume awareness. Pill renders
+  // "Resuming from HH:MM (FILENAME) — N to scan" when this is a re-insert
+  // of a card we've already seen, instead of "Scanning N files…".
+  watermarkResume?: boolean
+  watermarkLastCaptureTime?: string | null
+  watermarkLastFilename?: string | null
 }
 let minimizedState: MinimizedImportState = {
   active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null, canRemoveCard: false,
@@ -136,6 +142,9 @@ export default function DriveAlert(): React.ReactElement | null {
         noNewFiles?: boolean
         skippedDedup?: number
         message?: string
+        watermarkResume?: boolean
+        watermarkLastCaptureTime?: string | null
+        watermarkLastFilename?: string | null
       }
       setProgress((prev) => ({
         ...prev,
@@ -161,6 +170,12 @@ export default function DriveAlert(): React.ReactElement | null {
         canRemoveCard: p.canRemoveCard,
         noNewFiles: p.noNewFiles,
         skippedDedup: p.skippedDedup,
+        // NORTH STAR §3.2: only update watermark fields when supplied —
+        // preserves them across subsequent reading-exif/matching/copying
+        // emits that don't include the watermark probe.
+        ...(p.watermarkResume !== undefined ? { watermarkResume: p.watermarkResume } : {}),
+        ...(p.watermarkLastCaptureTime !== undefined ? { watermarkLastCaptureTime: p.watermarkLastCaptureTime } : {}),
+        ...(p.watermarkLastFilename !== undefined ? { watermarkLastFilename: p.watermarkLastFilename } : {}),
       })
     })
 
@@ -372,7 +387,15 @@ export default function DriveAlert(): React.ReactElement | null {
     (r) => r.status !== 'scratched' && r.recordingStartedAt && r.recordingStoppedAt,
   ).length ?? 0
 
-  const showPrimaryAlert = (detected || wpdDevice) && !minimized
+  // NORTH STAR §3.1: zero modals on SD insert when auto-import is on AND a
+  // competition is loaded. The pill alone reflects status. The center-screen
+  // overlay only shows as a fallback when auto-import is disabled OR there's
+  // no competition (so the operator still has a UI to dismiss/inspect).
+  // 2026-04-29: tightened the gate to eliminate the documented one-frame
+  // flash where (detected=true, minimized=false) rendered before the
+  // minimize-on-detect effect ran.
+  const suppressOverlay = autoImportOnDrive && hasCompetition
+  const showPrimaryAlert = (detected || wpdDevice) && !minimized && !suppressOverlay
   const sourceLabel = wpdDevice ? 'MTP/PTP Camera Detected' : 'SD Card Detected'
   const sourceSubtitle = wpdDevice
     ? `${wpdDevice.name}${wpdDevice.manufacturer ? ` — ${wpdDevice.manufacturer}` : ''}`

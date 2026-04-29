@@ -428,9 +428,12 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
       out.push(...sessionItems)
       return
     }
-    // "Just before halfway" — insert before the routine at floor(count/2) - 1
-    // (so the operator sees it ~40-45% through the session, with time to act).
-    const targetRoutineOrdinal = Math.max(0, Math.floor(count / 2) - 1)
+    // Halfway mark — insert before the routine at floor(count/2) so the row
+    // appears at the true midpoint of the session.
+    // Prior formula `floor(count/2) - 1` placed the row at ~33-48% (well before
+    // halfway for short sessions, e.g. count=6 → 33%) but the label says
+    // "halfway through Session N". Operator caught the mismatch 2026-04-29.
+    const targetRoutineOrdinal = Math.max(0, Math.floor(count / 2))
     const targetIdx = routineIdxs[targetRoutineOrdinal]
     for (let i = 0; i < sessionItems.length; i++) {
       if (i === targetIdx) {

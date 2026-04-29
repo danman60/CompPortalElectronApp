@@ -1117,10 +1117,42 @@ async function runImport(
     }
   }
 
+  // NORTH STAR §3.2: detect watermark-resume vs first-time scan from a quick
+  // sample of body keys in the partitioned file list. If any body has a
+  // watermark with a known capture time, this is a resume — surface that to
+  // the chip so the operator sees "Resuming from HH:MM (NAP_5074) — N to scan"
+  // instead of the misleading "Scanning N files…".
+  let watermarkResume = false
+  let watermarkLastCaptureIso: string | null = null
+  let watermarkLastFilename: string | null = null
+  try {
+    const seenBodies = new Set<string>()
+    const sampleSize = Math.min(20, partitionedPaths.length)
+    for (let s = 0; s < sampleSize; s++) {
+      const bk = getCameraBodyKey(partitionedPaths[s])
+      if (bk) seenBodies.add(bk)
+    }
+    for (const bk of seenBodies) {
+      const wm = state.getSdWatermark(bk)
+      if (wm && wm.lastCaptureTime) {
+        if (!watermarkLastCaptureIso || wm.lastCaptureTime > watermarkLastCaptureIso) {
+          watermarkLastCaptureIso = wm.lastCaptureTime
+          watermarkLastFilename = wm.lastFilename ?? null
+          watermarkResume = true
+        }
+      }
+    }
+  } catch {
+    // Best-effort; never block import on chip-wording probe failure.
+  }
+
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
     stage: 'scanning',
     total: filePaths.length,
     current: 0,
+    watermarkResume,
+    watermarkLastCaptureTime: watermarkLastCaptureIso,
+    watermarkLastFilename,
   })
 
   if (signal.aborted) {
