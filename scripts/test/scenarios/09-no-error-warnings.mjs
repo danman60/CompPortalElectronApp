@@ -16,6 +16,16 @@ const WHITELIST_PATTERNS = [
   /resumeRecordedRoutines failed:/, // KNOWN — fixed in 86756c3 but old log lines remain
   /WiFi Display Server/,
   /Loaded N routines/,
+  // A53/A55 audit findings are working-as-intended — they're audit output,
+  // not unexpected warnings.
+  /A53 .*identical-tracks/,
+  /A55 silence: routine /,
+  /A55 loudness: routine /,
+  /Phase 5.3.1 bitrate: routine /,
+  // Camera-clock mismatch toasts (operator-handled, not bugs)
+  /Camera clock /,
+  // Settings reset / missing field warnings on first boot
+  /Settings.*missing field/,
 ]
 
 export const name2 = 'no-error-warnings'

@@ -372,7 +372,7 @@ export function handleSnapshot(_req: IncomingMessage, res: ServerResponse): void
     emptyRoutineNumber: t.emptyRoutineNumber,
   }))
   const watermarks = state.listSdWatermarks()
-  const queue = jobQueue.list().map((j) => ({
+  const queue = jobQueue.getAll().map((j) => ({
     id: j.id,
     type: j.type,
     routineId: j.routineId,

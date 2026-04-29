@@ -34,8 +34,11 @@ function makeApi(host) {
       headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
     })
-    let parsed = null
-    try { parsed = await res.json() } catch { try { parsed = await res.text() } catch {} }
+    // Read raw text once, then try JSON.parse. /debug/logs returns text/plain
+    // and would otherwise crash res.json().
+    const text = await res.text().catch(() => '')
+    let parsed = text
+    try { parsed = JSON.parse(text) } catch { /* keep as text */ }
     return { status: res.status, body: parsed }
   }
 
@@ -45,7 +48,11 @@ function makeApi(host) {
     snapshot: () => call('GET', '/debug/snapshot'),
     health: () => call('GET', '/debug/health'),
     queue: () => call('GET', '/debug/queue'),
-    routines: () => call('GET', '/debug/routines'),
+    // /debug/routines returns { count, routines: [...] } — unwrap.
+    routines: async () => {
+      const r = await call('GET', '/debug/routines')
+      return { ...r, body: Array.isArray(r.body?.routines) ? r.body.routines : [] }
+    },
     watermarks: () => call('GET', '/debug/watermarks'),
     events: (limit = 50) => call('GET', `/debug/events?limit=${limit}`),
     logs: (tail = 100) => call('GET', `/debug/logs?tail=${tail}`),
