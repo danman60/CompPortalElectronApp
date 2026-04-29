@@ -12,6 +12,6 @@ export class PrevAction extends SingletonAction {
   }
   override async onKeyDown(ev: KeyDownEvent): Promise<void> {
     conn.sendCommand('prev')
-    await ev.action.showOk()
+
   }
 }

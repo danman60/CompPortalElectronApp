@@ -130,11 +130,27 @@
       ]
     },
     {
+      "UUID": "com.compsync.streamdeck.overlay-starting-soon",
+      "Name": "Starting Soon",
+      "Tooltip": "Toggle Starting Soon overlay; button shows ON/OFF",
+      "Icon": "imgs/actions/logo",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/logo", "Title": "" }]
+    },
+    {
       "UUID": "com.compsync.streamdeck.judge-meter",
       "Name": "Judge Meter",
       "Tooltip": "Live audio level meter for a judge or performance input",
       "Icon": "imgs/actions/clock",
       "PropertyInspectorPath": "judge-meter.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.cycle-transition",
+      "Name": "Cycle OBS Transition",
+      "Tooltip": "Cycles through OBS scene transitions; button shows current",
+      "Icon": "imgs/actions/clock",
       "Controllers": ["Keypad"],
       "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
     }

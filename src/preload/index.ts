@@ -142,6 +142,17 @@ const api = {
   jobQueueGet: () => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_GET),
   jobQueueRetry: (jobId: string) => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_RETRY, jobId),
   jobQueueCancel: (jobId: string) => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_CANCEL, jobId),
+  jobQueueKick: () => ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_KICK),
+  jobQueueAutoToggle: (kind: 'encode' | 'upload') =>
+    ipcRenderer.invoke(IPC_CHANNELS.JOB_QUEUE_AUTO_TOGGLE, kind),
+  // Drag/drop ordering (item 5)
+  stateSetDisplayOrder: (routineIds: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.STATE_SET_DISPLAY_ORDER, routineIds),
+  // OBS transitions (Stream Deck plugin uses these via WS, app exposes for tests)
+  obsTransitionList: () => ipcRenderer.invoke(IPC_CHANNELS.OBS_TRANSITION_LIST),
+  obsTransitionGetCurrent: () => ipcRenderer.invoke(IPC_CHANNELS.OBS_TRANSITION_GET_CURRENT),
+  obsTransitionSetCurrent: (name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OBS_TRANSITION_SET_CURRENT, name),
 
   // Preview
   previewStart: (fps?: number) => ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_START, fps),
@@ -200,6 +211,10 @@ const api = {
   chatPin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_PIN, id),
   chatUnpin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UNPIN, id),
   chatClearPinned: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CLEAR_PINNED),
+  chatFireTest: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_FIRE_TEST),
+  chatPostMessage: (payload: { text: string; name: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_POST_MESSAGE, payload),
+  recordingStartEmpty: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_START_EMPTY),
 
   // Recovery
   recoveryBrowseMkv: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_BROWSE_MKV),

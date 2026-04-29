@@ -217,12 +217,41 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
   )
 }
 
+const ADMIN_NAME_KEY = 'cse:chatAdminName'
+
 function InlineChatStrip(): React.ReactElement {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const historyScrollRef = useRef<HTMLDivElement>(null)
+  const [adminName, setAdminName] = useState<string>(() => {
+    try { return localStorage.getItem(ADMIN_NAME_KEY) || 'Host' } catch { return 'Host' }
+  })
+  const [draft, setDraft] = useState<string>('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  useEffect(() => {
+    try { localStorage.setItem(ADMIN_NAME_KEY, adminName) } catch { /* ignore */ }
+  }, [adminName])
+  const handleAdminSend = useCallback(async () => {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const result = await (window.api as any)?.chatPostMessage?.({ text, name: adminName })
+      if (result?.ok) {
+        setDraft('')
+      } else {
+        setSendError(result?.error || 'Send failed')
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }, [draft, adminName, sending])
 
   const fetchData = useCallback(async () => {
     try {
@@ -332,6 +361,42 @@ function InlineChatStrip(): React.ReactElement {
           )}
         </div>
       )}
+
+      <div className="ic-strip-admin">
+        <div className="ic-strip-admin-header">CHAT AS ADMIN</div>
+        <div className="ic-strip-admin-row">
+          <input
+            type="text"
+            className="ic-strip-admin-name"
+            value={adminName}
+            onChange={(e) => setAdminName(e.target.value)}
+            placeholder="Display name"
+            maxLength={40}
+          />
+          <input
+            type="text"
+            className="ic-strip-admin-text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void handleAdminSend()
+              }
+            }}
+            placeholder="Reply… (Enter to send)"
+            maxLength={300}
+            disabled={sending}
+          />
+          <button
+            type="button"
+            className="ic-strip-admin-send"
+            onClick={() => void handleAdminSend()}
+            disabled={sending || !draft.trim()}
+          >{sending ? '…' : 'Send'}</button>
+        </div>
+        {sendError && <div className="ic-strip-admin-error">{sendError}</div>}
+      </div>
     </div>
   )
 }

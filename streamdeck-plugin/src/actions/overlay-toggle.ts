@@ -53,3 +53,17 @@ export class OverlayLogoAction extends SingletonAction {
     conn.sendCommand('toggleOverlay', 'logo')
   }
 }
+
+@action({ UUID: 'com.compsync.streamdeck.overlay-starting-soon' })
+export class OverlayStartingSoonAction extends SingletonAction {
+  override async onWillAppear(ev: WillAppearEvent): Promise<void> {
+    conn.onState(async (state) => {
+      const visible = !!(state.overlay && state.overlay.startingSoon && state.overlay.startingSoon.visible)
+      const img = svg.startingSoonToggle(visible)
+      await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(img).toString('base64')}`)
+    })
+  }
+  override async onKeyDown(_ev: KeyDownEvent): Promise<void> {
+    conn.sendCommand('toggleOverlay', 'startingSoon')
+  }
+}

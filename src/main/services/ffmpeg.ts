@@ -1,4 +1,5 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process'
+import os from 'os'
 import path from 'path'
 import fs from 'fs'
 import { app } from 'electron'
@@ -663,14 +664,23 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
 /** Spawn FFmpeg with a timeout. Kills process on timeout. */
 function spawnFFmpegWithTimeout(ffmpegPath: string, args: string[], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Inject ffmpeg.threadCount if > 0 (0 = auto, i.e. FFmpeg default)
+    // Inject -threads to keep FFmpeg from monopolising the box.
+    // - settings.ffmpeg.threadCount > 0 → explicit operator override (used as-is)
+    // - settings.ffmpeg.threadCount = 0 / unset → auto-cap at 70% of cores so
+    //   OBS / wifi-display / queue have headroom (operator request 2026-04-25
+    //   Day 2: ffmpeg was using 100% of cores and clogging encode pipeline).
     let finalArgs = args
     try {
       const threads = getSettings().ffmpeg.threadCount
+      let effective: number | null = null
       if (typeof threads === 'number' && threads > 0) {
-        finalArgs = ['-threads', String(threads), ...args]
-        logger.ffmpeg.info(`FFmpeg thread cap: ${threads} cores`)
+        effective = threads
+      } else {
+        const cores = os.cpus().length
+        effective = Math.max(1, Math.floor(cores * 0.7))
       }
+      finalArgs = ['-threads', String(effective), ...args]
+      logger.ffmpeg.info(`FFmpeg thread cap: ${effective} (auto: ${!(typeof threads === 'number' && threads > 0)}, cores: ${os.cpus().length})`)
     } catch {
       // settings unavailable — fall back to no cap
     }

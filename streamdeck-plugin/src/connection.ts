@@ -17,11 +17,13 @@ export interface AppState {
   recording: { active: boolean; elapsed: number }
   streaming: boolean
   skippedCount: number
+  transitions?: { current: string | null; list: string[] }
   overlay: {
     counter: { visible: boolean; current: number; total: number; entryNumber: string }
     clock: { visible: boolean }
     logo: { visible: boolean; url: string }
     lowerThird: { visible: boolean }
+    startingSoon?: { visible: boolean }
   }
 }
 

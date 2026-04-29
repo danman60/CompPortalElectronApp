@@ -147,52 +147,24 @@ async function checkSourceDateMatchesToday(
     }
   }
 
+  // Operator request 2026-04-25 mid-show: stop showing the SD-card-date-mismatch
+  // blocking dialog. Same reasoning as the camera-clock-mismatch toast silencing
+  // (driveMonitor.ts:264) — real SD cards always carry other days (yesterday's
+  // session, prior-comp leftovers); the dialog fired on every startup/insert
+  // and added no value. Non-today photos already flow through the normal
+  // matching logic (nearest-window, orphans bucket). Keeping the warn log
+  // for forensics + the dateCounts breakdown for postmortems.
+  const summaryDatesLog = [...dateCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([d, c]) => `${d}:${c}`)
+    .join(', ')
   logger.photos.warn(
-    `Import date mismatch: ${sampledOk - todayCount}/${sampledOk} sampled photos NOT from today. ` +
-    `Dominant date=${dominantDate}, today=${todayDate}. Asking operator.`,
+    `Import date mismatch (suppressed UI 2026-04-25 per operator): ` +
+    `${sampledOk - todayCount}/${sampledOk} sampled NOT from today. ` +
+    `Dominant=${dominantDate}, today=${todayDate}, breakdown=[${summaryDatesLog}].`,
   )
-
-  // Show a blocking confirm dialog. Lazy-import dialog/BrowserWindow so this
-  // module stays unit-testable.
-  try {
-    const win = BrowserWindow.getAllWindows()[0]
-    if (!win) {
-      // No window — default to continue (legacy behavior). Logged above.
-      return { action: 'continue', todayDate, dominantDate }
-    }
-    const summaryDates = [...dateCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([d, c]) => `  ${d}: ${c}`)
-      .join('\n')
-    const result = await dialog.showMessageBox(win, {
-      type: 'warning',
-      title: 'SD Card Date Mismatch',
-      message: `This SD has photos from ${dominantDate}, but today is ${todayDate}.`,
-      detail:
-        `${sampledOk - todayCount}/${sampledOk} sampled photos do NOT match today's date.\n\n` +
-        `Sampled date breakdown:\n${summaryDates}\n\n` +
-        `Importing yesterday's photos onto today's routines will pollute the routine folders ` +
-        `(Saturday 2026-04-18 incident).`,
-      buttons: [
-        'Cancel import',
-        'Skip mismatched dates',
-        'Import anyway',
-      ],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    })
-    if (result.response === 0) return { action: 'cancel', todayDate, dominantDate }
-    if (result.response === 1) return { action: 'skip-mismatched', todayDate, dominantDate }
-    return { action: 'continue', todayDate, dominantDate }
-  } catch (err) {
-    logger.photos.warn(
-      'Date-mismatch dialog failed — defaulting to continue:',
-      err instanceof Error ? err.message : err,
-    )
-    return { action: 'continue', todayDate, dominantDate }
-  }
+  return { action: 'continue', todayDate, dominantDate }
 }
 
 /**
@@ -1133,7 +1105,19 @@ async function runImport(
   // the matcher pollutes today's routine folders.
   // Uses the same EXIF interpretation as the rest of the code (no timezone
   // changes — see getPhotoCaptureTime).
+  if (signal.aborted) {
+    logger.photos.warn('Import cancelled before date-guard prompt')
+    return cancelledResult()
+  }
   const dateGuard = await checkSourceDateMatchesToday(partitionedPaths)
+  // If operator pressed Cancel pill while the date-mismatch dialog was open,
+  // the abort signal will have been raised. Honour it BEFORE acting on the
+  // dialog response (operator-reported 2026-04-25 — pill was stuck because
+  // cancel had no effect when the modal was the in-flight async).
+  if (signal.aborted) {
+    logger.photos.warn('Import cancelled while date-guard dialog was open')
+    return cancelledResult()
+  }
   if (dateGuard.action === 'cancel') {
     logger.photos.warn(
       `Import cancelled by operator after wrong-date detection: dominant=${dateGuard.dominantDate}, today=${dateGuard.todayDate}`,

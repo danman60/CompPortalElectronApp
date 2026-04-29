@@ -147,6 +147,22 @@ export function registerAllHandlers(): void {
     await recording.nextFull()
   })
 
+  // Late-insert / empty-routine recording (UDC Toronto 2026-04-25 operator
+  // request). Inserts a new ad-hoc routine right after the current one,
+  // marks it current, then starts an OBS recording. Operator fills in
+  // routine title/dancer/etc post-show.
+  safeHandle(IPC_CHANNELS.RECORDING_START_EMPTY, async () => {
+    logIPC(IPC_CHANNELS.RECORDING_START_EMPTY)
+    if (obs.getState().connectionStatus !== 'connected') return { error: 'OBS not connected' }
+    if (obs.getState().isRecording) return { error: 'Already recording — stop first' }
+    const newRoutine = stateService.insertLateRoutine()
+    if (!newRoutine) return { error: 'No competition loaded' }
+    const blocked = recording.canStartRecording()
+    if (blocked) return { error: `Recording blocked: ${blocked.reason}`, routineId: newRoutine.id }
+    await obs.startRecord()
+    return { ok: true, routineId: newRoutine.id, entryNumber: newRoutine.entryNumber }
+  })
+
   // --- FFmpeg ---
   safeHandle(IPC_CHANNELS.FFMPEG_ENCODE, async (routineId: unknown) => {
     logIPC(IPC_CHANNELS.FFMPEG_ENCODE, { routineId })
@@ -316,6 +332,25 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.STATE_CLEAR_CAMERA_OFFSETS, async () => {
     logIPC(IPC_CHANNELS.STATE_CLEAR_CAMERA_OFFSETS)
     stateService.clearCameraOffsets()
+    return { ok: true }
+  })
+
+  safeHandle(IPC_CHANNELS.STATE_SET_DISPLAY_ORDER, async (ids: unknown) => {
+    logIPC(IPC_CHANNELS.STATE_SET_DISPLAY_ORDER)
+    if (!Array.isArray(ids)) throw new Error('routine id list required')
+    stateService.setDisplayOrder(ids as string[])
+    // Push refreshed competition to the renderer so the table re-renders in
+    // the new order. Without this the operator drags but sees nothing change
+    // until something else triggers a STATE_UPDATE (operator-reported
+    // 2026-04-25). Also broadcast to WS clients (tablet / overlay).
+    try {
+      const recordingMod = await import('./services/recording')
+      recordingMod.broadcastFullState()
+    } catch {}
+    try {
+      const wsHubMod = await import('./services/wsHub')
+      wsHubMod.broadcastState()
+    } catch {}
     return { ok: true }
   })
 
@@ -890,6 +925,26 @@ export function registerAllHandlers(): void {
     chatBridge.clearPinned()
   })
 
+  safeHandle(IPC_CHANNELS.CHAT_POST_MESSAGE, async (payload: unknown) => {
+    const p = (payload && typeof payload === 'object' ? payload : {}) as { text?: unknown; name?: unknown }
+    const text = typeof p.text === 'string' ? p.text : ''
+    const name = typeof p.name === 'string' ? p.name : ''
+    logIPC(IPC_CHANNELS.CHAT_POST_MESSAGE, { name, len: text.length })
+    return chatBridge.postChatMessage(text, name)
+  })
+
+  // Synthetic chat-fire trigger — used by the Visual Editor to test the
+  // pinned-chat overlay path without needing a real pinned message.
+  safeHandle(IPC_CHANNELS.CHAT_FIRE_TEST, () => {
+    logIPC(IPC_CHANNELS.CHAT_FIRE_TEST)
+    overlay.fireChatMessage({
+      id: 'test-' + Date.now(),
+      name: 'TestUser',
+      text: 'Test pin from Visual Editor — ' + new Date().toLocaleTimeString(),
+      timestamp: Date.now(),
+    })
+  })
+
   // Legacy LT compat
   safeHandle(IPC_CHANNELS.LT_FIRE, () => {
     overlay.fireLowerThird()
@@ -1131,6 +1186,74 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.JOB_QUEUE_CANCEL, (jobId: unknown) => {
     logIPC(IPC_CHANNELS.JOB_QUEUE_CANCEL, { jobId })
     return jobQueue.remove(jobId as string)
+  })
+
+  // KICK QUEUE: re-fire all schedulers regardless of internal idle/sleep
+  // state. Used when the operator can see things sitting (jobs queued but
+  // nothing running) and wants to nudge it without restarting the app.
+  safeHandle(IPC_CHANNELS.JOB_QUEUE_KICK, async () => {
+    logIPC(IPC_CHANNELS.JOB_QUEUE_KICK)
+    try {
+      const ffmpegMod = await import('./services/ffmpeg')
+      ffmpegMod.resumeRecordedRoutines()
+      ffmpegMod.resumeEncoding()
+    } catch (err) {
+      logger.app.warn(`kick: ffmpeg resume failed: ${err instanceof Error ? err.message : err}`)
+    }
+    try {
+      const upload = await import('./services/upload')
+      upload.startUploads()
+    } catch (err) {
+      logger.app.warn(`kick: startUploads failed: ${err instanceof Error ? err.message : err}`)
+    }
+    return { ok: true }
+  })
+
+  // AUTO TOGGLE: flip the global autoEncode/autoUpload setting and fire a
+  // kick as a side effect. Operator UI right-clicks UPLOAD or PROCESS button
+  // (Nudge in current implementation) → toggle relevant flag → kick.
+  safeHandle(IPC_CHANNELS.JOB_QUEUE_AUTO_TOGGLE, async (kind: unknown) => {
+    logIPC(IPC_CHANNELS.JOB_QUEUE_AUTO_TOGGLE, { kind })
+    try {
+      const settingsMod = await import('./services/settings')
+      const cur = settingsMod.getSettings()
+      const next = JSON.parse(JSON.stringify(cur))
+      if (kind === 'encode') next.behavior.autoEncodeRecordings = !cur.behavior.autoEncodeRecordings
+      else if (kind === 'upload') next.behavior.autoUploadAfterEncoding = !cur.behavior.autoUploadAfterEncoding
+      else throw new Error(`Unknown auto-toggle kind: ${String(kind)}`)
+      await settingsMod.setSettings(next)
+      // Fire kick after toggle.
+      try {
+        const ffmpegMod = await import('./services/ffmpeg')
+        ffmpegMod.resumeRecordedRoutines()
+        ffmpegMod.resumeEncoding()
+      } catch {}
+      try {
+        const upload = await import('./services/upload')
+        upload.startUploads()
+      } catch {}
+      return {
+        ok: true,
+        autoEncode: next.behavior.autoEncodeRecordings,
+        autoUpload: next.behavior.autoUploadAfterEncoding,
+      }
+    } catch (err) {
+      logger.app.error(`auto-toggle failed: ${err instanceof Error ? err.message : err}`)
+      throw err
+    }
+  })
+
+  // OBS transitions
+  safeHandle(IPC_CHANNELS.OBS_TRANSITION_LIST, async () => {
+    return await obs.getTransitionList()
+  })
+  safeHandle(IPC_CHANNELS.OBS_TRANSITION_GET_CURRENT, async () => {
+    return await obs.getCurrentTransitionName()
+  })
+  safeHandle(IPC_CHANNELS.OBS_TRANSITION_SET_CURRENT, async (name: unknown) => {
+    if (typeof name !== 'string') throw new Error('transition name required')
+    await obs.setCurrentTransitionByName(name)
+    return { ok: true }
   })
 
   // --- Recovery ---

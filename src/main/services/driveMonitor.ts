@@ -258,10 +258,16 @@ async function sampleAndReportCameraClock(
       sampleCount: sampledCount,
     }
     logger.photos.warn(
-      `CAMERA_CLOCK_MISMATCH: ${drivePath} (${label}) — ` +
+      `CAMERA_CLOCK_MISMATCH (suppressed UI 2026-04-25 per operator): ${drivePath} (${label}) — ` +
       `dominant=${dominantDate}, today=${todayDate}, daysOff=${daysOffMax}, samples=${sampledCount}`,
     )
-    sendToRenderer(IPC_CHANNELS.DRIVE_CAMERA_CLOCK_MISMATCH, payload)
+    // Operator request 2026-04-25 mid-show: stop showing the camera-clock-off
+    // modal. Real SD cards always have other days on them (yesterday's
+    // session, prior comp leftovers, etc.); the modal fires constantly and
+    // adds no value — non-today photos already fall back to nearest-window
+    // matching or the orphans bucket per existing import logic. Keeping the
+    // structured event for diagnostics + the warn log for forensics.
+    // sendToRenderer(IPC_CHANNELS.DRIVE_CAMERA_CLOCK_MISMATCH, payload)  // disabled
     events.emit('drive.clockMismatch', { drivePath, label, dominantDate, todayDate, daysOffMax, sampleCount: sampledCount, sampledDates: sortedDates })
     return { daysOffMax, sampledCount }
   } catch (err) {

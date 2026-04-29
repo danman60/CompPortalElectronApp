@@ -1,6 +1,14 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
 import '../styles/controls.css'
+
+// Operator-spec 2026-04-25: Next button on the CSE app should flash when a
+// recording goes past 2:00, mirroring the Stream Deck NEXT key flash so the
+// operator gets the same visual cue regardless of which surface they're
+// glancing at. Trigger + cadence kept identical to the Stream Deck plugin
+// (`streamdeck-plugin/src/actions/next-routine.ts:5-6`).
+const NEXT_FLASH_TRIGGER_SEC = 120
+const NEXT_FLASH_INTERVAL_MS = 250
 
 export default function Controls(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
@@ -9,6 +17,20 @@ export default function Controls(): React.ReactElement {
 
   const isConnected = obsState.connectionStatus === 'connected'
   const isRecording = obsState.isRecording
+
+  // Next-button flash state: alternates every NEXT_FLASH_INTERVAL_MS once
+  // recording crosses NEXT_FLASH_TRIGGER_SEC, stops when recording ends.
+  const recordTimeSec = obsState.recordTimeSec ?? 0
+  const shouldFlash = isRecording && recordTimeSec >= NEXT_FLASH_TRIGGER_SEC
+  const [flashAltPhase, setFlashAltPhase] = useState(false)
+  useEffect(() => {
+    if (!shouldFlash) {
+      setFlashAltPhase(false)
+      return
+    }
+    const t = setInterval(() => setFlashAltPhase((p) => !p), NEXT_FLASH_INTERVAL_MS)
+    return () => clearInterval(t)
+  }, [shouldFlash])
 
   async function handlePrev(): Promise<void> {
     try { await window.api.recordingPrev() } catch { /* handled server-side */ }
@@ -57,6 +79,18 @@ export default function Controls(): React.ReactElement {
     }
   }
 
+  // Late-insert / off-schedule routine (operator-spec 2026-04-25). Inserts
+  // a new ad-hoc routine right after current, then starts OBS recording —
+  // captures the off-schedule performance into its own slot instead of
+  // contaminating an adjacent scheduled routine. Operator fills title/etc
+  // post-show. Per-row scratch button in RoutineTable still handles the
+  // scratch case.
+  async function handleStartEmpty(): Promise<void> {
+    if (!isConnected) return
+    if (isRecording) return
+    try { await (window.api as any).recordingStartEmpty?.() } catch { /* handled server-side */ }
+  }
+
   function handleClockSync(): void {
     window.dispatchEvent(new Event('compsync:show-clock-sync'))
   }
@@ -90,10 +124,10 @@ export default function Controls(): React.ReactElement {
           <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
         </button>
         <button
-          className={`ctrl-btn${isRecording ? '' : ' disabled-muted'}`}
+          className={`ctrl-btn${isRecording ? '' : ' disabled-muted'}${shouldFlash && flashAltPhase ? ' next-flash-alert' : ''}${shouldFlash ? ' next-flash-base' : ''}`}
           onClick={isRecording ? handleNextFull : undefined}
           disabled={!isRecording}
-          title={!isRecording ? 'Start recording first' : 'Stop, advance, record, fire LT'}
+          title={!isRecording ? 'Start recording first' : (shouldFlash ? '2:00+ — time to advance' : 'Stop, advance, record, fire LT')}
         >
           Next
         </button>
@@ -120,7 +154,27 @@ export default function Controls(): React.ReactElement {
         >
           Save Replay
         </button>
-        <button className="ctrl-btn" onClick={handleScratch}>
+        <button
+          className="ctrl-btn"
+          onClick={handleStartEmpty}
+          disabled={!isConnected || isRecording}
+          title={
+            isRecording
+              ? 'Stop current recording first'
+              : 'Insert an off-schedule routine slot and start recording. Operator fills in title/dancer post-show.'
+          }
+          style={{
+            background: 'rgba(63, 168, 108, 0.18)',
+            border: '1px solid rgba(63, 168, 108, 0.7)',
+            color: '#9ce5b4',
+            fontWeight: 700,
+            opacity: !isConnected || isRecording ? 0.4 : 1,
+          }}
+        >
+          START EMPTY ROUTINE</button>
+        {/* Old SCRATCH path retained for hotkey + legacy invocations.
+            Per-row scratch button in RoutineTable still handles in-table use. */}
+        <button className="ctrl-btn" onClick={handleScratch} style={{ display: 'none' }}>
           {currentRoutine?.status === 'scratched' ? 'Unscratch' : 'Scratch'}
         </button>
       </div>

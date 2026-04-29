@@ -371,6 +371,24 @@ export async function start(): Promise<void> {
     // discovery can still promote an IP once.
     driftAdoptedThisSession = false
     logger.app.info(`Wifi display started (PID ${childProc.pid}, monitor index ${effectiveIndex})`)
+    // Item 3 (2026-04-25): operator reported CSController APK lag during
+    // encode bursts. ffmpeg children run at belownormal priority but
+    // wifi-display competes with them at normal priority and was getting
+    // starved when the Windows scheduler favoured the (much busier) ffmpeg
+    // workers. Bump wifi-display to AboveNormal so its packet writes win
+    // scheduler ties without resorting to High (which can starve OBS itself).
+    if (process.platform === 'win32') {
+      try {
+        const wmic = spawn('wmic', [
+          'process', 'where', `ProcessId=${childProc.pid}`,
+          'CALL', 'setpriority', 'abovenormal',
+        ], { stdio: 'ignore', windowsHide: true })
+        wmic.on('error', () => {})
+        logger.app.info(`Set wifi-display PID ${childProc.pid} priority to abovenormal`)
+      } catch (err) {
+        logger.app.warn(`Failed to set wifi-display priority: ${err instanceof Error ? err.message : err}`)
+      }
+    }
     startDiscoveryListener()
     // NOTE: earlier revision broadcast two discover-requests from this host
     // right after start() to prompt tablets to re-announce. On Windows the

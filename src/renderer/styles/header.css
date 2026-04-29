@@ -1,8 +1,8 @@
 .topband {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 8px 14px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   background:
     linear-gradient(180deg, rgba(19, 28, 42, 0.98), rgba(12, 18, 28, 0.98));
@@ -27,8 +27,11 @@
 .topband-brand {
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 14px;
+  row-gap: 4px;
 }
 
 .app-logo {
@@ -58,7 +61,14 @@
   gap: 10px;
   font-size: 10px;
   color: var(--text-muted);
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+/* System monitor variant — keep all 5 meters inline; allow wrap as last resort */
+.header-status.topband-system {
   flex-wrap: wrap;
+  row-gap: 2px;
 }
 
 .header-status .si {
@@ -84,7 +94,7 @@
 }
 
 .meter-track {
-  width: 50px;
+  width: 38px;
   height: 6px;
   background: var(--bg-tertiary);
   border-radius: 3px;

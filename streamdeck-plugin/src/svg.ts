@@ -33,6 +33,17 @@ export function nextFull(entryNumber: string | null, connected: boolean): string
   `, '#1a1a2e')
 }
 
+export function nextFullAlert(entryNumber: string | null): string {
+  const num = entryNumber || '—'
+  const display = `#${num}`
+  const fs = entryFontSize(display, 64)
+  return wrap(`
+    <text x="72" y="34" text-anchor="middle" fill="#ffffff" font-size="20" font-weight="900" font-family="sans-serif" letter-spacing="2">NEXT ⏩</text>
+    <text x="72" y="96" text-anchor="middle" fill="#ffffff" font-size="${fs}" font-weight="900" font-family="sans-serif">${display}</text>
+    <text x="72" y="128" text-anchor="middle" fill="#fff5b8" font-size="18" font-weight="900" font-family="sans-serif" letter-spacing="2">ADVANCE</text>
+  `, '#b91c1c')
+}
+
 export function nextRoutine(entryNumber: string | null): string {
   const num = entryNumber || '\u2014'
   const display = `#${num}`
@@ -41,6 +52,34 @@ export function nextRoutine(entryNumber: string | null): string {
     <text x="72" y="32" text-anchor="middle" fill="#9090b0" font-size="20" font-weight="700" font-family="sans-serif" letter-spacing="2.5">CURRENT</text>
     <text x="72" y="104" text-anchor="middle" fill="#ffffff" font-size="${fs}" font-weight="900" font-family="sans-serif">${display}</text>
   `)
+}
+
+// Item 6: high-contrast variant used during the 2:20+ flash. Plugin alternates
+// between this and the calm nextRoutine() image every 250ms while the active
+// recording has been running \u2265 140s.
+export function nextRoutineAlert(entryNumber: string | null): string {
+  const num = entryNumber || '\u2014'
+  const display = `#${num}`
+  const fs = entryFontSize(display, 72)
+  return wrap(`
+    <text x="72" y="32" text-anchor="middle" fill="#ffffff" font-size="20" font-weight="900" font-family="sans-serif" letter-spacing="2.5">NEXT \u23e9</text>
+    <text x="72" y="104" text-anchor="middle" fill="#ffffff" font-size="${fs}" font-weight="900" font-family="sans-serif">${display}</text>
+    <text x="72" y="134" text-anchor="middle" fill="#fff5b8" font-size="14" font-weight="800" font-family="sans-serif" letter-spacing="1.5">ADVANCE</text>
+  `, '#b91c1c')
+}
+
+// Item 7: cycle OBS transitions on press. Button face shows the current
+// transition name (truncated) so operator knows what's loaded.
+export function cycleTransition(currentName: string | null): string {
+  const safeName = (currentName ?? 'NONE').toUpperCase()
+  const cropped = safeName.length > 9 ? safeName.slice(0, 8) + '\u2026' : safeName
+  const fs = cropped.length <= 5 ? 28 : cropped.length <= 7 ? 22 : 18
+  return wrap(`
+    <text x="72" y="32" text-anchor="middle" fill="#a5b4fc" font-size="18" font-weight="800" font-family="sans-serif" letter-spacing="2.5">CYCLE</text>
+    <text x="72" y="62" text-anchor="middle" fill="#9090b0" font-size="14" font-weight="700" font-family="sans-serif" letter-spacing="1.5">TRANSITION</text>
+    <text x="72" y="100" text-anchor="middle" fill="#ffffff" font-size="${fs}" font-weight="900" font-family="sans-serif">${cropped}</text>
+    <text x="72" y="128" text-anchor="middle" fill="#667eea" font-size="22" font-weight="900" font-family="sans-serif">\u21bb</text>
+  `, '#181826')
 }
 
 export function prev(entryNumber: string | null): string {
@@ -167,5 +206,20 @@ export function overlayToggle(label: string, active: boolean): string {
   return wrap(`
     <circle cx="72" cy="50" r="22" fill="${color}"/>
     <text x="72" y="118" text-anchor="middle" fill="${active ? '#ffffff' : color}" font-size="36" font-weight="900" font-family="sans-serif" letter-spacing="2">${label}</text>
+  `, bg)
+}
+
+// Starting Soon — dedicated multi-line label so operator sees full name on the key.
+export function startingSoonToggle(active: boolean): string {
+  const color = active ? '#22c55e' : '#888'
+  const labelColor = active ? '#ffffff' : '#aaa'
+  const bg = active ? '#0d1f0d' : '#1e1e2e'
+  const status = active ? 'ON' : 'OFF'
+  const statusColor = active ? '#22c55e' : '#666'
+  return wrap(`
+    <text x="72" y="44" text-anchor="middle" fill="${labelColor}" font-size="22" font-weight="900" font-family="sans-serif" letter-spacing="2">STARTING</text>
+    <text x="72" y="74" text-anchor="middle" fill="${labelColor}" font-size="22" font-weight="900" font-family="sans-serif" letter-spacing="2">SOON</text>
+    <circle cx="60" cy="112" r="9" fill="${color}"/>
+    <text x="80" y="120" text-anchor="start" fill="${statusColor}" font-size="24" font-weight="900" font-family="sans-serif" letter-spacing="2">${status}</text>
   `, bg)
 }

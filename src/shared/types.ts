@@ -64,6 +64,12 @@ export interface Routine {
     | 'complete'
     | 'published'
   mediaUpdatedAt?: string // ISO — media_packages.updated_at from server, or null
+  // Late-insert / ad-hoc routine (UDC Toronto 2026-04-25 operator request).
+  // Set when this row was created by START EMPTY ROUTINE rather than from
+  // the schedule CSV/API. Used to flag rows for post-show editing (operator
+  // fills in title/dancer/category) and for clear filename identification
+  // in the recording output dir.
+  lateInsert?: boolean
 }
 
 export interface EncodedFile {
@@ -184,6 +190,11 @@ export interface Competition {
   days: string[]
   source: 'csv' | 'api'
   loadedAt: string // ISO
+  // Operator-manual ordering of routine IDs. When present, the routine table
+  // renders in this order and NEXT advances along this order. Persists across
+  // schedule re-imports (item 5, 2026-04-25): IDs no longer in `routines`
+  // drop out automatically; new IDs append in schedule order.
+  displayOrder?: string[]
 }
 
 // --- OBS ---
@@ -514,8 +525,6 @@ export interface AppSettings {
     stopRecording: boolean
     startRecording: boolean
     fireLowerThird: boolean
-    pauseAfterStopMs: number
-    pauseBeforeRecordMs: number
     pauseBeforeLowerThirdMs: number
   }
   tether: {
@@ -566,6 +575,11 @@ export const IPC_CHANNELS = {
   OBS_SAVE_REPLAY: 'obs:save-replay',
   OBS_AUDIO_LEVELS: 'obs:audio-levels',
   OBS_INPUT_LIST: 'obs:input-list',
+  OBS_AUDIO_FLAT_CHANNEL: 'obs:audio-flat-channel',
+  OBS_TRANSITION_LIST: 'obs:transition-list',
+  OBS_TRANSITION_GET_CURRENT: 'obs:transition-get-current',
+  OBS_TRANSITION_SET_CURRENT: 'obs:transition-set-current',
+  OBS_TRANSITION_CHANGED: 'obs:transition-changed',
 
   // Recording pipeline
   RECORDING_NEXT: 'recording:next',
@@ -602,6 +616,7 @@ export const IPC_CHANNELS = {
   STATE_EXPORT_VERIFICATION_REPORT: 'state:export-verification-report',
   STATE_LIST_CAMERA_OFFSETS: 'state:list-camera-offsets',
   STATE_CLEAR_CAMERA_OFFSETS: 'state:clear-camera-offsets',
+  STATE_SET_DISPLAY_ORDER: 'state:set-display-order',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -715,6 +730,8 @@ export const IPC_CHANNELS = {
   JOB_QUEUE_RETRY: 'job:queue-retry',
   JOB_QUEUE_CANCEL: 'job:queue-cancel',
   JOB_QUEUE_PROGRESS: 'job:queue-progress',
+  JOB_QUEUE_KICK: 'job:queue-kick',
+  JOB_QUEUE_AUTO_TOGGLE: 'job:queue-auto-toggle',
 
   // Startup
   APP_STARTUP_REPORT: 'app:startup-report',
@@ -762,6 +779,13 @@ export const IPC_CHANNELS = {
   CHAT_PIN: 'chat:pin',
   CHAT_UNPIN: 'chat:unpin',
   CHAT_CLEAR_PINNED: 'chat:clear-pinned',
+  CHAT_FIRE_TEST: 'chat:fire-test',
+  CHAT_POST_MESSAGE: 'chat:post-message',
+
+  // Late-insert / empty-routine recording (operator-spec 2026-04-25):
+  // creates a new ad-hoc routine row right after the current one, marks it
+  // recording, and starts an OBS take. Operator fills in title/dancer post-show.
+  RECORDING_START_EMPTY: 'recording:start-empty',
 
   // Event-day hardening alerts
   RECORDING_MAX_WARNING: 'recording:max-warning',
@@ -900,6 +924,10 @@ export interface OverlayCounterState extends OverlayElementState {
   current: number
   total: number
   entryNumber: string
+  // HH:MM string of the next break / awards timeslot, computed from the
+  // schedule (gap >= 15 min between consecutive routines). Falls back to
+  // end-of-last-routine for the last session of the day. null = hide label.
+  nextAwardsTime?: string | null
 }
 
 export interface OverlayLogoState extends OverlayElementState {
@@ -997,6 +1025,7 @@ export interface WSStateMessage {
   recording: { active: boolean; elapsed: number }
   streaming: boolean
   skippedCount: number
+  transitions?: { current: string | null; list: string[] }
   overlay: OverlayState
   ssConfig?: StartingSoonConfig
   upcomingRoutines?: { entryNumber: string; routineTitle: string; dancers: string; studioName: string; category: string }[]
@@ -1024,7 +1053,8 @@ export interface WSCommandMessage {
     | 'pinChatMessage' | 'unpinChatMessage'
     | 'setCameraOffset' | 'clearCameraOffsets'
     | 'toggleOverlay' | 'loadShareCode'
-  element?: 'counter' | 'clock' | 'logo' | 'lowerThird'
+    | 'cycleTransition' | 'kickQueue'
+  element?: 'counter' | 'clock' | 'logo' | 'lowerThird' | 'startingSoon'
   shareCode?: string
   routineId?: string
   chatMessageId?: string
@@ -1152,8 +1182,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     stopRecording: true,
     startRecording: true,
     fireLowerThird: true,
-    pauseAfterStopMs: 2000,
-    pauseBeforeRecordMs: 2000,
     pauseBeforeLowerThirdMs: 2000,
   },
   tether: {
@@ -1167,7 +1195,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     clientIp: null,
     videoPort: 5000,
     touchPort: 5001,
-    autoStart: false,
+    // Operator-spec 2026-04-25: tablet should be on by default. Auto-start
+    // when a monitor is configured. (If `monitorIndex` is null, autoStart
+    // is a no-op — see main/index.ts.)
+    autoStart: true,
   },
   branding: {
     organizationName: '',

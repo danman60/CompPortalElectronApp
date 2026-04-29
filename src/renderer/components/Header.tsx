@@ -122,20 +122,21 @@ function ActionBar(): React.ReactElement {
     }
   }
 
-  async function handleTabletToggle(): Promise<void> {
+  // Operator-spec 2026-04-25: tablet button is always-on by default; click
+  // restarts the wifi-display server (stop → start) instead of toggling.
+  // Use case: capture pipeline gets a "connection reset" loop and operator
+  // wants a single-press recovery without going to settings.
+  async function handleTabletRestart(): Promise<void> {
     const wd = settings?.wifiDisplay
     if (wd?.monitorIndex === null || wd?.monitorIndex === undefined) {
       useStore.getState().setSettingsOpen(true)
       return
     }
     try {
-      if (wifiDisplayRunning) {
-        const result = await window.api.wifiDisplayStop() as { running?: boolean }
-        setWifiDisplayRunning(!!result?.running)
-      } else {
-        const result = await window.api.wifiDisplayStart() as { running?: boolean }
-        setWifiDisplayRunning(!!result?.running)
-      }
+      // Stop, ignore errors (server may already be stopped).
+      try { await window.api.wifiDisplayStop() } catch {}
+      const result = await window.api.wifiDisplayStart() as { running?: boolean }
+      setWifiDisplayRunning(!!result?.running)
     } catch {
       // ignore
     }
@@ -269,9 +270,9 @@ function ActionBar(): React.ReactElement {
       </button>
 
       <button
-        className={`ab-btn tablet${wifiDisplayRunning ? ' streaming' : ''}`}
-        onClick={handleTabletToggle}
-        title={wifiDisplayRunning ? 'Stop tablet display streaming' : 'Start tablet display streaming'}
+        className="ab-btn tablet streaming"
+        onClick={handleTabletRestart}
+        title="Click to restart tablet display server (always-on by default)"
       >
         <span
           className="ab-status-dot"
@@ -280,7 +281,10 @@ function ActionBar(): React.ReactElement {
             width: '6px',
             height: '6px',
             borderRadius: '50%',
-            background: wifiDisplayRunning ? 'var(--success)' : 'var(--text-muted)',
+            // Always show running unless explicitly known to be stopped (e.g.,
+            // mid-restart). Status reflects intent: "tablet is supposed to be
+            // up". The boot-time auto-start handles the actual server lifecycle.
+            background: wifiDisplayRunning ? 'var(--success)' : 'var(--warning)',
             marginRight: '4px',
           }}
         />
@@ -396,16 +400,64 @@ function SystemMonitor(): React.ReactElement | null {
   )
 }
 
+// Separate pill for upload backlog — distinct concern from import (SD-side
+// scan/match/copy). Operator-spec 2026-04-25: import-done means "SD safe to
+// remove"; uploads run independently against local files. This pill shows
+// uploads still in flight regardless of whether an import is active. Stays
+// visible until both routines-uploading and photos-pending hit zero.
+function UploadBacklogPill(): React.ReactElement | null {
+  const uploadingCount = useStore((st) => st.uploadingCount)
+  const photosPendingCount = useStore((st) => st.photosPendingCount)
+  const encodingCount = useStore((st) => st.encodingCount)
+  if (uploadingCount === 0 && photosPendingCount === 0 && encodingCount === 0) return null
+  const parts: string[] = []
+  if (encodingCount > 0) parts.push(`${encodingCount} enc`)
+  if (uploadingCount > 0) parts.push(`${uploadingCount} up`)
+  if (photosPendingCount > 0) parts.push(`${photosPendingCount} photo${photosPendingCount === 1 ? '' : 's'}`)
+  return (
+    <span
+      className="si"
+      title="Encoding / uploading backlog (separate from SD import). Pill clears when all routines + photos finish uploading."
+      style={{
+        background: 'rgba(13, 70, 130, 0.5)',
+        border: '1px solid rgba(75, 130, 200, 0.7)',
+        borderRadius: 4,
+        padding: '2px 8px',
+        color: '#cfe5ff',
+        fontWeight: 600,
+        fontSize: 11,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {'↑'} {parts.join(' · ')}
+    </span>
+  )
+}
+
 function ImportPill(): React.ReactElement | null {
   const s = useImportMinimizedState()
   if (!s.active) return null
   const isComplete = s.stage === 'done' || s.canRemoveCard === true
   const label = s.total > 0 ? `${s.current}/${s.total}` : (s.message || '...')
   const pct = s.total > 0 ? Math.min(100, Math.round((s.current / s.total) * 100)) : 0
+  // Stage-aware verb so the pill reflects what the pipeline is actually doing.
+  // "Importing" was misleading during the EXIF/match phase where no DB writes
+  // happen yet (operator-reported 2026-04-25).
+  const stageVerb =
+    s.stage === 'scanning' || s.stage === 'reading-exif' ? 'Scanning'
+      : s.stage === 'matching' ? 'Matching'
+      : s.stage === 'copying' ? 'Copying'
+      : s.stage === 'uploading' ? 'Uploading'
+      : 'Importing'
 
   async function handleCancel(e: React.MouseEvent): Promise<void> {
     e.stopPropagation()
     if (!confirm(`Cancel photo import?\n\n${label}`)) return
+    // Clear the pill immediately. If the import is blocked on a native dialog
+    // the cancel signal won't unblock it, but the visual state shouldn't be
+    // hostage to that. Once the import does honour the abort, it'll fall
+    // through to the import-complete IPC and stay clean.
+    try { setImportPillActiveFromHeader(null) } catch {}
     try {
       await window.api.photosCancel()
     } catch (err) {
@@ -429,7 +481,7 @@ function ImportPill(): React.ReactElement | null {
         ) : (
           <>
             <span className="import-pill-dot" />
-            <span>Importing {label}{s.total > 0 ? ` (${pct}%)` : ''}</span>
+            <span>{stageVerb} {label}{s.total > 0 ? ` (${pct}%)` : ''}</span>
           </>
         )}
         {!isComplete && s.total > 0 && (
@@ -445,6 +497,31 @@ function ImportPill(): React.ReactElement | null {
               transition: 'width 0.2s linear',
             }}
           />
+        )}
+        {/* Manual dismiss for "Import Complete — Remove SD Card" pill.
+            Operator-spec 2026-04-25: pill was sticky and stacked under the
+            gap-routines modal. X here clears it without waiting for SD removal. */}
+        {isComplete && (
+          <span
+            role="button"
+            aria-label="Dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              try { setImportPillActiveFromHeader(null) } catch {}
+            }}
+            title="Dismiss this banner"
+            style={{
+              marginLeft: 8,
+              padding: '0 6px',
+              borderRadius: 3,
+              background: 'rgba(0,0,0,0.25)',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+              lineHeight: '16px',
+              display: 'inline-block',
+            }}
+          >×</span>
         )}
       </button>
       {!isComplete && (
@@ -500,6 +577,7 @@ export default function Header(): React.ReactElement {
             </span>
             {competition && <span className="si">{competition.routines.length} routines</span>}
             <ImportPill />
+            <UploadBacklogPill />
           </div>
         </div>
 
@@ -507,6 +585,17 @@ export default function Header(): React.ReactElement {
 
         <div className="header-right topband-actions">
           <ActionBar />
+          <button
+            className="compact-toggle-btn"
+            onClick={async (e) => {
+              e.stopPropagation()
+              try { await (window.api as any).jobQueueKick() } catch { /* logged server-side */ }
+            }}
+            title="Force the encode + upload queues to run again. Use when jobs look stuck."
+            style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+          >
+            Kick Queue
+          </button>
           <button
             className="compact-toggle-btn"
             onClick={handleOverlayMode}

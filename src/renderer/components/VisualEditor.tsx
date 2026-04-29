@@ -318,6 +318,14 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
                 {el === 'lowerThird' ? 'LT' : ELEMENT_LABELS[el]}
               </button>
             ))}
+            <button
+              className="ve-preview-toggle"
+              onClick={() => { try { (window.api as any)?.chatFireTest?.() } catch {} }}
+              title="Fire a synthetic chat-pin overlay to test the pinned-chat broadcast path"
+              style={{ borderColor: 'rgba(255, 193, 7, 0.6)', color: '#ffca55' }}
+            >
+              Test Chat Fire
+            </button>
           </span>
           <button onClick={handleReset}>Reset</button>
           <button onClick={handleCancel}>Cancel</button>

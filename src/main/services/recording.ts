@@ -596,6 +596,14 @@ export async function handleRecordingStopped(
       //     as the canonical take for the previously-current routine.
       let rerecDecision: RerecDecision = 'archive'
       let rerecAdvancedToRoutine: Routine | null = null
+      // peekNext is captured BEFORE the modal so we can pass the resolved
+      // routine id straight through to jumpToRoutine after the operator clicks.
+      // Re-deriving via state.advanceToNext() after the modal returns was the
+      // R354 → R356 bug source on UDC Toronto Day 2 (2026-04-25): if anything
+      // advances current state during the modal pause (Stream Deck "Next
+      // Routine" button, hotkey, another IPC handler), advanceToNext() walks
+      // forward an extra step. Using the captured peek id removes the race.
+      let peekNextIdForAdvance: string | null = null
       try {
         const NEW_DURATION_THRESHOLD_SEC = 90
         if (durationSec > NEW_DURATION_THRESHOLD_SEC) {
@@ -603,9 +611,10 @@ export async function handleRecordingStopped(
           if (priorEncoded) {
             const priorMkv = preArchiveFiles.find((f) => /\.mkv$/i.test(f.name))
             const peekNext = state.getNextRoutine()
+            peekNextIdForAdvance = peekNext?.id ?? null
             logger.app.warn(
               `Re-record SUSPECT: routine ${routine.entryNumber} had encoded output AND new take is ${durationSec}s. ` +
-              `Awaiting operator decision (advance | archive).`,
+              `Awaiting operator decision (advance | archive). peekNext=R${peekNext?.entryNumber ?? '<none>'}`,
             )
             rerecDecision = await requestRerecDecision({
               currentRoutineId: routine.id,
@@ -626,13 +635,22 @@ export async function handleRecordingStopped(
       }
 
       if (rerecDecision === 'advance') {
-        // Operator confirmed this take belongs to the NEXT routine. Leave
-        // the prior encoded output in place (canonical for the originally-
-        // current routine). Advance state and retarget this take to the
-        // new current routine's dir. E2: CompPortal's plugin API auto-
-        // creates the media_packages row on first upload-url call for the
-        // new entryId, so no pre-upload provisioning is required here.
-        rerecAdvancedToRoutine = state.advanceToNext()
+        // Operator confirmed this take belongs to the NEXT routine. Use the
+        // routine id we captured at modal-show time — NOT a fresh advanceToNext
+        // call — so the action lands on the same routine the modal advertised.
+        // Falls back to advanceToNext if the captured id has since become
+        // invisible (scratched/skipped during the pause), with a clear log.
+        if (peekNextIdForAdvance) {
+          rerecAdvancedToRoutine = state.jumpToRoutine(peekNextIdForAdvance)
+          if (!rerecAdvancedToRoutine) {
+            logger.app.warn(
+              `Re-record ADVANCE: peekNext id ${peekNextIdForAdvance} no longer visible — fallback to advanceToNext().`,
+            )
+            rerecAdvancedToRoutine = state.advanceToNext()
+          }
+        } else {
+          rerecAdvancedToRoutine = state.advanceToNext()
+        }
         if (!rerecAdvancedToRoutine) {
           logger.app.error(
             `Re-record advance requested but no next routine available — falling back to archive for ${routine.entryNumber}`,
@@ -804,6 +822,19 @@ export async function handleRecordingStopped(
         })
       }
     }
+
+    // If this was a late-insert routine, snap the cursor back to where the
+    // operator was before pressing START EMPTY ROUTINE. Late-insert row stays
+    // in the schedule (operator fills in metadata post-show); only the
+    // "current" pointer moves back so the table view returns to context.
+    if (routine.lateInsert) {
+      try {
+        state.returnFromLateInsert()
+        broadcastFullStateImmediate()
+      } catch (err) {
+        logger.app.warn(`returnFromLateInsert failed: ${err instanceof Error ? err.message : err}`)
+      }
+    }
   } catch (err) {
     logger.app.error('File move failed:', err)
     if (stoppedRoutineId) {
@@ -882,6 +913,7 @@ export async function next(): Promise<void> {
         category: `${nextRoutine.ageGroup} ${nextRoutine.category}`,
         current: state.getCurrentRoutineIndex() + 1,
         total: visibleCount,
+        nextAwardsTime: state.getNextAwardsTime(),
       })
     }
 
@@ -929,8 +961,7 @@ export async function nextFull(): Promise<void> {
     if (seq.stopRecording && connected && obsState.isRecording) {
       logger.app.info('nextFull: stopping current recording...')
       await stopRecordingAndWait('nextFull')
-      logger.app.info(`nextFull: recording stopped, waiting ${seq.pauseAfterStopMs}ms`)
-      if (seq.pauseAfterStopMs > 0) await sleep(seq.pauseAfterStopMs)
+      logger.app.info('nextFull: recording stopped')
     }
 
     // 2. Advance to next routine
@@ -945,7 +976,6 @@ export async function nextFull(): Promise<void> {
 
     // 3. Start recording
     if (seq.startRecording && connected) {
-      if (seq.pauseBeforeRecordMs > 0) await sleep(seq.pauseBeforeRecordMs)
       const blocked = canStartRecording()
       if (blocked) {
         logger.app.error(`nextFull: auto-record blocked: ${blocked.reason}${blocked.detail ? ` (${blocked.detail})` : ''}`)
@@ -997,6 +1027,7 @@ function syncOverlayFromCurrent(): void {
     category: `${current.ageGroup} ${current.category}`,
     current: state.getCurrentRoutineIndex() + 1,
     total: visibleCount,
+    nextAwardsTime: state.getNextAwardsTime(),
   })
 }
 

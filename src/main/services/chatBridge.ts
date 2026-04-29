@@ -251,3 +251,42 @@ export function clearPinned(): void {
   pinnedMessages = []
   notifyPinChange()
 }
+
+/**
+ * Post a chat message to CompPortal as the operator/admin. The new message
+ * comes back via the realtime channel and 5s backfill anyway, but we also
+ * merge it locally so the UI is instant.
+ */
+export async function postChatMessage(
+  text: string,
+  name: string,
+): Promise<{ ok: true; message: ChatMessage } | { ok: false; error: string }> {
+  const conn = getResolvedConnection()
+  if (!conn) return { ok: false, error: 'No resolved connection' }
+  const trimmedText = text.trim().slice(0, 300)
+  if (!trimmedText) return { ok: false, error: 'Empty message' }
+  const trimmedName = (name || '').trim().slice(0, 40) || 'Host'
+  const id = (globalThis.crypto?.randomUUID?.() as string | undefined)
+    ?? require('crypto').randomUUID()
+  try {
+    const response = await fetch(`${conn.apiBase}/api/livestream/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        competitionId: conn.competitionId,
+        text: trimmedText,
+        name: trimmedName,
+        id,
+      }),
+    })
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      return { ok: false, error: `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}` }
+    }
+    const persisted = await response.json() as ChatMessage
+    mergeMessage(persisted)
+    return { ok: true, message: persisted }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}

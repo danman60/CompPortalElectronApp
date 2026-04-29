@@ -12,7 +12,7 @@ export class SaveReplayAction extends SingletonAction {
     conn.sendCommand('saveReplay')
     const flashImg = svg.replay(true)
     await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(flashImg).toString('base64')}`)
-    await ev.action.showOk()
+
     setTimeout(async () => {
       const normalImg = svg.replay(false)
       await ev.action.setImage(`data:image/svg+xml;base64,${Buffer.from(normalImg).toString('base64')}`)

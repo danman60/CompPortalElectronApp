@@ -313,3 +313,40 @@
 .session-gap {
   font-style: italic;
 }
+
+/* SD-swap heads-up — visual marker just before halfway through long sessions.
+   Operator request 2026-04-25: visible enough that they don't miss it, but
+   not so loud it disrupts table reading. Amber/gold for "attention, not
+   alert". */
+.sd-swap-heads-up-row td {
+  background: rgba(245, 158, 11, 0.15);
+  border-top: 2px solid rgba(245, 158, 11, 0.6);
+  border-bottom: 2px solid rgba(245, 158, 11, 0.6);
+  padding: 8px 14px !important;
+}
+.sd-swap-heads-up {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: rgba(255, 220, 160, 0.95);
+}
+.sd-swap-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+.sd-swap-label {
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.35);
+  padding: 3px 10px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.sd-swap-detail {
+  font-style: italic;
+  color: rgba(255, 220, 160, 0.75);
+}

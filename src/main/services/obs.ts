@@ -46,6 +46,14 @@ export function setOnStateChange(cb: (state: OBSState) => void): void {
   onStateChangeCb = cb
 }
 
+// Item 7 (2026-04-25): wsHub registers this so it can refresh its transition
+// cache and re-broadcast state to Stream Deck plugin when OBS reports a
+// transition change.
+let onTransitionChangedCb: ((name: string | null) => void) | null = null
+export function setOnTransitionChanged(cb: (name: string | null) => void): void {
+  onTransitionChangedCb = cb
+}
+
 // Fix 11: reconcile hook invoked after (re)sync so recording.ts can fix up orphan state
 type ReconcileCallback = (info: { outputActive: boolean; recordDirectory: string | null }) => void
 let onReconcileCb: ReconcileCallback | null = null
@@ -75,6 +83,12 @@ let maxLimitWarned = false
 // Signal monitors (Fix 14)
 let silentSince: number | null = null
 let silenceAlertFired = false
+// Per-channel silent detection (item 8 — operator wants to know WHICH channel
+// is flat, not just "audio is dead").
+const perChannelSilentSince = new Map<string, number>()
+const perChannelAlertFired = new Set<string>()
+const PER_CHANNEL_SILENCE_MS = 5000
+const PER_CHANNEL_SILENCE_THRESHOLD = 0.001 // ~ -60 dBFS linear
 let blackFrameTimer: NodeJS.Timeout | null = null
 let blackFrameCount = 0
 let blackAlertFired = false
@@ -483,6 +497,54 @@ export async function getInputList(): Promise<string[]> {
   }
 }
 
+// --- Scene transitions (item 7) ---
+
+// Cache of transitionName -> transitionKind, populated by getTransitionList().
+// Used by SceneTransitionEnded to detect when a stinger just played and
+// auto-switch back to Cut so operator can't forget to change it.
+const transitionKindByName = new Map<string, string>()
+
+export async function getTransitionList(): Promise<string[]> {
+  try {
+    const result = await obs.call('GetSceneTransitionList')
+    const items = (result.transitions ?? []) as Array<{ transitionName: string; transitionKind?: string }>
+    transitionKindByName.clear()
+    for (const t of items) {
+      if (t.transitionKind) transitionKindByName.set(t.transitionName, t.transitionKind)
+    }
+    return items.map((t) => t.transitionName)
+  } catch (err) {
+    logger.obs.warn('GetSceneTransitionList failed:', err)
+    return []
+  }
+}
+
+function findFirstTransitionByKind(kind: string): string | null {
+  for (const [name, k] of transitionKindByName) {
+    if (k === kind) return name
+  }
+  return null
+}
+
+export async function getCurrentTransitionName(): Promise<string | null> {
+  try {
+    const result: any = await obs.call('GetCurrentSceneTransition')
+    return (result.transitionName as string) ?? null
+  } catch (err) {
+    logger.obs.warn('GetCurrentSceneTransition failed:', err)
+    return null
+  }
+}
+
+export async function setCurrentTransitionByName(name: string): Promise<void> {
+  try {
+    await obs.call('SetCurrentSceneTransition', { transitionName: name })
+  } catch (err) {
+    logger.obs.warn(`SetCurrentSceneTransition(${name}) failed:`, err)
+    throw err
+  }
+}
+
 // --- Events ---
 
 function registerOBSEvents(): void {
@@ -538,27 +600,73 @@ function registerOBSEvents(): void {
       sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
       onAudioLevelsCb?.(levels)
 
-      // Fix 14: silent-audio detection during recording
+      // Fix 14 + item 8 (2026-04-25): per-input silent-audio detection during
+      // recording. Operator wanted "JUDGE 2 IS FLAT" alert per channel.
+      // Hotfix 2026-04-25 10:50 EDT: filter to ONLY the OBS sources mapped
+      // to performance / judge1..4 in settings — otherwise unrelated inputs
+      // (CS overlay, scene-level mic, sub-mixers) trigger false alerts that
+      // can't be muted from the alert UI.
+      const settings = getSettings()
+      const mapping = settings.audioInputMapping ?? {}
+      const monitoredInputNames = new Set(
+        Object.values(mapping).filter((v): v is string => typeof v === 'string' && v.length > 0)
+      )
+      const flatChannels: string[] = []
+      const liveChannels: string[] = []
+      for (const lvl of levels) {
+        // Only monitor inputs the operator has explicitly mapped to a role.
+        if (monitoredInputNames.size > 0 && !monitoredInputNames.has(lvl.inputName)) continue
+        let chPeak = 0
+        for (const ch of lvl.levels) if (ch > chPeak) chPeak = ch
+        if (chPeak <= PER_CHANNEL_SILENCE_THRESHOLD) flatChannels.push(lvl.inputName)
+        else liveChannels.push(lvl.inputName)
+      }
+
       if (state.isRecording) {
-        const SILENCE_THRESHOLD = 0.001
-        let anySignal = false
-        for (const lvl of levels) {
-          for (const ch of lvl.levels) {
-            if (ch > SILENCE_THRESHOLD) { anySignal = true; break }
+        for (const name of flatChannels) {
+          if (!perChannelSilentSince.has(name)) {
+            perChannelSilentSince.set(name, now)
+          } else if (
+            !perChannelAlertFired.has(name) &&
+            now - (perChannelSilentSince.get(name) ?? now) > PER_CHANNEL_SILENCE_MS
+          ) {
+            perChannelAlertFired.add(name)
+            events.emit('audio.flatline.warning', { channel: name, silentMs: now - (perChannelSilentSince.get(name) ?? now) })
+            emitRecordingAlert('warning', `Audio flat-line on ${name} for >5s — check mic / XLR / gain.`)
+            sendToRenderer(IPC_CHANNELS.OBS_AUDIO_FLAT_CHANNEL, { channel: name, state: 'flat', sinceTs: perChannelSilentSince.get(name) })
           }
-          if (anySignal) break
         }
-        if (!anySignal) {
+        for (const name of liveChannels) {
+          if (perChannelAlertFired.has(name)) {
+            sendToRenderer(IPC_CHANNELS.OBS_AUDIO_FLAT_CHANNEL, { channel: name, state: 'live' })
+          }
+          perChannelSilentSince.delete(name)
+          perChannelAlertFired.delete(name)
+        }
+
+        // Keep the legacy "all-channels flat" alert for compat (some downstream
+        // consumers may still listen). Promote/demote at same cadence.
+        if (flatChannels.length === levels.length && levels.length > 0) {
           if (silentSince === null) silentSince = now
           else if (!silenceAlertFired && now - silentSince > 5000) {
             silenceAlertFired = true
             events.emit('audio.flatline.warning', { silentMs: now - silentSince })
-            emitRecordingAlert('warning', 'Audio signal flat-line for >5s. Check mics.')
           }
         } else {
           silentSince = null
           silenceAlertFired = false
         }
+      } else {
+        // Not recording — drop accumulated state so next record starts clean.
+        perChannelSilentSince.clear()
+        if (perChannelAlertFired.size > 0) {
+          for (const name of perChannelAlertFired) {
+            sendToRenderer(IPC_CHANNELS.OBS_AUDIO_FLAT_CHANNEL, { channel: name, state: 'live' })
+          }
+          perChannelAlertFired.clear()
+        }
+        silentSince = null
+        silenceAlertFired = false
       }
     }],
     ['ConnectionClosed', () => {
@@ -575,6 +683,34 @@ function registerOBSEvents(): void {
       if (lastUrl) {
         scheduleReconnect(lastUrl, lastPassword)
       }
+    }],
+    ['CurrentSceneTransitionChanged', (event: any) => {
+      const name = (event?.transitionName as string) ?? null
+      sendToRenderer(IPC_CHANNELS.OBS_TRANSITION_CHANGED, { name })
+      try { onTransitionChangedCb?.(name) } catch (err) {
+        logger.obs.warn(`onTransitionChanged callback threw: ${err instanceof Error ? err.message : err}`)
+      }
+    }],
+    // Auto-revert to Cut after a stinger plays. Operator workflow: they pick
+    // Stinger for an entrance, fire it, then routinely forget to switch back
+    // to Cut for the next program-change. We do it for them here.
+    // 500ms safety delay after the END event so the very last frame is fully
+    // settled before we change OBS's active transition.
+    ['SceneTransitionEnded', (event: any) => {
+      const endedName = (event?.transitionName as string) ?? null
+      if (!endedName) return
+      const kind = transitionKindByName.get(endedName)
+      if (kind !== 'stinger_transition') return
+      const cutName = findFirstTransitionByKind('cut_transition')
+      if (!cutName) {
+        logger.obs.warn(`Stinger "${endedName}" ended but no cut_transition found in list — leaving as-is`)
+        return
+      }
+      setTimeout(() => {
+        setCurrentTransitionByName(cutName)
+          .then(() => logger.obs.info(`Auto-reverted transition: ${endedName} → ${cutName} (after 500ms settle)`))
+          .catch((err) => logger.obs.warn(`Auto-revert to ${cutName} failed: ${err instanceof Error ? err.message : err}`))
+      }, 500)
     }],
   ]
 

@@ -3,7 +3,6 @@ import { useStore } from '../store/useStore'
 import CurrentRoutine from './CurrentRoutine'
 import Controls from './Controls'
 import OverlayControls, { OverlayModules } from './OverlayControls'
-import TetherStatus from './TetherStatus'
 import VerticalMeters from './VerticalMeters'
 import '../styles/leftpanel.css'
 
@@ -28,8 +27,6 @@ export default function LeftPanel(): React.ReactElement {
         <div className="left-panel-controls">
           <div className="left-panel-col">
             <OverlayModules />
-            <div style={{ flex: 1 }} />
-            <TetherStatus />
           </div>
           <div className="left-panel-col">
             <OverlayControls />

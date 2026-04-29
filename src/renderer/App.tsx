@@ -7,7 +7,7 @@ import ShowControlRail from './components/ShowControlRail'
 import Settings from './components/Settings'
 import PhotoSorter from './components/PhotoSorter'
 import RecoveryPanel from './components/RecoveryPanel'
-import DriveAlert from './components/DriveAlert'
+import DriveAlert, { setImportPillActiveFromHeader } from './components/DriveAlert'
 import FirstRunSetup from './components/FirstRunSetup'
 import OrphanReview, { openOrphanReview } from './components/OrphanReview'
 import ClockSyncReminder from './components/ClockSyncReminder'
@@ -23,6 +23,7 @@ function HardeningBanners(): React.ReactElement | null {
   const [diskAlert, setDiskAlert] = useState<{ level: string; freeGB: number } | null>(null)
   const [driveLost, setDriveLost] = useState<string | null>(null)
   const [stateRecovered, setStateRecovered] = useState<string | null>(null)
+  const [flatChannels, setFlatChannels] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!window.api) return
@@ -60,6 +61,15 @@ function HardeningBanners(): React.ReactElement | null {
       const mins = Math.round(d.ageMs / 60000)
       setStateRecovered(`State recovered from backup (${mins} min old). Verify routine statuses.`)
     }))
+    offs.push(window.api.on(IPC_CHANNELS.OBS_AUDIO_FLAT_CHANNEL, (data: unknown) => {
+      const d = data as { channel: string; state: 'flat' | 'live' }
+      setFlatChannels((prev) => {
+        const next = new Set(prev)
+        if (d.state === 'flat') next.add(d.channel)
+        else next.delete(d.channel)
+        return next
+      })
+    }))
     return () => {
       for (const off of offs) {
         try { off() } catch {}
@@ -84,6 +94,21 @@ function HardeningBanners(): React.ReactElement | null {
     text: `Disk space ${diskAlert.level}: ${diskAlert.freeGB}GB free`,
   })
   if (stateRecovered) banners.push({ key: 'state', bg: '#c17f00', text: stateRecovered, onDismiss: () => setStateRecovered(null) })
+  for (const ch of flatChannels) {
+    banners.push({
+      key: `flat-${ch}`,
+      bg: '#8b0000',
+      text: `AUDIO SILENT — ${ch} flat for >5s. Check mic / XLR / gain.`,
+      // Dismissible — operator clears it from the channel set so the banner
+      // disappears even if the OBS input is still flat. The next live signal
+      // for that input naturally re-clears via the IPC live event anyway.
+      onDismiss: () => setFlatChannels((prev) => {
+        const next = new Set(prev)
+        next.delete(ch)
+        return next
+      }),
+    })
+  }
 
   if (banners.length === 0) return null
 
@@ -119,6 +144,46 @@ function HardeningBanners(): React.ReactElement | null {
   )
 }
 
+// Item 10: brief toast confirming the new state when right-clicking the
+// Nudge button toggles auto-encode / auto-upload + fires queue kick.
+function AutoToggleToast(): React.ReactElement | null {
+  const [msg, setMsg] = useState<{ label: string; state: string } | null>(null)
+  useEffect(() => {
+    function onToggle(e: Event): void {
+      const ce = e as CustomEvent<{ label: string; state: string }>
+      setMsg(ce.detail)
+      const t = setTimeout(() => setMsg(null), 2500)
+      return (() => clearTimeout(t)) as unknown as void
+    }
+    window.addEventListener('compsync:auto-toggled', onToggle as EventListener)
+    return () => window.removeEventListener('compsync:auto-toggled', onToggle as EventListener)
+  }, [])
+  if (!msg) return null
+  const isOn = msg.state === 'ON'
+  const isFail = msg.state === 'FAILED'
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 70,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 9998,
+        background: isFail ? '#5c1a1a' : isOn ? '#0d3a22' : '#1f1f2e',
+        border: `1px solid ${isFail ? '#ef4444' : isOn ? '#22c55e' : '#9090b0'}`,
+        borderRadius: 6,
+        padding: '8px 14px',
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: 700,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      }}
+    >
+      {msg.label}: {msg.state} — queue kicked
+    </div>
+  )
+}
+
 function RecordingOverrunWarning(): React.ReactElement | null {
   const obsState = useStore((s) => s.obsState)
   if (!obsState.isRecording || obsState.recordTimeSec < 225) return null
@@ -147,8 +212,13 @@ function ReconcileToast(): React.ReactElement | null {
 
   useEffect(() => {
     if (!window.api) return
+    // Operator-spec 2026-04-25: ReconcileToast is suppressed for clean
+    // reconciles (no errors). The import-pill + ImportSummaryToast already
+    // surface success info; this just adds noise. Errors STILL show because
+    // they're actionable.
     const off = window.api.on(IPC_CHANNELS.MEDIA_RECONCILE_RESULT, (data: unknown) => {
       const e = data as ReconcileResultEvent
+      if (!e.errors || e.errors.length === 0) return  // silent on clean reconcile
       setEvent(e)
       setTimeout(() => setEvent((cur) => (cur === e ? null : cur)), 10_000)
     })
@@ -229,132 +299,13 @@ interface MissingPhotosEvent {
 }
 
 function MissingPhotosToast(): React.ReactElement | null {
-  const [event, setEvent] = useState<MissingPhotosEvent | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (!window.api) return
-    const off = window.api.on(IPC_CHANNELS.DRIVE_MISSING_PHOTOS_DETECTED, (data: unknown) => {
-      setEvent(data as MissingPhotosEvent)
-    })
-    return () => { try { off() } catch {} }
-  }, [])
-
-  if (!event) return null
-
-  const nRoutines = event.routinesAffected.length
-  const entries = event.routinesAffected.map((r) => r.entryNumber)
-  const rangeLabel = entries.length <= 3
-    ? entries.map((e) => `R${e}`).join(', ')
-    : `R${entries[0]}-R${entries[entries.length - 1]} (${entries.length} routines)`
-
-  async function doImportMissingOnly(): Promise<void> {
-    if (!event) return
-    setBusy(true)
-    try {
-      // Flatten the per-routine missing arrays to a single allowlist. The
-      // matcher will re-assign each photo to its correct routine by EXIF
-      // time; the allowlist just scopes which files are included in the
-      // scan. Duplicates collapse naturally (Set semantics in main).
-      const all = event.routinesAffected.flatMap((r) => r.missing)
-      await (window.api as any).driveImportMissingOnly(event.photoPath, all)
-    } catch {
-      // Errors surface via normal import progress channel / alert
-    } finally {
-      setBusy(false)
-      setEvent(null)
-    }
-  }
-
-  function doFullImport(): void {
-    if (!event) return
-    // Fall through to the standard drive-detected flow — just dismiss this
-    // toast. DriveAlert still has the normal Start Import / Watch Live
-    // buttons. Operator can also trigger via header Photos button.
-    setEvent(null)
-  }
-
-  function doCancel(): void {
-    setEvent(null)
-  }
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        right: 16,
-        bottom: 120,
-        zIndex: 9999,
-        maxWidth: 440,
-        background: '#1a2438',
-        border: '1px solid #4169e1',
-        borderLeft: '4px solid #4169e1',
-        borderRadius: 6,
-        padding: '12px 14px',
-        color: '#fff',
-        fontSize: 12,
-        lineHeight: 1.5,
-        boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
-      }}
-    >
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>
-        {'\u{1F4BE}'} SD has {event.totalMissing} photo{event.totalMissing === 1 ? '' : 's'} covering {nRoutines} gap routine{nRoutines === 1 ? '' : 's'}
-      </div>
-      <div style={{ color: '#bdd1f2', marginBottom: 10 }}>
-        Affected: {rangeLabel}. These routines are below their expected photo minimum and
-        the SD has matching files that aren&apos;t in R2+DB yet. Import them now?
-      </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button
-          onClick={doImportMissingOnly}
-          disabled={busy}
-          style={{
-            flex: 1,
-            minWidth: 140,
-            background: '#2d5da8',
-            color: '#fff',
-            border: 'none',
-            padding: '6px 10px',
-            borderRadius: 4,
-            cursor: busy ? 'wait' : 'pointer',
-            fontWeight: 600,
-          }}
-        >
-          {busy ? 'Importing...' : `Import Missing Only (${event.totalMissing})`}
-        </button>
-        <button
-          onClick={doFullImport}
-          disabled={busy}
-          style={{
-            background: '#433',
-            color: '#fff',
-            border: '1px solid #666',
-            padding: '6px 10px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            fontWeight: 600,
-          }}
-        >
-          Full Import
-        </button>
-        <button
-          onClick={doCancel}
-          disabled={busy}
-          style={{
-            background: 'transparent',
-            color: '#9db4d8',
-            border: '1px solid #4169e1',
-            padding: '6px 10px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            fontWeight: 600,
-          }}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  )
+  // Operator request 2026-04-25 mid-show: stop showing the gap-routines toast
+  // ("SD has N photos covering K gap routines"). Same rationale as the
+  // date-mismatch dialog and camera-clock-mismatch toast already silenced —
+  // SDs always carry data the import flow handles via normal matching.
+  // Operator can still trigger a manual import via Header → Photos if needed.
+  // The IPC event still fires from main for diagnostics; we just don't render.
+  return null
 }
 
 interface RerecDecisionRequest {
@@ -459,6 +410,20 @@ function RerecordDecisionModal(): React.ReactElement | null {
           {' '}({r.priorEncodedFiles.slice(0, 2).join(', ')}
           {r.priorEncodedFiles.length > 2 ? `, +${r.priorEncodedFiles.length - 2} more` : ''})
           {' '}and the take you just stopped is <strong>{durStr}</strong> long.
+        </div>
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '8px 12px',
+            background: 'rgba(63, 168, 108, 0.12)',
+            border: '1px solid rgba(63, 168, 108, 0.4)',
+            borderRadius: 4,
+            fontSize: 12,
+            color: '#c8e6cb',
+          }}
+        >
+          {'⏱️'} A {durStr} take is almost always a <strong>real routine</strong>.
+          {nextLabel !== '?' ? <> The most likely correct action is <strong>Advance to R{nextLabel}</strong>.</> : null}
         </div>
         <div style={{ marginBottom: 20, color: '#d4d4d4' }}>
           This usually means you forgot to tap <strong>Next Routine</strong> before
@@ -731,10 +696,27 @@ function ImportSummaryToast(): React.ReactElement | null {
   useEffect(() => {
     if (!window.api) return
     const off = window.api.on(IPC_CHANNELS.PHOTOS_IMPORT_COMPLETE_SUMMARY, (data: unknown) => {
-      setSummary(data as ImportSummary)
+      const s = data as ImportSummary
+      // Operator-spec 2026-04-25: only surface this toast when there's
+      // something actionable. A clean import (no orphans, no over-max,
+      // no under-min, no errors) doesn't need a popup — the import pill
+      // already showed completion. Reduces SD-insert noise.
+      const hasAnythingActionable =
+        (s.orphaned ?? 0) > 0 ||
+        ((s.routinesOverMax?.length ?? 0) > 0) ||
+        ((s.routinesUnderMin?.length ?? 0) > 0) ||
+        ((s as unknown as { errors?: unknown[] }).errors?.length ?? 0) > 0
+      if (!hasAnythingActionable) return
+      setSummary(s)
       setFading(false)
     })
-    return () => { try { off() } catch {} }
+    // Auto-dismiss when the gap-routines toast (MissingPhotosToast) opens —
+    // same screen real estate, gap-routines is the more actionable surface.
+    const offGap = window.api.on(IPC_CHANNELS.DRIVE_MISSING_PHOTOS_DETECTED, () => {
+      setFading(true)
+      setTimeout(() => setSummary(null), 300)
+    })
+    return () => { try { off() } catch {}; try { offGap() } catch {} }
   }, [])
 
   useEffect(() => {
@@ -742,7 +724,7 @@ function ImportSummaryToast(): React.ReactElement | null {
     const t = setTimeout(() => {
       setFading(true)
       setTimeout(() => setSummary(null), 300)
-    }, 15000)
+    }, 8000)  // tightened from 15s → 8s per noise-reduction request
     return () => clearTimeout(t)
   }, [summary])
 
@@ -935,6 +917,7 @@ export default function App(): React.ReactElement {
       <DriveAlert />
       <OrphanReview />
       <RecordingOverrunWarning />
+      <AutoToggleToast />
       <ImportBusyBanner />
       <OffsetConfirmToast />
       <RerecordDecisionModal />

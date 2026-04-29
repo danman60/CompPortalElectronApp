@@ -218,6 +218,80 @@
   text-align: center;
 }
 
+.ic-strip-admin {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border, #2a2a36);
+}
+
+.ic-strip-admin-header {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--accent, #4b7bff);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.ic-strip-admin-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.ic-strip-admin-name,
+.ic-strip-admin-text {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border, #2a2a36);
+  color: var(--text, #e5e7eb);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+}
+
+.ic-strip-admin-name {
+  flex: 0 0 80px;
+}
+
+.ic-strip-admin-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ic-strip-admin-name:focus,
+.ic-strip-admin-text:focus {
+  border-color: var(--accent, #4b7bff);
+}
+
+.ic-strip-admin-send {
+  background: var(--accent, #4b7bff);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ic-strip-admin-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ic-strip-admin-send:not(:disabled):hover {
+  filter: brightness(1.15);
+}
+
+.ic-strip-admin-error {
+  margin-top: 3px;
+  color: #ef4444;
+  font-size: 10px;
+}
+
 .oc-section-header {
   font-size: 10px;
   font-weight: 700;

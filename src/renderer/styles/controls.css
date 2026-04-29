@@ -129,3 +129,16 @@
   background: var(--bg-tertiary);
   border-color: var(--border);
 }
+
+/* Next button flash — recording past 2:00. Mirrors the Stream Deck NEXT key
+   flash. Base phase = current calm look; alert phase = high-contrast red
+   to draw the operator's eye. JS toggles next-flash-alert every 250ms. */
+.ctrl-btn.next-flash-base {
+  transition: background 60ms ease, border-color 60ms ease, color 60ms ease;
+}
+.ctrl-btn.next-flash-alert {
+  background: rgba(239, 68, 68, 0.85) !important;
+  border-color: #ef4444 !important;
+  color: #fff !important;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.6);
+}

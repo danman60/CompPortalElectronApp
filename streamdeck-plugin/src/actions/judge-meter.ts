@@ -1,8 +1,9 @@
 import { action, KeyDownEvent, SingletonAction, WillAppearEvent, WillDisappearEvent, DidReceiveSettingsEvent } from '@elgato/streamdeck'
+import type { JsonObject } from '@elgato/utils'
 import * as conn from '../connection'
 import * as svg from '../svg'
 
-interface JudgeMeterSettings {
+interface JudgeMeterSettings extends JsonObject {
   role?: 'performance' | 'judge1' | 'judge2' | 'judge3' | 'judge4'
 }
 

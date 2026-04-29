@@ -770,30 +770,6 @@ export default function Settings(): React.ReactElement {
           ))}
           <div className="settings-grid">
             <div className="field">
-              <label>Pause after stop (seconds)</label>
-              <input
-                type="number"
-                min={0}
-                max={10}
-                step={0.5}
-                value={(draft.nextSequence.pauseAfterStopMs / 1000)}
-                onChange={(e) => update('nextSequence', { pauseAfterStopMs: Math.round(parseFloat(e.target.value || '0') * 1000) })}
-              />
-              <span className="hint">Wait time after stopping the current recording before advancing</span>
-            </div>
-            <div className="field">
-              <label>Pause before record (seconds)</label>
-              <input
-                type="number"
-                min={0}
-                max={10}
-                step={0.5}
-                value={(draft.nextSequence.pauseBeforeRecordMs / 1000)}
-                onChange={(e) => update('nextSequence', { pauseBeforeRecordMs: Math.round(parseFloat(e.target.value || '0') * 1000) })}
-              />
-              <span className="hint">Wait time after advancing before starting the new recording</span>
-            </div>
-            <div className="field">
               <label>Pause before lower third (seconds)</label>
               <input
                 type="number"

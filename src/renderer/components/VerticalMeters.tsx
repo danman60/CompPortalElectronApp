@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
+import { IPC_CHANNELS } from '../../shared/types'
 import '../styles/vertical-meters.css'
 
 function dBToPercent(dB: number): number {
@@ -29,6 +30,12 @@ export default function VerticalMeters(): React.ReactElement {
   const settings = useStore((s) => s.settings)
   const judgeCount = settings?.competition.judgeCount ?? 3
   const [peaks, setPeaks] = useState<Record<string, number>>({})
+  // Track per-role contiguous silent-since timestamps. When a role has been
+  // silent (peak ≤ ~-60 dBFS) for >5s, mark it flat → bar glows red.
+  // This is local-only to the renderer; the main-process detector emits a
+  // separate IPC alert and a top-of-app banner. No coupling required.
+  const silentSinceRef = useRef<Map<string, number>>(new Map())
+  const [flatRoles, setFlatRoles] = useState<Set<string>>(new Set())
   const wsRef = useRef<WebSocket | null>(null)
   const debugMeters = window.location.search.includes('debugMeters=1')
 
@@ -63,6 +70,24 @@ export default function VerticalMeters(): React.ReactElement {
                 console.error(`[VM-WS #${msgCount}] audioLevels received, roles=${Object.keys(next).join(',')} peaks=${JSON.stringify(next)}`)
               }
               setPeaks(next)
+              // Update silent-since per role and recompute flat set.
+              const now = Date.now()
+              const since = silentSinceRef.current
+              const SILENT_THRESH = 0.001
+              const FLAT_MS = 5000
+              const newFlat = new Set<string>()
+              for (const role of Object.keys(next)) {
+                if (next[role] <= SILENT_THRESH) {
+                  if (!since.has(role)) since.set(role, now)
+                  if (now - (since.get(role) ?? now) > FLAT_MS) newFlat.add(role)
+                } else {
+                  since.delete(role)
+                }
+              }
+              setFlatRoles((prev) => {
+                if (prev.size === newFlat.size && [...prev].every((r) => newFlat.has(r))) return prev
+                return newFlat
+              })
             } else if (debugMeters && msgCount === 0 && msg && msg.type) {
               console.error(`[VM-WS] first non-audio msg type=${msg.type}`)
             }
@@ -94,26 +119,30 @@ export default function VerticalMeters(): React.ReactElement {
   }, [])
 
   const tracks = [
-    { label: 'P', dB: peakToDb(peaks['performance'] ?? 0) },
+    { label: 'P', role: 'performance', dB: peakToDb(peaks['performance'] ?? 0) },
     ...Array.from({ length: judgeCount }, (_, i) => ({
       label: `J${i + 1}`,
+      role: `judge${i + 1}`,
       dB: peakToDb(peaks[`judge${i + 1}`] ?? 0),
     })),
   ]
 
   return (
     <div className="v-meters">
-      {tracks.map((track) => (
-        <div className="v-meter" key={track.label}>
-          <div className="v-meter-track">
-            <div
-              className={`v-meter-fill ${dBToClass(track.dB)}`}
-              style={{ height: `${dBToPercent(track.dB)}%` }}
-            />
+      {tracks.map((track) => {
+        const isFlat = flatRoles.has(track.role)
+        return (
+          <div className={`v-meter${isFlat ? ' flat-alert' : ''}`} key={track.label}>
+            <div className="v-meter-track">
+              <div
+                className={`v-meter-fill ${dBToClass(track.dB)}`}
+                style={{ height: `${dBToPercent(track.dB)}%` }}
+              />
+            </div>
+            <span className="v-meter-label">{track.label}</span>
           </div>
-          <span className="v-meter-label">{track.label}</span>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

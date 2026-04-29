@@ -254,7 +254,104 @@ export function loadState(): PersistedState | null {
 
 function getVisibleRoutines(): Routine[] {
   if (!currentCompetition) return []
-  return currentCompetition.routines.filter(r => !isNonPerformingStatus(r.status))
+  const routines = currentCompetition.routines
+  // Item 5 (2026-04-25): when a manual displayOrder is set, sort by it.
+  // Routines whose IDs are not in displayOrder fall to the end in their
+  // original schedule sequence so newly-added routines stay visible.
+  if (currentCompetition.displayOrder && currentCompetition.displayOrder.length > 0) {
+    const order = currentCompetition.displayOrder
+    const orderIdx = new Map<string, number>()
+    order.forEach((id, i) => orderIdx.set(id, i))
+    const inOrder: Routine[] = []
+    const trailing: Routine[] = []
+    for (const r of routines) {
+      if (orderIdx.has(r.id)) inOrder.push(r)
+      else trailing.push(r)
+    }
+    inOrder.sort((a, b) => (orderIdx.get(a.id)! - orderIdx.get(b.id)!))
+    return inOrder.concat(trailing).filter(r => !isNonPerformingStatus(r.status))
+  }
+  return routines.filter(r => !isNonPerformingStatus(r.status))
+}
+
+// Compute the time of the next "awards" / break for the current routine
+// (operator-spec 2026-04-25). Walks forward from the current routine looking
+// for the first scheduled gap >= 15 min; the awards time is the END of the
+// last routine BEFORE the gap. For the final session of a day with no future
+// gap, falls back to the end of the last scheduled routine on that day.
+//
+// Returns "HH:MM" string, or null if it can't be determined (e.g. no
+// scheduled times, current routine in a fresh-load null state, etc.).
+const SESSION_GAP_MIN = 15
+
+function parseHHMM(hhmm: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm)
+  if (!m) return null
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+}
+
+function fmtHHMM(min: number): string {
+  const norm = ((min % 1440) + 1440) % 1440
+  const h = Math.floor(norm / 60)
+  const m = norm % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+export function getNextAwardsTime(): string | null {
+  if (!currentCompetition) return null
+  const all = currentCompetition.routines
+  if (all.length === 0) return null
+
+  // Find current routine. If none, use first routine's day; else use that routine's day.
+  let curIdx = 0
+  if (currentRoutineId) {
+    const found = all.findIndex(r => r.id === currentRoutineId)
+    if (found >= 0) curIdx = found
+  }
+  const day = all[curIdx]?.scheduledDay
+  if (!day) return null
+
+  // Today's routines, in schedule order, with valid scheduledTime.
+  const todays = all.filter(r =>
+    r.scheduledDay === day && typeof r.scheduledTime === 'string' && parseHHMM(r.scheduledTime) !== null,
+  )
+  if (todays.length === 0) return null
+
+  // Locate the current routine's position in todays (may not match curIdx if filtered).
+  const curId = all[curIdx].id
+  const curInToday = todays.findIndex(r => r.id === curId)
+  const startSearchIdx = Math.max(0, curInToday)
+
+  // Walk forward; find first gap >= 15 min between consecutive todays routines.
+  let lastEndMin: number | null = null
+  for (let i = startSearchIdx; i < todays.length; i++) {
+    const r = todays[i]
+    const startMin = parseHHMM(r.scheduledTime!)
+    if (startMin === null) continue
+    const dur = r.durationMinutes || 3
+    if (lastEndMin !== null) {
+      let gap = startMin - lastEndMin
+      if (gap < -12 * 60) gap += 24 * 60
+      if (gap >= SESSION_GAP_MIN) {
+        return fmtHHMM(lastEndMin)
+      }
+    }
+    lastEndMin = startMin + dur
+  }
+
+  // No future gap found — fall back to end of last routine on this day
+  // (operator-spec: last session of day still shows NEXT AWARDS).
+  if (lastEndMin !== null) return fmtHHMM(lastEndMin)
+  return null
+}
+
+export function setDisplayOrder(routineIds: string[]): void {
+  if (!currentCompetition) return
+  // Validate: only IDs that exist in the current routines list.
+  const valid = new Set(currentCompetition.routines.map(r => r.id))
+  currentCompetition.displayOrder = routineIds.filter(id => valid.has(id))
+  saveState()
+  logger.app.info(`displayOrder updated: ${currentCompetition.displayOrder.length} ids`)
 }
 
 function getCurrentIndex(): number {
@@ -333,6 +430,17 @@ export function setCompetition(comp: Competition): void {
         routine.notes = persisted.notes
         matchedCount++
       }
+    }
+
+    // Item 5 (2026-04-25): preserve operator drag/drop order across schedule
+    // re-imports. Drop IDs no longer in the schedule, append new IDs to the
+    // end in schedule order.
+    if (existing.competition.displayOrder && existing.competition.displayOrder.length > 0) {
+      const newIds = new Set(comp.routines.map(r => r.id))
+      const kept = existing.competition.displayOrder.filter((id: string) => newIds.has(id))
+      const keptSet = new Set(kept)
+      const appended = comp.routines.map(r => r.id).filter(id => !keptSet.has(id))
+      comp.displayOrder = kept.concat(appended)
     }
 
     // Restore currentRoutineId from persisted state. This was nulled at
@@ -528,7 +636,26 @@ export function advanceToNext(): Routine | null {
     return target
   }
 
-  const idx = getCurrentIndex()
+  // Defensive: if currentRoutineId points to a routine that's been marked
+  // scratched/skipped, it isn't in `visible`. getCurrentIndex() returns 0,
+  // which would make NEXT jump to visible[1] from the start — wrong. Resolve
+  // its position in the FULL routine list and advance to the next non-scratched
+  // routine after it.
+  const fullList = currentCompetition.routines
+  const fullIdx = fullList.findIndex(r => r.id === currentRoutineId)
+  const currentInVisible = visible.findIndex(r => r.id === currentRoutineId)
+  if (currentInVisible < 0 && fullIdx >= 0) {
+    const next = fullList.slice(fullIdx + 1).find(r => !isNonPerformingStatus(r.status))
+    if (next) {
+      currentRoutineId = next.id
+      saveState()
+      logger.app.info(`advanceToNext: current routine was scratched/skipped — advancing past to #${next.entryNumber}`)
+      return next
+    }
+    return null
+  }
+
+  const idx = currentInVisible >= 0 ? currentInVisible : 0
   if (idx < visible.length - 1) {
     currentRoutineId = visible[idx + 1].id
     saveState()
@@ -577,6 +704,129 @@ export function setRoutineNote(routineId: string, note: string): void {
     routine.notes = note || undefined
     saveState()
   }
+}
+
+// Insert an ad-hoc / late-insert routine right after the current one.
+// Used by START EMPTY ROUTINE flow (operator-spec 2026-04-25 UDC Toronto)
+// when an off-schedule performance happens and the operator needs a slot
+// to record into without contaminating an existing scheduled routine.
+//
+// The new routine:
+// - Gets a synthesized id `empty-<isoTimestamp>` so it's clearly distinguishable
+// - Inherits scheduledDay from the current routine (so day-filtering still works)
+// - Has blank title/dancer/etc — operator fills in post-show
+// - Goes into the routines array right after the current routine, so advance
+//   navigation lands on it next
+// - Becomes the new current routine immediately (caller can then start recording)
+//
+// Returns the new routine, or null if the comp isn't loaded.
+// Operator-spec 2026-04-25: when a late-insert routine finishes recording, the
+// "current" cursor should snap back to where the operator was BEFORE pressing
+// START EMPTY ROUTINE — otherwise the schedule view jumps and stays there,
+// which is disorienting mid-show. Captured on insertLateRoutine, consumed by
+// returnFromLateInsert (called from recording.ts when stop fires on a
+// late-insert routine).
+let priorBeforeLateInsertId: string | null = null
+
+export function insertLateRoutine(): Routine | null {
+  if (!currentCompetition) return null
+  const visible = getVisibleRoutines()
+  const fullList = currentCompetition.routines
+  // Determine insertion index: right after the current routine in fullList.
+  let insertIdx = fullList.length
+  if (currentRoutineId) {
+    const curIdx = fullList.findIndex((r) => r.id === currentRoutineId)
+    if (curIdx >= 0) insertIdx = curIdx + 1
+  }
+  const cur = currentRoutineId ? fullList.find((r) => r.id === currentRoutineId) : null
+  const sourceForFields = cur ?? visible[0] ?? null
+  // Capture prior position so we can return after recording stops.
+  priorBeforeLateInsertId = currentRoutineId
+  const isoNow = new Date().toISOString()
+  const newId = 'empty-' + isoNow.replace(/[:.]/g, '-')
+  const baseEntry = sourceForFields?.entryNumber ?? '0'
+  const newEntry = baseEntry + '.5'
+  const newRoutine: Routine = {
+    id: newId,
+    entryNumber: newEntry,
+    routineTitle: '(Late insert — fill in post-show)',
+    dancers: '',
+    studioName: '',
+    studioCode: sourceForFields?.studioCode ?? '',
+    category: '',
+    classification: '',
+    ageGroup: '',
+    sizeCategory: '',
+    durationMinutes: 0,
+    scheduledDay: sourceForFields?.scheduledDay ?? '',
+    position: (sourceForFields?.position ?? 0) + 0.5,
+    status: 'pending',
+    lateInsert: true,
+  }
+  fullList.splice(insertIdx, 0, newRoutine)
+  currentRoutineId = newId
+  recomputeCachedCounts()
+  saveState()
+  logger.app.info(`Late-insert routine created: ${newId} (entry ${newEntry}) inserted at fullList[${insertIdx}], now current (prior=${priorBeforeLateInsertId})`)
+  return newRoutine
+}
+
+// Restore current cursor to the position the operator was at before pressing
+// START EMPTY ROUTINE. Called from recording.ts after a late-insert recording
+// stops. The late-insert routine remains in the schedule (operator fills in
+// metadata post-show); only the "current" pointer moves back. No-op if the
+// captured prior id is no longer visible (was scratched/skipped/removed).
+export function returnFromLateInsert(): void {
+  const priorId = priorBeforeLateInsertId
+  priorBeforeLateInsertId = null
+  if (!priorId || !currentCompetition) return
+  const stillVisible = getVisibleRoutines().some((r) => r.id === priorId)
+  if (!stillVisible) {
+    logger.app.info(`returnFromLateInsert: prior id ${priorId} no longer visible — leaving cursor on late-insert`)
+    return
+  }
+  currentRoutineId = priorId
+  saveState()
+  logger.app.info(`returnFromLateInsert: cursor restored to ${priorId}`)
+}
+
+// Swap a late-insert routine's synthetic local id (`empty-<ts>`) for the
+// real CompPortal entry uuid returned by `/api/plugin/late-insert-resolve`.
+// Also updates the displayed entry_number if CompPortal computed a different
+// `.5`/`.6`/etc. (in case our locally-derived value collided with another
+// entry on the server). currentRoutineId is updated if it matched the old id.
+//
+// Idempotent: if the routine already has the new id, this is a no-op.
+export function replaceLateInsertId(
+  oldId: string,
+  newEntryId: string,
+  newEntryNumber?: string,
+): boolean {
+  if (!currentCompetition) return false
+  if (oldId === newEntryId) return true
+  // Defensive: don't accept an empty/falsy uuid
+  if (!newEntryId) return false
+  // Bail if a routine with the new id already exists (idempotent re-resolve).
+  if (currentCompetition.routines.some((r) => r.id === newEntryId)) {
+    if (currentRoutineId === oldId) currentRoutineId = newEntryId
+    saveState()
+    return true
+  }
+  const routine = currentCompetition.routines.find((r) => r.id === oldId)
+  if (!routine) return false
+  if (!routine.lateInsert) {
+    logger.app.warn(`replaceLateInsertId: routine ${oldId} is not a lateInsert — refusing swap to ${newEntryId}`)
+    return false
+  }
+  routine.id = newEntryId
+  if (newEntryNumber && newEntryNumber !== routine.entryNumber) {
+    logger.app.info(`Late-insert entry_number reassigned: ${routine.entryNumber} → ${newEntryNumber}`)
+    routine.entryNumber = newEntryNumber
+  }
+  if (currentRoutineId === oldId) currentRoutineId = newEntryId
+  saveState()
+  logger.app.info(`Late-insert id resolved: ${oldId} → ${newEntryId}`)
+  return true
 }
 
 export function updateRoutineStatus(

@@ -14,7 +14,7 @@ let autoHideTimer: NodeJS.Timeout | null = null
 let chatFireTimer: NodeJS.Timeout | null = null
 
 let overlayState: OverlayState = {
-  counter: { visible: true, current: 0, total: 0, entryNumber: '' },
+  counter: { visible: true, current: 0, total: 0, entryNumber: '', nextAwardsTime: null },
   clock: { visible: false },
   logo: { visible: true, url: '' },
   lowerThird: {
@@ -577,7 +577,7 @@ export function fireChatMessage(msg: ChatMessage): void {
   notifyChange()
 }
 
-export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird'): OverlayState {
+export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird' | 'startingSoon'): OverlayState {
   const el = overlayState[element]
   el.visible = !el.visible
 
@@ -600,10 +600,12 @@ export function updateRoutineData(data: {
   category: string
   current: number
   total: number
+  nextAwardsTime?: string | null
 }): void {
   overlayState.counter.entryNumber = data.entryNumber
   overlayState.counter.current = data.current
   overlayState.counter.total = data.total
+  overlayState.counter.nextAwardsTime = data.nextAwardsTime ?? null
   overlayState.lowerThird.entryNumber = data.entryNumber
   overlayState.lowerThird.routineTitle = data.routineTitle
   overlayState.lowerThird.dancers = data.dancers
@@ -1404,16 +1406,21 @@ function buildOverlayHTML(): string {
   }
 
   /* ── Chat Fire — LT-style transient broadcast of pinned chat messages (commit 6) ── */
-  /* Positioned top-center so it doesn't clobber a bottom-anchored LT for an active routine. */
+  /* Positioned top-center so it doesn't clobber a bottom-anchored LT for an active routine.
+     Operator note 2026-04-25: pin-fires were not appearing on the live overlay even though
+     the IPC/state path was confirmed working ("Overlay chat fire:" log + state broadcast).
+     Hypothesis: stacking context conflict with .starting-soon (z-index 50) which is full-canvas
+     even at opacity 0. Hardening: position:fixed + viewport units + z-index above starting-soon. */
   .chat-fire {
-    position: absolute;
-    left: 50%;
-    top: 10%;
+    position: fixed;
+    left: 50vw;
+    top: 80px;
     transform: translateX(-50%);
     opacity: 0;
     transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease), filter var(--anim-dur) var(--anim-ease);
     max-width: 720px;
-    z-index: 6;
+    pointer-events: none;
+    z-index: 100;
   }
   .chat-fire.visible { opacity: 1; }
   /* Reuse the same animation variants as .lower-third — mirror classes */
@@ -1444,8 +1451,8 @@ function buildOverlayHTML(): string {
   .chat-fire.anim-typewriter { transform: translateX(-50%); }
   .cf-card {
     background: rgba(30, 30, 46, 0.92);
-    border: 1px solid rgba(255, 193, 7, 0.55);
-    border-left: 4px solid #ffc107;
+    border: 1px solid rgba(102, 126, 234, 0.55);
+    border-left: 4px solid #667eea;
     border-radius: 10px;
     padding: 18px 28px;
     backdrop-filter: blur(10px);
@@ -1455,7 +1462,7 @@ function buildOverlayHTML(): string {
   .cf-name {
     font-size: 18px;
     font-weight: 700;
-    color: #ffc107;
+    color: #a5b4fc;
     margin-bottom: 6px;
     letter-spacing: 0.3px;
   }
@@ -1472,7 +1479,7 @@ function buildOverlayHTML(): string {
 <div class="counter" id="counter">
   <div class="counter-box">
     <div class="counter-number" id="counterNumber"></div>
-    <div class="counter-label" id="counterLabel"></div>
+    <div class="counter-label" id="counterLabel" style="display:none"></div>
   </div>
 </div>
 <div class="logo" id="logo"><img id="logoImg" src="" alt="" /></div>
@@ -1608,7 +1615,15 @@ function buildOverlayHTML(): string {
       }
       lastCounterEntry = o.counter.entryNumber;
       counterNum.textContent = o.counter.entryNumber;
-      counterLabel.textContent = o.counter.entryNumber;
+      if (counterLabel) {
+        var awards = o.counter.nextAwardsTime;
+        if (awards) {
+          counterLabel.textContent = 'NEXT AWARDS ' + awards;
+          counterLabel.style.display = '';
+        } else {
+          counterLabel.style.display = 'none';
+        }
+      }
     } else {
       counterEl.classList.remove('visible');
     }
@@ -1774,6 +1789,71 @@ function buildOverlayHTML(): string {
     // Starting Soon
     if (o.startingSoon) {
       applyStartingSoon(o.startingSoon, state.ssConfig, o.logo ? o.logo.url : '', state);
+    }
+
+    // --- Chat Fire (commit 6) ---
+    // Transient LT-style broadcast when operator pins a chat message.
+    // Inherits animation from lowerThird + autoHideSeconds from animConfig.
+    // 2026-04-25 (v11): console diagnostics so the browser-side pipeline
+    // can be inspected in OBS Browser Source dev tools when fires don't render.
+    // 2026-04-25 (v15-fix): MOVED here from applyStartingSoon — that scope
+    // didn't see o/dur/ease, so cfState was always undefined and the entire
+    // branch was silently dead.
+    var cfEl = document.getElementById('chat-fire');
+    var cfState = o && o.chatFire;
+    if (cfEl) {
+      cfEl.style.setProperty('--anim-dur', dur);
+      cfEl.style.setProperty('--anim-ease', ease);
+      if (cfState && cfState.visible) {
+        if (cfState.messageId && cfState.messageId !== lastChatFireId) {
+          console.warn('[chat-fire] NEW FIRE id=' + cfState.messageId + ' user=' + JSON.stringify(cfState.username) + ' msg=' + JSON.stringify((cfState.message || '').slice(0, 40)) + ' anim=' + cfState.animation);
+          lastChatFireId = cfState.messageId;
+          LT_ANIMS.forEach(function(a) { cfEl.classList.remove(a); });
+          cfEl.classList.remove('visible');
+          var cfAnim = cfState.animation || 'random';
+          if (cfAnim === 'random') {
+            currentChatFireAnim = LT_ANIMS[Math.floor(Math.random() * LT_ANIMS.length)];
+          } else {
+            currentChatFireAnim = 'anim-' + cfAnim;
+          }
+          cfEl.classList.add(currentChatFireAnim);
+          var cfName = document.getElementById('cf-name');
+          var cfText = document.getElementById('cf-text');
+          if (cfName) cfName.textContent = cfState.username || 'Anonymous';
+          if (cfText) cfText.textContent = cfState.message || '';
+          requestAnimationFrame(function() {
+            cfEl.classList.add('visible');
+            cfEl.style.opacity = '1';
+            cfEl.style.display = 'block';
+            cfEl.style.visibility = 'visible';
+            var rect = cfEl.getBoundingClientRect();
+            var cs = getComputedStyle(cfEl);
+            console.warn('[chat-fire] visible class added — rect=' + JSON.stringify({ x: rect.x, y: rect.y, w: rect.width, h: rect.height }) + ' opacity=' + cs.opacity + ' display=' + cs.display + ' visibility=' + cs.visibility + ' position=' + cs.position + ' zIndex=' + cs.zIndex + ' classes=' + cfEl.className);
+          });
+        } else {
+          cfEl.classList.add('visible');
+        }
+      } else {
+        if (cfEl.classList.contains('visible')) {
+          console.warn('[chat-fire] HIDE — removing visible class');
+          cfEl.classList.remove('visible');
+          cfEl.style.opacity = '0';
+          var clearAnim = currentChatFireAnim;
+          setTimeout(function() {
+            if (clearAnim) cfEl.classList.remove(clearAnim);
+            var cfN = document.getElementById('cf-name');
+            var cfT = document.getElementById('cf-text');
+            if (cfN) cfN.textContent = '';
+            if (cfT) cfT.textContent = '';
+          }, 600);
+          currentChatFireAnim = '';
+          lastChatFireId = '';
+        }
+      }
+    } else {
+      if (cfState && cfState.visible) {
+        console.error('[chat-fire] element #chat-fire NOT FOUND in DOM but state says visible=true');
+      }
     }
   }
 
@@ -2519,56 +2599,6 @@ function buildOverlayHTML(): string {
       legacyTickerEl.classList.add('visible');
     }
 
-    // --- Chat Fire (commit 6) ---
-    // Transient LT-style broadcast when operator pins a chat message.
-    // Inherits animation from lowerThird + autoHideSeconds from animConfig.
-    var cfEl = document.getElementById('chat-fire');
-    var cfState = o && o.chatFire;
-    if (cfEl) {
-      cfEl.style.setProperty('--anim-dur', dur);
-      cfEl.style.setProperty('--anim-ease', ease);
-      if (cfState && cfState.visible) {
-        // New fire (new id) or first time visible — apply enter animation
-        if (cfState.messageId && cfState.messageId !== lastChatFireId) {
-          lastChatFireId = cfState.messageId;
-          // Clear stale animation classes
-          LT_ANIMS.forEach(function(a) { cfEl.classList.remove(a); });
-          cfEl.classList.remove('visible');
-          var cfAnim = cfState.animation || 'random';
-          if (cfAnim === 'random') {
-            currentChatFireAnim = LT_ANIMS[Math.floor(Math.random() * LT_ANIMS.length)];
-          } else {
-            currentChatFireAnim = 'anim-' + cfAnim;
-          }
-          cfEl.classList.add(currentChatFireAnim);
-          var cfName = document.getElementById('cf-name');
-          var cfText = document.getElementById('cf-text');
-          if (cfName) cfName.textContent = cfState.username || 'Anonymous';
-          if (cfText) cfText.textContent = cfState.message || '';
-          requestAnimationFrame(function() {
-            cfEl.classList.add('visible');
-          });
-        } else {
-          // Same id — ensure visible class stays on
-          cfEl.classList.add('visible');
-        }
-      } else {
-        // Exit animation: remove visible; clear anim class after transition
-        if (cfEl.classList.contains('visible')) {
-          cfEl.classList.remove('visible');
-          var clearAnim = currentChatFireAnim;
-          setTimeout(function() {
-            if (clearAnim) cfEl.classList.remove(clearAnim);
-            var cfN = document.getElementById('cf-name');
-            var cfT = document.getElementById('cf-text');
-            if (cfN) cfN.textContent = '';
-            if (cfT) cfT.textContent = '';
-          }, 600);
-          currentChatFireAnim = '';
-          lastChatFireId = '';
-        }
-      }
-    }
   }
 
   function updateClock() {
@@ -2614,9 +2644,7 @@ function buildOverlayHTML(): string {
     });
     // Set placeholder content so elements are visible
     var cn = document.getElementById('counterNumber');
-    var cl = document.getElementById('counterLabel');
     if (cn && !cn.textContent) cn.textContent = '1';
-    if (cl && !cl.textContent) cl.textContent = '1';
     var ct = document.getElementById('clockTime');
     if (ct && !ct.textContent) updateClock();
     var ltT = document.getElementById('ltTitle');

@@ -81,9 +81,18 @@ export function start(): void {
   }, 30000)
 
   overlay.setOnStateChange(() => broadcastState())
-  obs.setOnStateChange(() => broadcastState())
+  obs.setOnStateChange(() => {
+    broadcastState()
+    // Connection state may have just flipped to connected — pull the
+    // transition list so the Stream Deck cycle button has data.
+    if (obs.getState().connectionStatus === 'connected') {
+      refreshTransitionCache()
+    }
+  })
   obs.setOnAudioLevels((levels) => broadcastAudioLevels(levels))
   chatBridge.setOnPinChange(() => broadcastState())
+  // Refresh transition cache when OBS reports a transition change.
+  obs.setOnTransitionChanged(() => refreshTransitionCache())
 }
 
 export function stop(): void {
@@ -248,6 +257,29 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
         stateService.clearCameraOffsets()
         break
       }
+      case 'cycleTransition': {
+        const list = await obs.getTransitionList()
+        if (list.length === 0) break
+        const cur = await obs.getCurrentTransitionName()
+        const idx = cur ? list.indexOf(cur) : -1
+        const next = list[(idx + 1 + list.length) % list.length]
+        await obs.setCurrentTransitionByName(next)
+        logger.app.info(`Stream Deck cycled OBS transition: ${cur ?? '(none)'} → ${next}`)
+        break
+      }
+      case 'kickQueue': {
+        try {
+          const ffmpegMod = await import('./ffmpeg')
+          ffmpegMod.resumeRecordedRoutines()
+          ffmpegMod.resumeEncoding()
+        } catch {}
+        try {
+          const upload = await import('./upload')
+          upload.startUploads()
+        } catch {}
+        logger.app.info('Stream Deck kicked the queue')
+        break
+      }
     }
     broadcastState()
   } catch (err) {
@@ -258,6 +290,21 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
 
 async function handleCommand(cmd: WSCommandMessage): Promise<void> {
   await executeCommand(cmd)
+}
+
+// Lightweight transition cache so buildStateMessage doesn't fire OBS calls
+// every broadcast (every state change ~ multiple per second). Refreshed when
+// the OBS transition-changed event fires (see obs.ts handler) and on connect.
+let cachedTransitionList: string[] = []
+let cachedCurrentTransition: string | null = null
+export function refreshTransitionCache(): void {
+  void Promise.all([obs.getTransitionList(), obs.getCurrentTransitionName()])
+    .then(([list, cur]) => {
+      cachedTransitionList = list
+      cachedCurrentTransition = cur
+      broadcastState()
+    })
+    .catch(() => { /* silent */ })
 }
 
 function buildStateMessage(): WSStateMessage {
@@ -287,6 +334,7 @@ function buildStateMessage(): WSStateMessage {
     recording: { active: obsState.isRecording, elapsed: obsState.recordTimeSec },
     streaming: obsState.isStreaming,
     skippedCount,
+    transitions: { current: cachedCurrentTransition, list: cachedTransitionList },
     overlay: overlayState,
     overlayLayout: overlay.getLayout(),
     ssConfig: overlay.getSSConfig(),

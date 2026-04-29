@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { ChatMessage, PinnedChatMessage } from '../../shared/types'
 
+const ADMIN_NAME_KEY = 'cse:chatAdminName'
+
 function initial(name: string): string {
   if (!name) return '?'
   const ch = name.trim().charAt(0)
@@ -51,6 +53,36 @@ export default function ChatPanel(): React.ReactElement | null {
   }
 
   const pinnedIds = new Set(chat.pinned.map((p) => p.id))
+
+  const [adminName, setAdminName] = useState<string>(() => {
+    try { return localStorage.getItem(ADMIN_NAME_KEY) || 'Host' } catch { return 'Host' }
+  })
+  const [draft, setDraft] = useState<string>('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+
+  useEffect(() => {
+    try { localStorage.setItem(ADMIN_NAME_KEY, adminName) } catch { /* ignore */ }
+  }, [adminName])
+
+  async function handleAdminSend(): Promise<void> {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const result = await (window.api as any)?.chatPostMessage?.({ text, name: adminName })
+      if (result?.ok) {
+        setDraft('')
+      } else {
+        setSendError(result?.error || 'Send failed')
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
 
   return (
     <div
@@ -150,6 +182,66 @@ export default function ChatPanel(): React.ReactElement | null {
                 )}
               </div>
             ))}
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border, #333)', padding: '6px 8px', background: 'rgba(255,255,255,0.02)' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.5, color: 'var(--accent, #4b7bff)', marginBottom: 4, textTransform: 'uppercase' }}>
+              CHAT AS ADMIN
+            </div>
+            <input
+              type="text"
+              value={adminName}
+              onChange={(e) => setAdminName(e.target.value)}
+              placeholder="Display name"
+              maxLength={40}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'rgba(0,0,0,0.3)', color: 'inherit',
+                border: '1px solid var(--border, #333)', borderRadius: 3,
+                padding: '4px 6px', fontSize: 11, marginBottom: 4, outline: 'none',
+              }}
+            />
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void handleAdminSend()
+                }
+              }}
+              placeholder="Reply… (Enter to send, Shift+Enter newline)"
+              maxLength={300}
+              rows={2}
+              disabled={sending}
+              style={{
+                width: '100%', boxSizing: 'border-box', resize: 'none',
+                background: 'rgba(0,0,0,0.3)', color: 'inherit',
+                border: '1px solid var(--border, #333)', borderRadius: 3,
+                padding: '4px 6px', fontSize: 11, fontFamily: 'inherit', outline: 'none',
+              }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, marginTop: 4 }}>
+              <span style={{ opacity: 0.55 }}>{draft.length}/300</span>
+              {sendError && (
+                <span style={{ color: '#ef4444', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {sendError}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleAdminSend()}
+                disabled={sending || !draft.trim()}
+                style={{
+                  marginLeft: 'auto',
+                  background: 'var(--accent, #4b7bff)', color: '#fff',
+                  border: 'none', borderRadius: 3,
+                  padding: '3px 12px', fontSize: 11, fontWeight: 600,
+                  cursor: sending || !draft.trim() ? 'not-allowed' : 'pointer',
+                  opacity: sending || !draft.trim() ? 0.45 : 1,
+                }}
+              >{sending ? 'Sending…' : 'Send'}</button>
+            </div>
           </div>
 
           <div style={{ borderTop: '1px solid var(--border, #333)' }}>

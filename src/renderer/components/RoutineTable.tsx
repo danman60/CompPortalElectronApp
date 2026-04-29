@@ -37,7 +37,10 @@ function getMediaUploadSummary(routine: Routine, judgeCount: number): MediaUploa
   const hasVideos = (routine.encodedFiles?.length ?? 0) > 0
   const hasPhotos = totalPhotos > 0
   const allVideosUploaded = !hasVideos || uploadedVideos >= totalVideos
-  const allPhotosUploaded = !hasPhotos || uploadedPhotos >= totalPhotos
+  // Photos must actually exist AND all be uploaded. Previously `!hasPhotos`
+  // made this vacuously true for routines with zero photos imported, so a row
+  // with videos uploaded but no photos showed "All Media Uploaded" — wrong.
+  const allPhotosUploaded = hasPhotos && uploadedPhotos >= totalPhotos
 
   return {
     totalVideos,
@@ -54,8 +57,17 @@ function getMediaUploadSummary(routine: Routine, judgeCount: number): MediaUploa
 
 function getPortalStatusMeta(
   routine: Routine,
+  judgeCount: number,
 ): { text: string; className: string } | null {
   const status = routine.mediaPackageStatus
+  // Operator-spec 2026-04-25: even if CompPortal says complete/published, do
+  // NOT show the success pill if local photos haven't all been uploaded.
+  // "Portal Complete" was firing on routines where the package existed on
+  // the server but photos hadn't been pushed yet — misleading.
+  const media = getMediaUploadSummary(routine, judgeCount)
+  if ((status === 'complete' || status === 'published') && !media.allMediaUploaded) {
+    return { text: 'Portal Partial — photos pending', className: 'portal-pending' }
+  }
   switch (status) {
     case 'none':
       return { text: 'Portal None', className: 'portal-none' }
@@ -161,7 +173,33 @@ function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
     upload.detail = `Videos ${media.uploadedVideos}/${total}, photos ${photosUploaded}/${photoCount}`
   }
 
-  return [rec, split, photos, upload]
+  // Stage 5: Thumbs (per-photo R2-uploaded thumbnails)
+  const thumbsUploaded = routine.photos?.filter(p => p.thumbnailStoragePath).length ?? 0
+  const thumbs: PipelineStage = { label: 'THUMB', state: 'inactive' }
+  if (photoCount > 0) {
+    if (thumbsUploaded >= photoCount) {
+      thumbs.state = 'done'
+      thumbs.detail = `${thumbsUploaded}/${photoCount} thumbs uploaded`
+    } else {
+      thumbs.state = 'error'
+      thumbs.detail = `${thumbsUploaded}/${photoCount} thumbs uploaded`
+    }
+  }
+
+  // Stage 6: Keyframes (3 video keyframes per routine)
+  const keyframeCount = routine.keyframes?.length ?? 0
+  const keyframes: PipelineStage = { label: 'KEY', state: 'inactive' }
+  if (rec.state === 'done' || routine.status === 'encoded' || routine.status === 'uploaded' || routine.status === 'confirmed') {
+    if (keyframeCount >= 3) {
+      keyframes.state = 'done'
+      keyframes.detail = `${keyframeCount}/3 keyframes`
+    } else {
+      keyframes.state = 'error'
+      keyframes.detail = `${keyframeCount}/3 keyframes`
+    }
+  }
+
+  return [rec, split, photos, upload, thumbs, keyframes]
 }
 
 function stageIcon(state: StageState): string {
@@ -208,15 +246,18 @@ function statusToLabel(routine: Routine, judgeCount: number): { text: string; cl
       return { text: 'Uploading', className: 'uploading' }
     case 'uploaded': {
       if (media.allMediaUploaded) return { text: 'All Media Uploaded', className: 'complete' }
-      return { text: 'Videos Uploaded', className: 'video-only' }
+      // Distinguish "photos imported but not all up" vs "no photos imported yet"
+      if (media.hasPhotos) return { text: 'Videos Uploaded', className: 'video-only' }
+      return { text: 'Videos Uploaded — photos pending', className: 'video-only' }
     }
     case 'confirmed':
       if (portalStatus === 'published') {
         return { text: 'Portal Published', className: 'complete' }
       }
-      return media.allMediaUploaded
-        ? { text: 'Server Package Present', className: 'complete' }
-        : { text: 'Videos Synced', className: 'video-only' }
+      if (media.allMediaUploaded) return { text: 'Server Package Present', className: 'complete' }
+      return media.hasPhotos
+        ? { text: 'Videos Synced', className: 'video-only' }
+        : { text: 'Videos Synced — photos pending', className: 'video-only' }
     case 'failed':
       return { text: 'Failed', className: 'failed' }
     default:
@@ -291,6 +332,13 @@ type GroupedItem =
   | { type: 'routine'; routine: Routine }
   | { type: 'day-header'; dayLabel: string; dayKey: string }
   | { type: 'session-divider'; sessionNumber: number; gapMinutes: number; idleStartTime: string; idleEndTime: string }
+  | { type: 'sd-swap-heads-up'; sessionNumber: number; routinesRemaining: number; totalInSession: number }
+
+// Operator-spec 2026-04-25: SD cards fill before the end of a long session and
+// the operators routinely forget to swap mid-session. Show a visible heads-up
+// row just before the halfway point of any session with enough routines that
+// the SD risks filling. Pure visual marker — no logic, no IPC.
+const SD_SWAP_MIN_ROUTINES = 6
 
 function parseHHMMToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number)
@@ -312,7 +360,7 @@ function formatDayLabel(dayString: string): string {
   return dayString || 'Unknown Day'
 }
 
-function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolean }): GroupedItem[] {
+function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolean; currentRoutineId?: string | null }): GroupedItem[] {
   const result: GroupedItem[] = []
   let lastDay: string | null = null
   let lastEndMin: number | null = null
@@ -361,7 +409,64 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
     }
   }
 
-  return result
+  // Post-process: insert SD-swap heads-up row just before the halfway point
+  // of each session with enough routines to risk filling the card. Skips the
+  // session that contains the currently-recording/selected routine — no use
+  // showing a "you're halfway" heads-up if we're already past that point or
+  // about to start the in-progress session's recording flow.
+  const currentId = options.currentRoutineId ?? null
+  const out: GroupedItem[] = []
+  let sessionStart = 0
+  let currentSessionNumber = 1
+  function flushSessionWithHeadsUp(sessionItems: GroupedItem[], sessionNumber: number): void {
+    const routineIdxs: number[] = []
+    sessionItems.forEach((it, i) => { if (it.type === 'routine') routineIdxs.push(i) })
+    const count = routineIdxs.length
+    if (count < SD_SWAP_MIN_ROUTINES) {
+      out.push(...sessionItems)
+      return
+    }
+    // Skip if this session contains the current routine.
+    const sessionContainsCurrent = currentId != null && sessionItems.some(
+      (it) => it.type === 'routine' && it.routine.id === currentId,
+    )
+    if (sessionContainsCurrent) {
+      out.push(...sessionItems)
+      return
+    }
+    // "Just before halfway" — insert before the routine at floor(count/2) - 1
+    // (so the operator sees it ~40-45% through the session, with time to act).
+    const targetRoutineOrdinal = Math.max(0, Math.floor(count / 2) - 1)
+    const targetIdx = routineIdxs[targetRoutineOrdinal]
+    for (let i = 0; i < sessionItems.length; i++) {
+      if (i === targetIdx) {
+        out.push({
+          type: 'sd-swap-heads-up',
+          sessionNumber,
+          routinesRemaining: count - targetRoutineOrdinal,
+          totalInSession: count,
+        })
+      }
+      out.push(sessionItems[i])
+    }
+  }
+  for (let i = 0; i < result.length; i++) {
+    const it = result[i]
+    if (it.type === 'day-header') {
+      if (i > sessionStart) flushSessionWithHeadsUp(result.slice(sessionStart, i), currentSessionNumber)
+      out.push(it)
+      sessionStart = i + 1
+      currentSessionNumber = 1
+    } else if (it.type === 'session-divider') {
+      if (i > sessionStart) flushSessionWithHeadsUp(result.slice(sessionStart, i), currentSessionNumber)
+      out.push(it)
+      sessionStart = i + 1
+      currentSessionNumber = it.sessionNumber
+    }
+  }
+  if (sessionStart < result.length) flushSessionWithHeadsUp(result.slice(sessionStart), currentSessionNumber)
+
+  return out
 }
 
 interface NoteEditorExternalOpen {
@@ -494,8 +599,9 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   // increments per double-click so re-clicking the same row re-opens the
   // editor cleanly after close.
   const [noteOpenTarget, setNoteOpenTarget] = useState<NoteEditorExternalOpen | null>(null)
-  const nextUnrecordedRowRef = useRef<HTMLTableRowElement | null>(null)
-  const hasAutoScrolledRef = useRef(false)
+  const activeRowRef = useRef<HTMLTableRowElement | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement | null>(null)
+  const operatorScrolledAtRef = useRef<number>(0)
   const isWindowMode = windowMode != null
 
   function openNoteForRoutine(routineId: string): void {
@@ -505,17 +611,55 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
     }))
   }
 
+  // Auto-scroll the active (currently-recording, else first-pending) routine
+  // to roughly 1/3 from the top of the visible scroll area. Re-runs when the
+  // active routine changes. Yields to the operator if they scrolled within
+  // the last 5s so we don't fight a deliberate manual scroll.
   useEffect(() => {
-    if (isWindowMode) return // no auto-scroll in panel window mode
-    if (hasAutoScrolledRef.current) return
-    if (!competition?.routines?.length) return
-    const row = nextUnrecordedRowRef.current
-    if (!row) return
-    row.scrollIntoView({ block: 'center', behavior: 'auto' })
-    hasAutoScrolledRef.current = true
-  }, [competition?.routines?.length, isWindowMode])
+    if (isWindowMode) return
+    const row = activeRowRef.current
+    const scrollEl = tableScrollRef.current
+    if (!row || !scrollEl) return
+    const sinceManual = Date.now() - operatorScrolledAtRef.current
+    if (sinceManual < 5000) return
+    const rowRect = row.getBoundingClientRect()
+    const containerRect = scrollEl.getBoundingClientRect()
+    const desiredOffsetFromTop = containerRect.height / 3
+    const delta = (rowRect.top - containerRect.top) - desiredOffsetFromTop
+    scrollEl.scrollTo({ top: scrollEl.scrollTop + delta, behavior: 'smooth' })
+  }, [currentRoutine?.id, isWindowMode])
+
+  useEffect(() => {
+    const el = tableScrollRef.current
+    if (!el) return
+    function markManualScroll(): void {
+      operatorScrolledAtRef.current = Date.now()
+    }
+    el.addEventListener('wheel', markManualScroll, { passive: true })
+    el.addEventListener('touchmove', markManualScroll, { passive: true })
+    return () => {
+      el.removeEventListener('wheel', markManualScroll)
+      el.removeEventListener('touchmove', markManualScroll)
+    }
+  }, [])
 
   let routines = competition?.routines ?? []
+
+  // Item 5 (2026-04-25): if operator has set a manual displayOrder, sort the
+  // rendered routines by that order. IDs not in displayOrder fall to the end
+  // in their original schedule order so newly-arrived routines stay visible.
+  if (competition?.displayOrder && competition.displayOrder.length > 0) {
+    const orderIdx = new Map<string, number>()
+    competition.displayOrder.forEach((id, i) => orderIdx.set(id, i))
+    const inOrder: Routine[] = []
+    const trailing: Routine[] = []
+    for (const r of routines) {
+      if (orderIdx.has(r.id)) inOrder.push(r)
+      else trailing.push(r)
+    }
+    inOrder.sort((a, b) => (orderIdx.get(a.id)! - orderIdx.get(b.id)!))
+    routines = inOrder.concat(trailing)
+  }
 
   // Window-mode slice (for overlay panels) happens BEFORE filters so prev/next
   // stays stable regardless of the main window's day filter or search state.
@@ -566,10 +710,49 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
     setDropTargetId(null)
   }
 
+  // Item 5 (2026-04-25): native HTML5 row reorder. The drag handle (⋮⋮ cell)
+  // sets a custom MIME type so we can distinguish a row drag from a video-file
+  // drag without breaking the existing file-import drop handler.
+  const ROW_REORDER_MIME = 'application/x-compsync-routine-id'
+
+  function handleRowDragStart(e: React.DragEvent, routineId: string): void {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData(ROW_REORDER_MIME, routineId)
+    e.dataTransfer.setData('text/plain', routineId)
+  }
+
+  async function reorderRoutine(draggedId: string, targetId: string): Promise<void> {
+    if (!competition || draggedId === targetId) return
+    const allIds = competition.routines.map(r => r.id)
+    const baseOrder =
+      (competition.displayOrder && competition.displayOrder.length > 0)
+        ? competition.displayOrder.filter(id => allIds.includes(id))
+        : allIds.slice()
+    // Append any routines not already in baseOrder (defensive — shouldn't happen).
+    for (const id of allIds) if (!baseOrder.includes(id)) baseOrder.push(id)
+    const fromIdx = baseOrder.indexOf(draggedId)
+    const toIdx = baseOrder.indexOf(targetId)
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return
+    baseOrder.splice(fromIdx, 1)
+    baseOrder.splice(toIdx, 0, draggedId)
+    try {
+      await (window.api as any).stateSetDisplayOrder(baseOrder)
+    } catch (err) {
+      console.error('reorder failed:', err)
+    }
+  }
+
   async function handleDrop(e: React.DragEvent, routine: Routine): Promise<void> {
     e.preventDefault()
     e.stopPropagation()
     setDropTargetId(null)
+    // Row reorder takes precedence over file drop. Custom MIME type means
+    // this is a same-table row drag, not a file from the OS.
+    const draggedRoutineId = e.dataTransfer.getData(ROW_REORDER_MIME)
+    if (draggedRoutineId) {
+      void reorderRoutine(draggedRoutineId, routine.id)
+      return
+    }
     const files = Array.from(e.dataTransfer.files)
     const videoFiles = files.filter((f) =>
       /\.(mp4|mkv|mov|avi|webm|ts|mts)$/i.test(f.name),
@@ -584,7 +767,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   }
 
   return (
-    <div className="table-scroll">
+    <div className="table-scroll" ref={tableScrollRef}>
       <table className="upload-table">
         <thead>
           <tr>
@@ -595,6 +778,8 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             {!compactMode && <th className="th-pipeline">SPLIT</th>}
             {!compactMode && <th className="th-pipeline">PHOTO</th>}
             {!compactMode && <th className="th-pipeline">UP</th>}
+            {!compactMode && <th className="th-pipeline">THUMB</th>}
+            {!compactMode && <th className="th-pipeline">KEY</th>}
             <th>Status</th>
             <th></th>
           </tr>
@@ -605,11 +790,16 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             const showDayHeaders = !isWindowMode && (!dayFilter || uniqueDays.length > 1)
             const items = isWindowMode
               ? routines.map((r) => ({ type: 'routine' as const, routine: r }))
-              : buildGroupedList(routines, { showDayHeaders })
+              : buildGroupedList(routines, { showDayHeaders, currentRoutineId: currentRoutine?.id ?? null })
             const firstUnrecorded = routines.find(
               (r) => r.status === 'pending' || r.status === 'queued',
             )
             const firstUnrecordedId = firstUnrecorded?.id ?? null
+            // Pin auto-scroll to: live recording row > current selection > first unrecorded.
+            const recordingRoutine = routines.find((r) => r.status === 'recording')
+            const activeRowId = recordingRoutine?.id
+              ?? currentRoutine?.id
+              ?? firstUnrecordedId
             return items.map((item, idx) => {
               if (item.type === 'day-header') {
                 return (
@@ -634,6 +824,21 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                   </tr>
                 )
               }
+              if (item.type === 'sd-swap-heads-up') {
+                return (
+                  <tr key={`sdswap-${idx}`} className="sd-swap-heads-up-row">
+                    <td colSpan={99}>
+                      <div className="sd-swap-heads-up">
+                        <span className="sd-swap-icon" aria-hidden="true">💾</span>
+                        <span className="sd-swap-label">SWAP SD CARDS</span>
+                        <span className="sd-swap-detail">
+                          · halfway through Session {item.sessionNumber} · {item.routinesRemaining} of {item.totalInSession} routines remaining
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              }
               const routine = item.routine
               const isLive = routine.status === 'recording'
             const isNotRecorded = routine.status === 'pending' || routine.status === 'skipped' || routine.status === 'scratched'
@@ -642,13 +847,15 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             const progress = getProgressPercent(routine, judgeCount)
             const barClass = getBarClass(routine.status, routine, judgeCount)
             const pipeline = getPipeline(routine, judgeCount)
-            const portalStatus = getPortalStatusMeta(routine)
+            const portalStatus = getPortalStatusMeta(routine, judgeCount)
 
             return (
               <tr
                 key={routine.id}
-                ref={routine.id === firstUnrecordedId ? nextUnrecordedRowRef : undefined}
+                ref={routine.id === activeRowId ? activeRowRef : undefined}
                 className={`${isCurrent ? 'current-row' : ''}${dropTargetId === routine.id ? ' drop-target' : ''}`}
+                draggable
+                onDragStart={(e) => handleRowDragStart(e, routine.id)}
                 onClick={() => handleJumpTo(routine)}
                 onDoubleClick={(e) => {
                   e.stopPropagation()
@@ -753,7 +960,32 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                         onClick={(e) => {
                           void handleNudgeRoutine(e, routine)
                         }}
-                        title="Manually resume this routine's next processing or upload step"
+                        onContextMenu={(e) => {
+                          // Right-click toggles the relevant global auto setting
+                          // and fires a kick. Choice of encode vs upload follows
+                          // the routine's current pipeline stage.
+                          e.preventDefault()
+                          e.stopPropagation()
+                          const kind: 'encode' | 'upload' =
+                            routine.status === 'recorded' || routine.status === 'queued' || routine.status === 'encoding'
+                              ? 'encode'
+                              : 'upload'
+                          void (async () => {
+                            try {
+                              const res = await (window.api as any).jobQueueAutoToggle(kind)
+                              const label = kind === 'encode' ? 'Auto-encode' : 'Auto-upload'
+                              const stateText = (kind === 'encode' ? res?.autoEncode : res?.autoUpload) ? 'ON' : 'OFF'
+                              window.dispatchEvent(new CustomEvent('compsync:auto-toggled', {
+                                detail: { label, state: stateText },
+                              }))
+                            } catch {
+                              window.dispatchEvent(new CustomEvent('compsync:auto-toggled', {
+                                detail: { label: 'Auto toggle', state: 'FAILED' },
+                              }))
+                            }
+                          })()
+                        }}
+                        title="Click: nudge this routine. Right-click: toggle global auto-encode/upload + kick queue."
                       >
                         Nudge
                       </button>

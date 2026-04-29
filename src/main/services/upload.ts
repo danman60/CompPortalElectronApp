@@ -977,6 +977,70 @@ async function processLoop(): Promise<void> {
   isUploading = false
 }
 
+// Resolve a synthetic late-insert id (`empty-<isoTimestamp>`) to the real
+// CompPortal entry uuid by calling `/api/plugin/late-insert-resolve`. Patches
+// the local routine.id + entryNumber and persists state so the standard
+// upload-url + complete flow can proceed against the real uuid.
+//
+// Idempotent on (competitionId, syntheticId) — CompPortal enforces this at
+// the DB layer via UNIQUE (competition_id, synthetic_id). Calling twice for
+// the same recording returns the same entryId.
+//
+// Wired in 2026-04-25 against the spec in CompPortal/INBOX.md (15:30+15:35
+// EDT). Waits for the CompPortal session to ship the endpoint; until then
+// this throws and uploads of late-insert routines fail gracefully (file
+// stays on disk for retry).
+async function resolveLateInsertEntryId(
+  routineId: string,
+  competitionId: string,
+): Promise<string> {
+  const routine = state.getCompetition()?.routines.find((r) => r.id === routineId)
+  if (!routine) throw new Error(`resolveLateInsertEntryId: routine ${routineId} not found`)
+  if (!routine.lateInsert || !routine.id.startsWith('empty-')) return routine.id
+  const { apiBase, apiKey } = getConnection()
+  // Find the entry that was current immediately before this late-insert was
+  // spliced in (the late-insert routine sits at fullList[<prior>+1]).
+  const fullList = state.getCompetition()?.routines ?? []
+  const idx = fullList.findIndex((r) => r.id === routineId)
+  const afterRoutine = idx > 0 ? fullList[idx - 1] : null
+  // Synthetic id is everything after the `empty-` prefix; recordedAt comes
+  // from recordingStartedAt if set, else parsed back from the synthetic id.
+  const syntheticId = routine.id
+  const recordedAt = routine.recordingStartedAt
+    ?? routine.id.replace(/^empty-/, '').replace(/-/g, (m, i) => i === 10 ? 'T' : (i === 13 || i === 16 ? ':' : (i === 19 ? '.' : '-')))
+  const payload = {
+    competitionId,
+    syntheticId,
+    recordedAt,
+    afterEntryId: afterRoutine?.id ?? null,
+    afterEntryNumber: afterRoutine?.entryNumber ?? null,
+  }
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${apiBase}/api/plugin/late-insert-resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: abort.signal,
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`late-insert-resolve failed: ${response.status} ${text}`)
+    }
+    const body = (await response.json()) as { entryId?: string; entryNumber?: string }
+    if (!body.entryId) throw new Error(`late-insert-resolve returned no entryId: ${JSON.stringify(body)}`)
+    state.replaceLateInsertId(routineId, body.entryId, body.entryNumber)
+    logger.upload.info(`Late-insert resolved: ${syntheticId} → ${body.entryId}${body.entryNumber ? ` (entry ${body.entryNumber})` : ''}`)
+    return body.entryId
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function getSignedUploadUrl(
   entryId: string,
   competitionId: string,
@@ -985,6 +1049,12 @@ async function getSignedUploadUrl(
   contentType: string,
   uploadRunId: string,
 ): Promise<{ signedUrl: string; storagePath: string }> {
+  // Late-insert resolution: if entryId is a synthetic `empty-*` id, mint
+  // the real CompPortal uuid first, then proceed with the standard upload
+  // flow against the resolved uuid.
+  if (entryId.startsWith('empty-')) {
+    entryId = await resolveLateInsertEntryId(entryId, competitionId)
+  }
   const { apiBase, apiKey } = getConnection()
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)

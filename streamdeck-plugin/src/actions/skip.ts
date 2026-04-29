@@ -12,6 +12,6 @@ export class SkipAction extends SingletonAction {
   }
   override async onKeyDown(ev: KeyDownEvent): Promise<void> {
     conn.sendCommand('skip')
-    await ev.action.showOk()
+
   }
 }

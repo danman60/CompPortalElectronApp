@@ -1,6 +1,8 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { ChatMessage, PinnedChatMessage } from '../../shared/types'
+
+const ADMIN_NAME_KEY = 'cse:chatAdminName'
 
 function initial(name: string): string {
   if (!name) return '?'
@@ -54,6 +56,36 @@ export default function PanelChat(): React.ReactElement {
 
   const pinnedIds = new Set(chat.pinned.map((p) => p.id))
 
+  const [adminName, setAdminName] = useState<string>(() => {
+    try { return localStorage.getItem(ADMIN_NAME_KEY) || 'Host' } catch { return 'Host' }
+  })
+  const [draft, setDraft] = useState<string>('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+
+  useEffect(() => {
+    try { localStorage.setItem(ADMIN_NAME_KEY, adminName) } catch { /* ignore */ }
+  }, [adminName])
+
+  async function handleSend(): Promise<void> {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const result = await (window.api as any)?.chatPostMessage?.({ text, name: adminName })
+      if (result?.ok) {
+        setDraft('')
+      } else {
+        setSendError(result?.error || 'Send failed')
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <div className="panel-chat">
       <div className="panel-chat-header">
@@ -86,6 +118,43 @@ export default function PanelChat(): React.ReactElement {
             </div>
           )
         })}
+      </div>
+      <div className="panel-chat-admin">
+        <div className="panel-chat-admin-header">CHAT AS ADMIN</div>
+        <input
+          className="panel-chat-admin-name"
+          type="text"
+          value={adminName}
+          onChange={(e) => setAdminName(e.target.value)}
+          placeholder="Display name"
+          maxLength={40}
+        />
+        <textarea
+          className="panel-chat-admin-text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              void handleSend()
+            }
+          }}
+          placeholder="Reply to chat\u2026 (Enter to send, Shift+Enter for newline)"
+          maxLength={300}
+          rows={2}
+          disabled={sending}
+        />
+        <div className="panel-chat-admin-row">
+          <span className="panel-chat-admin-count">{draft.length}/300</span>
+          {sendError && <span className="panel-chat-admin-error">{sendError}</span>}
+          <button
+            className="panel-chat-admin-send"
+            onClick={() => void handleSend()}
+            disabled={sending || !draft.trim()}
+          >
+            {sending ? 'Sending\u2026' : 'Send'}
+          </button>
+        </div>
       </div>
     </div>
   )
