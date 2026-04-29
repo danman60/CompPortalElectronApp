@@ -9,6 +9,7 @@ import * as state from './state'
 import { getCameraBodyKey, importPhotos } from './photos'
 import * as upload from './upload'
 import { getSettings } from './settings'
+import { parseExifLocalDate } from './exifTz'
 
 /**
  * Drive Monitor — detects when removable storage (SD cards, USB drives) is plugged in.
@@ -117,11 +118,8 @@ async function readExifDateTimeOriginal(filePath: string): Promise<Date | null> 
     )
     const dateTime = tags['DateTimeOriginal']?.description
     if (!dateTime) return null
-    const [datePart, timePart] = dateTime.split(' ')
-    if (!datePart || !timePart) return null
-    const isoString = datePart.replace(/:/g, '-') + 'T' + timePart
-    const d = new Date(isoString)
-    return isNaN(d.getTime()) ? null : d
+    // Phase 2.6: shared TZ contract — operator-machine local, never UTC.
+    return parseExifLocalDate(dateTime)
   } catch {
     return null
   }
@@ -571,33 +569,19 @@ function poll(): void {
         // its own PHOTOS_IMPORT IPC on DRIVE_DETECTED. Previously the
         // renderer won the race (~9s head start) and the main-process call
         // was rejected with "Already importing this folder", so the
-        // dedup-by-DB + offset-gate path never ran. A quick day-level
-        // pre-check gates wrong-day cameras; the full clock sampler + survey
-        // still run fire-and-forget AFTER for their popups.
+        // dedup-by-DB + offset-gate path never ran.
+        //
+        // Phase 2.1 (2026-04-29): the legacy `<2/3 today` pre-check was
+        // REMOVED. It misfired on multi-day cards (Day N where the card has
+        // photos from Day 1..N → <2/3 are today → false skip), which is
+        // exactly the operator's normal workflow. Watermark filter (per
+        // body, EXIF time-based) handles the "already imported" case.
+        // Per-photo strict-today filter (always-on unless operator opts in
+        // to "include photos from prior days") handles the cross-body
+        // contamination case. The full clock sampler + survey still run
+        // fire-and-forget AFTER auto-import for their popups.
         void (async () => {
           try {
-            // Quick pre-check: if any 2 of 3 sampled photos are not today, skip.
-            const preSamples = await collectJpegSamples(camera.photoPath, 3, 3)
-            let todayHits = 0
-            for (const p of preSamples) {
-              const dt = await readExifDateTimeOriginal(p)
-              if (!dt) continue
-              const today = new Date()
-              if (
-                dt.getFullYear() === today.getFullYear() &&
-                dt.getMonth() === today.getMonth() &&
-                dt.getDate() === today.getDate()
-              ) {
-                todayHits++
-              }
-            }
-            if (preSamples.length >= 2 && todayHits < 2) {
-              logger.photos.info(
-                `Auto-import skipped for ${drive}: pre-check says <2/3 samples are today`,
-              )
-              return
-            }
-
             const comp = state.getCompetition()
             if (!comp) {
               logger.photos.info(`Auto-import skipped for ${drive}: no competition loaded`)

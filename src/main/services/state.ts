@@ -54,6 +54,12 @@ interface CameraOffsetEntry {
 interface SdWatermarkEntry {
   lastCaptureTime: string // ISO EXIF DateTimeOriginal of latest processed photo for this body
   lastFilename?: string   // legacy/back-compat log aid only
+  // Phase 2.3 (2026-04-29): tiebreaker for burst-mode photos sharing the
+  // exact same EXIF capture-time-to-the-second. The numeric sequence pulled
+  // from the filename (e.g. "P1234567.JPG" → 1234567, "NAP_5074.JPG" → 5074).
+  // Skip gate: iso < lastCaptureTime OR (iso === lastCaptureTime AND seq <= lastFilenameSeq).
+  // Optional for back-compat with watermarks written before this field existed.
+  lastFilenameSeq?: number
   setAt: string          // ISO
 }
 
@@ -1306,28 +1312,54 @@ export function getSdWatermark(bodyId: string): SdWatermarkEntry | null {
   return sdWatermarks[bodyId] ?? null
 }
 
-export function setSdWatermark(bodyId: string, lastCaptureTime: string, lastFilename?: string): void {
+export function setSdWatermark(
+  bodyId: string,
+  lastCaptureTime: string,
+  lastFilename?: string,
+  lastFilenameSeq?: number,
+): void {
   const existing = sdWatermarks[bodyId]
-  // Only bump forward — never regress a watermark on accident.
-  if (existing && existing.lastCaptureTime >= lastCaptureTime) return
+  // Only bump forward — never regress a watermark on accident. Compare by
+  // (lastCaptureTime, lastFilenameSeq) to support burst-mode tiebreaker.
+  if (existing) {
+    if (existing.lastCaptureTime > lastCaptureTime) return
+    if (existing.lastCaptureTime === lastCaptureTime) {
+      const existingSeq = existing.lastFilenameSeq ?? -1
+      const newSeq = lastFilenameSeq ?? -1
+      if (existingSeq >= newSeq) return
+    }
+  }
   sdWatermarks[bodyId] = {
     lastCaptureTime,
     lastFilename,
+    lastFilenameSeq,
     setAt: new Date().toISOString(),
   }
-  logger.app.info(`SD watermark set: body="${bodyId}" lastCaptureTime="${lastCaptureTime}"`)
+  logger.app.info(`SD watermark set: body="${bodyId}" lastCaptureTime="${lastCaptureTime}"${lastFilenameSeq != null ? ` seq=${lastFilenameSeq}` : ''}`)
   saveState()
 }
 
 export function setSdWatermarksBulk(
-  entries: Record<string, { lastCaptureTime: string; lastFilename?: string }>,
+  entries: Record<string, { lastCaptureTime: string; lastFilename?: string; lastFilenameSeq?: number }>,
 ): number {
   let updated = 0
   const now = new Date().toISOString()
   for (const [bodyId, entry] of Object.entries(entries)) {
     const existing = sdWatermarks[bodyId]
-    if (existing && existing.lastCaptureTime >= entry.lastCaptureTime) continue
-    sdWatermarks[bodyId] = { lastCaptureTime: entry.lastCaptureTime, lastFilename: entry.lastFilename, setAt: now }
+    if (existing) {
+      if (existing.lastCaptureTime > entry.lastCaptureTime) continue
+      if (existing.lastCaptureTime === entry.lastCaptureTime) {
+        const existingSeq = existing.lastFilenameSeq ?? -1
+        const newSeq = entry.lastFilenameSeq ?? -1
+        if (existingSeq >= newSeq) continue
+      }
+    }
+    sdWatermarks[bodyId] = {
+      lastCaptureTime: entry.lastCaptureTime,
+      lastFilename: entry.lastFilename,
+      lastFilenameSeq: entry.lastFilenameSeq,
+      setAt: now,
+    }
     updated++
   }
   if (updated > 0) {

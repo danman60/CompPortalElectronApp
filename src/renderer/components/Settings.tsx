@@ -834,15 +834,32 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
-        {/* Photo Import — SD Watermarks */}
+        {/* Photo Import — Watermarks + Date Filter */}
         <div className="settings-section">
           <div className="settings-section-title">Photo Import</div>
           <p className="section-desc">
-            Mark currently-attached SD cards as already processed so auto-import skips existing
-            photos (e.g., when swapping in a card full of pre-show frames). Clear watermarks to
-            re-enable full import of all photos.
+            Auto-import only adds photos newer than the per-camera watermark. Cards with photos
+            from prior days/events get the old photos automatically skipped — only today&apos;s
+            photos import. Use the controls below for forensic recovery (re-importing prior days
+            from a card) or after manual DB cleanup.
           </p>
           <div className="settings-grid single">
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!!draft.behavior?.includePriorDayPhotos}
+                  onChange={(e) => update('behavior', { includePriorDayPhotos: e.target.checked })}
+                />
+                {' '}Include photos from prior days (forensic recovery)
+              </label>
+              <span className="hint">
+                Off (default): photos with EXIF dates other than today are silently skipped on
+                every import path. On: prior-day photos are processed too — useful for re-importing
+                a card after manual DB cleanup, dangerous during a live event because old
+                contamination on the card will get pulled in.
+              </span>
+            </div>
             <div className="field">
               <div className="field-row" style={{ gap: 8 }}>
                 <button
@@ -850,7 +867,6 @@ export default function Settings(): React.ReactElement {
                   disabled={watermarkBusy}
                   onClick={async () => {
                     const attached = await Promise.resolve().then(() => {
-                      // Best-effort check; actual scan happens in main. Prompt operator first.
                       return confirm('Mark all currently-attached SDs as already processed?\n\nAuto-import will skip photos already on the cards at this moment. New photos taken after this will still import normally.')
                     })
                     if (!attached) return
@@ -881,20 +897,21 @@ export default function Settings(): React.ReactElement {
                   className="back-btn"
                   disabled={watermarkBusy}
                   onClick={async () => {
-                    if (!confirm('Clear all SD watermarks?\n\nNext auto-import will include every photo currently on attached cards.')) return
+                    if (!confirm('Clear all photo-import watermarks?\n\nThis resets the per-camera "last imported" markers. Next auto-import will re-evaluate every photo on attached cards (subject to today-date filter and DB-dedup).\n\nUse this if you need to re-import an entire card from scratch — e.g. after manual DB cleanup.')) return
                     setWatermarkBusy(true)
                     setWatermarkStatus('Clearing...')
                     try {
                       await (window.api as any).photosClearSdWatermarks()
-                      setWatermarkStatus('Cleared all SD watermarks.')
+                      setWatermarkStatus('Cleared all photo-import watermarks.')
                     } catch (err) {
                       setWatermarkStatus(`Error: ${err instanceof Error ? err.message : String(err)}`)
                     } finally {
                       setWatermarkBusy(false)
                     }
                   }}
+                  title="Reset per-camera 'last imported' markers. Use after manual DB cleanup or to re-import a full card."
                 >
-                  Clear SD Watermarks
+                  Clear Photo-Import Watermarks
                 </button>
               </div>
               {watermarkStatus && (

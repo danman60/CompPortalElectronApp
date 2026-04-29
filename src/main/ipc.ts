@@ -664,7 +664,20 @@ export function registerAllHandlers(): void {
     const comp = stateService.getCompetition()
     const s = settings.getSettings()
     if (!comp) return { error: 'No competition loaded' }
-    return await photoService.importPhotos(folderPath as string, comp.routines, s.fileNaming.outputDirectory)
+    // Phase 2.4 (2026-04-29): manual import gets the same safeguards as the
+    // auto-fire path in driveMonitor — DB dedup + 5-min offset gate. Watermark
+    // filter activates automatically inside importPhotos via getCameraBodyKey.
+    // Without this, manual recovery imports could duplicate already-imported
+    // photos that were watermark-skipped on the auto path.
+    return await photoService.importPhotos(
+      folderPath as string,
+      comp.routines,
+      s.fileNaming.outputDirectory,
+      {
+        dedupByDb: true,
+        autoAbortOffsetMs: 5 * 60 * 1000,
+      },
+    )
   })
 
   // T-V7-25: scoped recovery import — given a drive path + allowlist of

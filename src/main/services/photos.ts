@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { dialog, BrowserWindow } from 'electron'
 import ExifReader from 'exifreader'
+import { parseExifLocalDate } from './exifTz'
 import { Routine, PhotoMatch, IPC_CHANNELS } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
@@ -414,15 +415,9 @@ async function getPhotoCaptureTime(filePath: string): Promise<Date | null> {
     const dateTime = tags['DateTimeOriginal']?.description
     if (!dateTime) return null
 
-    // Parse EXIF date format "YYYY:MM:DD HH:MM:SS"
-    // EXIF DateTimeOriginal is LOCAL time (no timezone) — cameras don't store UTC.
-    // Treat as local by NOT appending 'Z'. new Date("2026-03-24T14:30:00") parses as local.
-    const [datePart, timePart] = dateTime.split(' ')
-    if (!datePart || !timePart) return null
-    const isoString = datePart.replace(/:/g, '-') + 'T' + timePart
-    const d = new Date(isoString)
-    if (isNaN(d.getTime())) return null
-    return d
+    // Phase 2.6 (2026-04-29): use the dedicated TZ-contract helper. EXIF
+    // DateTimeOriginal is operator-machine-local; never append a UTC offset.
+    return parseExifLocalDate(dateTime)
   } catch (err) {
     logger.photos.warn(`Failed to read EXIF from ${path.basename(filePath)}:`, err)
     return null
@@ -1244,7 +1239,14 @@ async function runImport(
     )
     return cancelledResult()
   }
-  const skipMismatchedDates = dateGuard.action === 'skip-mismatched'
+  // Phase 2.1: per-photo strict-today filter is ALWAYS-ON unless the operator
+  // has explicitly opted-in to including prior-day photos via the
+  // `behavior.includePriorDayPhotos` setting (used for forensic recovery
+  // imports of weeks-old contamination on a card). Combined with the
+  // dialog's skip-mismatched choice — if the operator chose skip-mismatched
+  // we ALSO honor that, but the always-on filter is the safety floor.
+  const includePrior = !!getSettings().behavior?.includePriorDayPhotos
+  const skipMismatchedDates = dateGuard.action === 'skip-mismatched' || !includePrior
 
   // Read EXIF timestamps + compute source hash per file, drop ones already uploaded.
   // Iterate partitionedPaths so multi-drive scans process drive-by-drive (see above).
@@ -1254,7 +1256,14 @@ async function runImport(
   let skippedByWatermark = 0
   let firstCaptureTime: string | null = null
   let lastCaptureTime: string | null = null
-  const maxCaptureByBody: Record<string, { lastCaptureTime: string; lastFilename?: string }> = {}
+  const maxCaptureByBody: Record<string, { lastCaptureTime: string; lastFilename?: string; lastFilenameSeq?: number }> = {}
+
+  // Phase 2.3: extract numeric sequence from filename for burst-mode tiebreaker.
+  // Returns null when no digit run found.
+  function extractFilenameSeq(basename: string): number | null {
+    const m = basename.match(/(\d{3,7})\.(?:jpg|jpeg)$/i)
+    return m ? parseInt(m[1], 10) : null
+  }
 
   // D1 worker cutover. When settings.performance.useExifWorker is ON we
   // authoritatively read via the pool and fall back to inline only if the
@@ -1329,18 +1338,33 @@ async function runImport(
       const bodyKey = getCameraBodyKey(partitionedPaths[i])
       if (bodyKey) {
         const iso = captureTime.toISOString()
+        const basename = path.basename(partitionedPaths[i]).toUpperCase()
+        const seq = extractFilenameSeq(basename)
         const existingMax = maxCaptureByBody[bodyKey]
-        if (!existingMax || iso > existingMax.lastCaptureTime) {
+        // Phase 2.3: bump max watermark when this photo is later by EXIF time
+        // OR same EXIF time but higher filename seq (burst-mode tiebreaker).
+        const isNewerThanMax = !existingMax
+          || iso > existingMax.lastCaptureTime
+          || (iso === existingMax.lastCaptureTime && (seq ?? -1) > (existingMax.lastFilenameSeq ?? -1))
+        if (isNewerThanMax) {
           maxCaptureByBody[bodyKey] = {
             lastCaptureTime: iso,
-            lastFilename: path.basename(partitionedPaths[i]).toUpperCase(),
+            lastFilename: basename,
+            lastFilenameSeq: seq ?? undefined,
           }
         }
         if (!allowlistUpper) {
           const wm = state.getSdWatermark(bodyKey)
-          if (wm && iso <= wm.lastCaptureTime) {
-            skippedByWatermark++
-            continue
+          if (wm) {
+            // Phase 2.3 skip gate: iso < wm.lastCaptureTime
+            //   OR (iso === wm.lastCaptureTime AND seq <= wm.lastFilenameSeq)
+            const isOlder = iso < wm.lastCaptureTime
+            const isSameTimeOlderSeq = iso === wm.lastCaptureTime
+              && (seq ?? -1) <= (wm.lastFilenameSeq ?? -1)
+            if (isOlder || isSameTimeOlderSeq) {
+              skippedByWatermark++
+              continue
+            }
           }
         }
       }

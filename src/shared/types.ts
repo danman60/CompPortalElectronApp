@@ -529,6 +529,12 @@ export interface AppSettings {
     // last-known local hash, defer queue resume + show "Server state changed"
     // banner. Default off until CompPortal endpoint lands.
     compStateDriftCheck: boolean
+    // Phase 2.1 (2026-04-29): default-on per-photo strict-today filter.
+    // Photos whose EXIF date is not today get silently skipped on every
+    // import path (auto + manual). Operator can opt-in to include prior-day
+    // photos via this toggle (e.g. for forensic recovery). Default false
+    // (= always skip) which matches the operator's stated workflow.
+    includePriorDayPhotos: boolean
   }
   nextSequence: {
     stopRecording: boolean
@@ -1224,6 +1230,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     allowNonElevated: false,
     autoImportOnDrive: true,
     compStateDriftCheck: false,
+    includePriorDayPhotos: false,
   },
   nextSequence: {
     stopRecording: true,
