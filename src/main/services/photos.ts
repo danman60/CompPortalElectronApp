@@ -1358,9 +1358,18 @@ async function runImport(
           if (wm) {
             // Phase 2.3 skip gate: iso < wm.lastCaptureTime
             //   OR (iso === wm.lastCaptureTime AND seq <= wm.lastFilenameSeq)
+            // Legacy fallback: if the watermark predates seq tracking
+            // (lastFilenameSeq undefined), use the old `iso <= lastCaptureTime`
+            // gate so upgrade-from-legacy doesn't accidentally re-import
+            // already-processed same-second photos.
             const isOlder = iso < wm.lastCaptureTime
-            const isSameTimeOlderSeq = iso === wm.lastCaptureTime
-              && (seq ?? -1) <= (wm.lastFilenameSeq ?? -1)
+            const sameTime = iso === wm.lastCaptureTime
+            const legacyWatermark = wm.lastFilenameSeq === undefined
+            const isSameTimeOlderSeq = sameTime && (
+              legacyWatermark
+                ? true   // legacy: treat same-time as already-processed
+                : (seq ?? -1) <= (wm.lastFilenameSeq ?? -1)
+            )
             if (isOlder || isSameTimeOlderSeq) {
               skippedByWatermark++
               continue
