@@ -410,11 +410,12 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
   }
 
   // Post-process: insert SD-swap heads-up row just before the halfway point
-  // of each session with enough routines to risk filling the card. Skips the
-  // session that contains the currently-recording/selected routine — no use
-  // showing a "you're halfway" heads-up if we're already past that point or
-  // about to start the in-progress session's recording flow.
-  const currentId = options.currentRoutineId ?? null
+  // of each session with enough routines to risk filling the card.
+  // A44 fix 2026-04-28: previously suppressed for the session containing the
+  // currently-selected routine — defeated the purpose. Operator selects the
+  // first routine of a session well before halfway and needs a forward
+  // reminder, not a retroactive one. Now always visible at ~40-45% through
+  // any session with >= SD_SWAP_MIN_ROUTINES.
   const out: GroupedItem[] = []
   let sessionStart = 0
   let currentSessionNumber = 1
@@ -423,14 +424,6 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
     sessionItems.forEach((it, i) => { if (it.type === 'routine') routineIdxs.push(i) })
     const count = routineIdxs.length
     if (count < SD_SWAP_MIN_ROUTINES) {
-      out.push(...sessionItems)
-      return
-    }
-    // Skip if this session contains the current routine.
-    const sessionContainsCurrent = currentId != null && sessionItems.some(
-      (it) => it.type === 'routine' && it.routine.id === currentId,
-    )
-    if (sessionContainsCurrent) {
       out.push(...sessionItems)
       return
     }

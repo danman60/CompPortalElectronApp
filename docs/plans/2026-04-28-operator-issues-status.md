@@ -50,7 +50,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A41 | SHIPPED | CSE (this commit) | Controls.tsx isNextEventAwardsBlock() — disables NEXT when next visible routine is across a >=15min gap or different scheduledDay; tooltip explains; gap threshold mirrors RoutineTable.tsx SESSION_GAP_MIN |
 | A42 | OPEN | — | no SD-press checkmark removal commit |
 | A43 | OPEN | — | no DART CPU mitigation commit |
-| A44 | OPEN | — | no SD swap reminder row commit |
+| A44 | SHIPPED | CSE (this commit) | RoutineTable buildGroupedList — removed sessionContainsCurrent suppression; heads-up row now always visible at ~40-45% through any session with >=6 routines, including the active session (operator needs forward reminder, not retroactive) |
 | A45 | N/A | — | discussion of MKV preservation; no code expected |
 | A46 | OPEN | — | manual counter-nudge field not built |
 | A47 | CLOSED | — | Stream Deck variant shipped; "no re-record button on banner" rule baked into A53/A55 design; no further work per spec |
