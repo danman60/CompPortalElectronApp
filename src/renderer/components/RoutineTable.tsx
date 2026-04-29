@@ -866,7 +866,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, routine)}
                 style={{
-                  cursor: obsState.isRecording ? 'not-allowed' : 'pointer',
+                  cursor: 'pointer',
                   ...(isLive
                     ? { background: 'rgba(239,68,68,0.06)', borderLeft: '3px solid var(--recording)' }
                     : {}),
