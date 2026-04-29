@@ -819,7 +819,25 @@ export function assignOverflowRoutineForTake(emptyRoutineNumber: string | null):
 
   const isoNow = new Date().toISOString()
   const newId = 'empty-' + isoNow.replace(/[:.]/g, '-')
-  // Insert at end so the overflow rows pile up at the bottom of the table.
+
+  // Position the new row. Pure 999-overflow with no typed entry → end of
+  // table. Typed entry like "3.5" or "226.5" → insert immediately after the
+  // routine whose entryNumber matches the integer prefix (so 3.5 lands
+  // between R3 and R4, not at the bottom). Falls back to end if no match.
+  let insertIdx = fullList.length
+  let scheduledDay = ''
+  if (emptyRoutineNumber) {
+    const baseMatch = entryNumber.match(/^(\d+)/)
+    if (baseMatch) {
+      const baseNumber = baseMatch[1]
+      const baseIdx = fullList.findIndex((r) => r.entryNumber === baseNumber)
+      if (baseIdx >= 0) {
+        insertIdx = baseIdx + 1
+        scheduledDay = fullList[baseIdx].scheduledDay
+      }
+    }
+  }
+
   const newRoutine: Routine = {
     id: newId,
     entryNumber,
@@ -834,15 +852,15 @@ export function assignOverflowRoutineForTake(emptyRoutineNumber: string | null):
     ageGroup: '',
     sizeCategory: '',
     durationMinutes: 0,
-    scheduledDay: '',
-    position: fullList.length + 1,
+    scheduledDay,
+    position: insertIdx + 0.5,
     status: 'pending',
     lateInsert: true,
   }
-  fullList.push(newRoutine)
+  fullList.splice(insertIdx, 0, newRoutine)
   recomputeCachedCounts()
   saveState()
-  logger.app.info(`assignOverflowRoutineForTake: minted ${newId} entry=${entryNumber} (lateInsert)`)
+  logger.app.info(`assignOverflowRoutineForTake: minted ${newId} entry=${entryNumber} (lateInsert) at index ${insertIdx} of ${fullList.length}`)
   return newRoutine
 }
 

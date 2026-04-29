@@ -8,48 +8,107 @@ import type {
 } from '../../shared/types'
 
 /**
- * A53 / A55: post-encode audio audit findings + pass toast.
+ * A53 / A55 — post-encode audio audit findings.
  *
- * Failures (identical tracks, excessive silence, low loudness) render as
- * persistent dismissable banners. Pass events render as a small toast
- * that auto-fades after 10s. NO re-record button — explicitly rejected
- * (operator decision 2026-04-28).
+ * 2026-04-29: rewritten from the floating right-rail stack to a single
+ * top-banner-per-routine. Operator feedback: stack was too aggressive (one
+ * 25s recording produced 9 banners). Now consolidates per routine with a
+ * "Dismiss" per banner and "Dismiss all" when 2+ routines have findings.
+ *
+ * Pass events still render as a small auto-fading green toast (~10s).
+ *
+ * NO re-record button — explicitly hallucinated and rejected.
  */
 
-type Finding =
-  | { kind: 'identical'; id: string; ev: AudioIdenticalTracksEvent }
-  | { kind: 'silence'; id: string; ev: AudioSilenceDetectedEvent }
-  | { kind: 'loudness'; id: string; ev: AudioLowLoudnessEvent }
+interface RoutineFindings {
+  routineId: string
+  entryNumber: string
+  identicalPairs: Array<[string, string]>
+  silentRoles: Array<{ role: string; silentFraction: number; noiseFloorDb: number }>
+  lowLoudnessRoles: Array<{ role: string; meanRmsDb: number; thresholdDb: number }>
+}
 
-let findingSeq = 0
+function summarize(f: RoutineFindings): string {
+  const parts: string[] = []
+  if (f.identicalPairs.length > 0) {
+    const pairList = f.identicalPairs.map(([a, b]) => `${a}=${b}`).join(', ')
+    parts.push(`identical tracks: ${pairList}`)
+  }
+  if (f.silentRoles.length > 0) {
+    const roles = f.silentRoles.map((s) => s.role).join(', ')
+    parts.push(`silent: ${roles}`)
+  }
+  if (f.lowLoudnessRoles.length > 0) {
+    const roles = f.lowLoudnessRoles.map((l) => `${l.role}(${l.meanRmsDb.toFixed(0)}dB)`).join(', ')
+    parts.push(`low: ${roles}`)
+  }
+  return parts.join(' · ')
+}
 
 export default function AudioAuditBanner(): React.ReactElement | null {
-  const [findings, setFindings] = useState<Finding[]>([])
+  const [byRoutine, setByRoutine] = useState<Map<string, RoutineFindings>>(new Map())
   const [pass, setPass] = useState<AudioAuditPassEvent | null>(null)
   const [passFading, setPassFading] = useState(false)
+  const [expandedRoutineId, setExpandedRoutineId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!window.api) return
+
+    function ensure(id: string, entry: string): RoutineFindings {
+      let cur = byRoutine.get(id)
+      if (!cur) {
+        cur = { routineId: id, entryNumber: entry, identicalPairs: [], silentRoles: [], lowLoudnessRoles: [] }
+      }
+      return cur
+    }
+
     const offId = window.api.on(IPC_CHANNELS.AUDIO_IDENTICAL_TRACKS_DETECTED, (data: unknown) => {
       const ev = data as AudioIdenticalTracksEvent
-      setFindings((prev) => [...prev, { kind: 'identical', id: `id-${++findingSeq}`, ev }])
+      setByRoutine((prev) => {
+        const next = new Map(prev)
+        const cur = next.get(ev.routineId) ?? ensure(ev.routineId, ev.entryNumber)
+        cur.identicalPairs = ev.matchedPairs
+        next.set(ev.routineId, { ...cur })
+        return next
+      })
     })
     const offSil = window.api.on(IPC_CHANNELS.AUDIO_SILENCE_DETECTED, (data: unknown) => {
       const ev = data as AudioSilenceDetectedEvent
-      setFindings((prev) => [...prev, { kind: 'silence', id: `sil-${++findingSeq}`, ev }])
+      setByRoutine((prev) => {
+        const next = new Map(prev)
+        const cur = next.get(ev.routineId) ?? ensure(ev.routineId, ev.entryNumber)
+        // Replace per role to dedup re-fires.
+        cur.silentRoles = [
+          ...cur.silentRoles.filter((s) => s.role !== ev.role),
+          { role: ev.role, silentFraction: ev.silentFraction, noiseFloorDb: ev.noiseFloorDb },
+        ]
+        next.set(ev.routineId, { ...cur })
+        return next
+      })
     })
     const offLoud = window.api.on(IPC_CHANNELS.AUDIO_LOW_LOUDNESS_DETECTED, (data: unknown) => {
       const ev = data as AudioLowLoudnessEvent
-      setFindings((prev) => [...prev, { kind: 'loudness', id: `loud-${++findingSeq}`, ev }])
+      setByRoutine((prev) => {
+        const next = new Map(prev)
+        const cur = next.get(ev.routineId) ?? ensure(ev.routineId, ev.entryNumber)
+        cur.lowLoudnessRoles = [
+          ...cur.lowLoudnessRoles.filter((l) => l.role !== ev.role),
+          { role: ev.role, meanRmsDb: ev.meanRmsDb, thresholdDb: ev.thresholdDb },
+        ]
+        next.set(ev.routineId, { ...cur })
+        return next
+      })
     })
     const offPass = window.api.on(IPC_CHANNELS.AUDIO_AUDIT_PASS, (data: unknown) => {
       setPass(data as AudioAuditPassEvent)
       setPassFading(false)
     })
     return () => { try { offId() } catch {}; try { offSil() } catch {}; try { offLoud() } catch {}; try { offPass() } catch {} }
+  // intentionally not depending on byRoutine; ensure() reads via setState callback
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Auto-fade pass toast after ~10s.
+  // Pass toast auto-fade.
   useEffect(() => {
     if (!pass) return
     const t = setTimeout(() => setPassFading(true), 9700)
@@ -57,71 +116,146 @@ export default function AudioAuditBanner(): React.ReactElement | null {
     return () => { clearTimeout(t); clearTimeout(t2) }
   }, [pass])
 
-  function dismiss(id: string): void {
-    setFindings((prev) => prev.filter((f) => f.id !== id))
+  function dismissOne(id: string): void {
+    setByRoutine((prev) => {
+      const next = new Map(prev)
+      next.delete(id)
+      return next
+    })
+    if (expandedRoutineId === id) setExpandedRoutineId(null)
   }
+
+  function dismissAll(): void {
+    setByRoutine(new Map())
+    setExpandedRoutineId(null)
+  }
+
+  const findings = Array.from(byRoutine.values()).sort((a, b) => {
+    const an = parseFloat(a.entryNumber)
+    const bn = parseFloat(b.entryNumber)
+    if (!isNaN(an) && !isNaN(bn)) return an - bn
+    return a.entryNumber.localeCompare(b.entryNumber)
+  })
 
   if (findings.length === 0 && !pass) return null
 
   return (
-    <div style={{ position: 'fixed', top: 60, right: 16, zIndex: 9998, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 460 }}>
-      {findings.map((f) => {
-        let title = ''
-        let detail = ''
-        if (f.kind === 'identical') {
-          const pairList = f.ev.matchedPairs.map(([a, b]) => `${a}=${b}`).join(', ')
-          title = `R${f.ev.entryNumber} — audio tracks identical`
-          detail = `${pairList}. Likely ASIO rebind or routing collision. Verify.`
-        } else if (f.kind === 'silence') {
-          title = `R${f.ev.entryNumber} — ${f.ev.role} mostly silent`
-          detail = `${(f.ev.silentFraction * 100).toFixed(0)}% of duration below ${f.ev.noiseFloorDb} dB. Verify mic / source.`
-        } else {
-          title = `R${f.ev.entryNumber} — ${f.ev.role} audio low`
-          detail = `Mean ${f.ev.meanRmsDb.toFixed(1)} dBFS < ${f.ev.thresholdDb} dBFS. Verify mic input.`
-        }
-        return (
-          <div
-            key={f.id}
-            style={{
-              background: '#2a1e08',
-              border: '1px solid #c17f00',
-              borderLeft: '4px solid #c17f00',
-              borderRadius: 6,
-              padding: '10px 14px',
-              color: '#ffd38a',
-              fontSize: 12,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 10,
-            }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, marginBottom: 3 }}>{title}</div>
-              <div style={{ opacity: 0.9 }}>{detail}</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => dismiss(f.id)}
-              title="Dismiss"
-              aria-label="Dismiss"
+    <>
+      {/* Top-banner stack consistent with HardeningBanners (top:0, full width). */}
+      {findings.length > 0 && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9998, display: 'flex', flexDirection: 'column' }}>
+          {findings.length > 1 && (
+            <div
               style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'inherit',
-                cursor: 'pointer',
-                fontSize: 18,
-                lineHeight: 1,
-                padding: 0,
-                opacity: 0.7,
+                background: '#3a2810',
+                color: '#ffd38a',
+                padding: '4px 12px',
+                fontSize: 11,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid rgba(0,0,0,0.4)',
               }}
-            >×</button>
-          </div>
-        )
-      })}
+            >
+              <span>{findings.length} routines flagged for audio review</span>
+              <button
+                type="button"
+                onClick={dismissAll}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #c17f00',
+                  color: '#ffd38a',
+                  padding: '2px 10px',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >Dismiss all</button>
+            </div>
+          )}
+          {findings.map((f) => {
+            const expanded = expandedRoutineId === f.routineId
+            const summary = summarize(f)
+            return (
+              <div
+                key={f.routineId}
+                style={{
+                  background: '#c17f00',
+                  color: '#fff',
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  borderBottom: '1px solid rgba(0,0,0,0.3)',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div>
+                    <span style={{ fontWeight: 700 }}>R{f.entryNumber}</span> audio audit — {summary}
+                  </div>
+                  {expanded && (
+                    <div style={{ fontSize: 11, fontWeight: 400, marginTop: 4, opacity: 0.95 }}>
+                      {f.identicalPairs.length > 0 && (
+                        <div>Identical hashes: {f.identicalPairs.map(([a, b]) => `${a}=${b}`).join(', ')} (likely ASIO rebind / routing collision)</div>
+                      )}
+                      {f.silentRoles.map((s) => (
+                        <div key={'s-' + s.role}>{s.role}: {(s.silentFraction * 100).toFixed(0)}% below {s.noiseFloorDb} dB — verify mic / source</div>
+                      ))}
+                      {f.lowLoudnessRoles.map((l) => (
+                        <div key={'l-' + l.role}>{l.role}: mean {l.meanRmsDb.toFixed(1)} dBFS &lt; {l.thresholdDb} dBFS — verify mic input</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedRoutineId(expanded ? null : f.routineId)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.6)',
+                      color: '#fff',
+                      padding: '2px 10px',
+                      borderRadius: 3,
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                  >{expanded ? 'Hide' : 'Details'}</button>
+                  <button
+                    type="button"
+                    onClick={() => dismissOne(f.routineId)}
+                    aria-label="Dismiss"
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.6)',
+                      color: '#fff',
+                      padding: '2px 8px',
+                      borderRadius: 3,
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      lineHeight: 1,
+                    }}
+                  >×</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {pass && (
         <div
           style={{
+            position: 'fixed',
+            bottom: 80,
+            right: 16,
+            zIndex: 9997,
             background: '#0c2515',
             border: '1px solid #2da855',
             borderLeft: '4px solid #2da855',
@@ -141,6 +275,6 @@ export default function AudioAuditBanner(): React.ReactElement | null {
           R{pass.entryNumber} audio scan ✓ — {pass.trackCount} tracks captured, all distinct, all audible
         </div>
       )}
-    </div>
+    </>
   )
 }

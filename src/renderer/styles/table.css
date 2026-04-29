@@ -14,7 +14,11 @@
   background: rgba(9, 15, 24, 0.45);
   border: 1px solid rgba(255,255,255,0.06);
   border-radius: 12px;
-  overflow: hidden;
+  /* IMPORTANT: do NOT set `overflow: hidden` here — it breaks the
+     `position: sticky` on `.upload-table th` (sticky won't work when
+     any ancestor has overflow:hidden). The rounded corners are still
+     visible because the cells inside use background colors over the
+     parent's rounded background. */
 }
 
 .upload-table th {
