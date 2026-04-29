@@ -587,6 +587,23 @@ export function setCompetition(comp: Competition): void {
 
   recomputeCachedCounts()
   saveState()
+
+  // A35: bulk-sync currently-scratched routines to CompPortal as a backstop
+  // for any individual scratch-notify jobs that were lost across sessions.
+  // Idempotent — server upserts. Fires after persisted state is restored so
+  // we have the up-to-date scratched list for this comp.
+  void import('./compPortal').then((m) => {
+    const scratched: Array<{ entryId: string; status: 'scratched' | 'unscratched'; scratchedAt?: string }> = []
+    for (const r of comp.routines) {
+      if (r.status === 'scratched') {
+        scratched.push({ entryId: r.id, status: 'scratched' })
+      }
+    }
+    if (scratched.length === 0) return
+    m.postRoutineStatusBulk(comp.competitionId, scratched).catch(() => {})
+    // Also try to drain any pending scratch-notify jobs now that we have a connection.
+    m.drainScratchNotifyQueue().catch(() => {})
+  }).catch(() => {})
 }
 
 export function getCompetition(): Competition | null {
@@ -940,10 +957,29 @@ export function scratchRoutine(routineId: string): void {
     uploadProgress: undefined,
     error: undefined,
   })
+  enqueueScratchNotify(routineId, 'scratched')
 }
 
 export function unscratchedRoutine(routineId: string): void {
   updateRoutineStatus(routineId, 'pending')
+  enqueueScratchNotify(routineId, 'unscratched')
+}
+
+// A35: enqueue a scratch-notify job and try to drain immediately. If
+// CompPortal is unreachable, the job sits in the queue and gets retried
+// later (drain on next scratch action OR next share-resolve bulk sync).
+function enqueueScratchNotify(routineId: string, status: 'scratched' | 'unscratched'): void {
+  const comp = currentCompetition
+  if (!comp) return
+  const payload: Record<string, unknown> = {
+    competitionId: comp.competitionId,
+    entryId: routineId,
+    status,
+  }
+  if (status === 'scratched') payload.scratchedAt = new Date().toISOString()
+  jobQueue.enqueue('scratch-notify', routineId, payload)
+  // Lazy import to avoid circular dep: state ↔ compPortal ↔ schedule ↔ state.
+  void import('./compPortal').then(m => m.drainScratchNotifyQueue().catch(() => {})).catch(() => {})
 }
 
 export function getFilteredRoutines(dayFilter?: string): Routine[] {

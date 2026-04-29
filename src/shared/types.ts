@@ -972,7 +972,7 @@ export interface OverlayState {
 
 // --- Job Queue ---
 
-export type JobType = 'encode' | 'upload' | 'photo-import'
+export type JobType = 'encode' | 'upload' | 'photo-import' | 'scratch-notify'
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled' | 'quarantined'
 
 export interface JobRecord {

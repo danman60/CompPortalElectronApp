@@ -373,6 +373,10 @@ export function pruneMissingRoutines(validRoutineIds: Set<string>, type?: JobTyp
   const before = jobs.length
   jobs = jobs.filter((job) => {
     if (type && job.type !== type) return true
+    // A35: scratch-notify jobs survive routine prune — they reference work
+    // that still needs to flush to CompPortal even if the routine isn't in
+    // the current loaded competition (e.g., switched competitions).
+    if (job.type === 'scratch-notify') return true
     return validRoutineIds.has(job.routineId)
   })
   const pruned = before - jobs.length
@@ -392,6 +396,9 @@ export function pruneMissingRoutines(validRoutineIds: Set<string>, type?: JobTyp
 export function pruneForCompetition(competitionId: string, validRoutineIds: Set<string>): number {
   const before = jobs.length
   jobs = jobs.filter((job) => {
+    // A35: scratch-notify jobs survive competition switch — backstop for
+    // the case where the operator switches comps before a scratch flushed.
+    if (job.type === 'scratch-notify') return true
     if (!validRoutineIds.has(job.routineId)) return false
     if (job.type !== 'upload') return true
 

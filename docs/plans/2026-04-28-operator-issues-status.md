@@ -41,7 +41,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A32 | OPEN | — | no .5 routine drift fix commit |
 | A33 | OPEN | — | no 155.5 added-row commit (CP `B32` covers move-in errors) |
 | A34 | OPEN | — | no app-state vs DB-state guard commit |
-| A35 | OPEN | — | no SCRATCHED CSE→portal sync commit |
+| A35 | SHIPPED (CSE-side) | CSE (this commit) | New 'scratch-notify' JobType; jobQueue prune functions exempt scratch-notify; state.scratchRoutine/unscratchedRoutine enqueue + drain; setCompetition bulk-syncs scratched routines via /api/plugin/routine-status-bulk after persisted state restore. CompPortal side (DB migration, route handlers, UI) deferred to separate session. |
 | A36 | SHIPPED | CP `53b2635f photographer camera-clock sync page` | mobile sync page shipped |
 | A37 | SHIPPED | CSE `7b57839 (snapshot)` | EndOfDayModal.tsx + dayChecklist.ts implemented; auto-fires after last routine recorded; IPC + preload wired (App.tsx:932) |
 | A38 | SHIPPED | present in `state.ts` (snapshot) | `getVisibleRoutines()` filters scratched/skipped; defensive walk at state.ts:644-654 advances past scratched currentRoutineId |
