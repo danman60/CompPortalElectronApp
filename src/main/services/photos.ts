@@ -251,10 +251,67 @@ export async function browseForFolder(): Promise<string | null> {
  * We use the body-level key (P1 + first digit, like "P16") for offset
  * persistence — same camera across folders gets the same offset.
  */
+/**
+ * Phase 2.2 (2026-04-29): generalized body-key extraction for the 4 common
+ * camera filename patterns. Each pattern returns a stable per-body key so
+ * the SD-watermark filter can distinguish bodies sharing one card or one
+ * card across sessions.
+ *
+ * Order matters — first match wins. Patterns are anchored with ^…$ on the
+ * basename + ext to avoid partial matches (e.g. "PHOTO_001.JPG" must not be
+ * mistaken for the Lumix prefix).
+ *
+ * Unknown patterns return null and are surfaced via reportUnknownBodyKey()
+ * exactly once per session per filename pattern (Option 4 — loud-fail
+ * defense in depth so a 5th camera type isn't silently inert).
+ */
+const BODY_KEY_PATTERNS: Array<{ name: string; re: RegExp; extract: (m: RegExpMatchArray) => string }> = [
+  // Lumix: P{folder-prefix-2-digits}{file-seq-5-digits}.JPG  → key = "P{2}"
+  // Existing UDC London grouping: same body across folder rollovers.
+  { name: 'lumix', re: /^(P\d{2})\d{5}\.(?:jpg|jpeg)$/i, extract: (m) => m[1].toUpperCase() },
+  // Nikon: NAP_####.JPG (DSLR/mirrorless line)  → key = "NAP"
+  { name: 'nikon-nap', re: /^(NAP)_\d{4,5}\.(?:jpg|jpeg)$/i, extract: (m) => m[1].toUpperCase() },
+  // Sony / older Nikon: DSC#####.JPG / DSC_####.JPG  → key = "DSC"
+  { name: 'dsc', re: /^(DSC)_?\d{4,5}\.(?:jpg|jpeg)$/i, extract: (m) => m[1].toUpperCase() },
+  // Canon DSLR: IMG_####.JPG / _MG_####.JPG  → key = "IMG" / "_MG"
+  { name: 'canon-img', re: /^(IMG|_MG)_\d{4,5}\.(?:jpg|jpeg)$/i, extract: (m) => m[1].toUpperCase() },
+  // Canon EOS R / cinema: Q53A####.JPG  → key = "Q53A"
+  { name: 'canon-q53a', re: /^(Q\d{2}[A-Z])\d{4,5}\.(?:jpg|jpeg)$/i, extract: (m) => m[1].toUpperCase() },
+]
+
+const reportedUnknownPrefixes = new Set<string>()
+
+function unknownPrefixOf(basename: string): string {
+  // Approximate the camera filename "shape" so we don't spam one banner per
+  // file: take the first 4 alphanumerics + "...".  e.g. "ABCD1234.JPG" →
+  // "ABCD…", "FOO_42.jpg" → "FOO_…". Keeps false-distinct count low.
+  const m = basename.match(/^([A-Za-z0-9_]{1,6})/)
+  return m ? `${m[1]}…` : basename
+}
+
 export function getCameraBodyKey(filePath: string): string | null {
   const base = path.basename(filePath)
-  const m = base.match(/^(P\d{2})\d{5}\.(?:jpg|jpeg)$/i)
-  return m ? m[1].toUpperCase() : null
+  for (const p of BODY_KEY_PATTERNS) {
+    const m = base.match(p.re)
+    if (m) return p.extract(m)
+  }
+  // Phase 2.2 Option 4: surface unknown patterns once each. The watermark
+  // filter is inert for unknown bodies; operator needs to see this so they
+  // can either flag the new camera type or know dedup-by-DB is the only
+  // safety net for that card.
+  try {
+    const prefix = unknownPrefixOf(base)
+    if (!reportedUnknownPrefixes.has(prefix)) {
+      reportedUnknownPrefixes.add(prefix)
+      logger.photos.warn(
+        `Camera body unknown for filename pattern '${prefix}' (sample: ${base}) — watermark filter inert for this card; dedup-by-DB still active`,
+      )
+      sendToRenderer(IPC_CHANNELS.CAMERA_BODY_UNKNOWN, { prefix, sample: base })
+    }
+  } catch {
+    // Best-effort signal; never block import.
+  }
+  return null
 }
 
 /**

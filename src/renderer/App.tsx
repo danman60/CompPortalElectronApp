@@ -29,6 +29,7 @@ function HardeningBanners(): React.ReactElement | null {
   const [photoStall, setPhotoStall] = useState<{ ageMin: number } | null>(null)
   const [compDrift, setCompDrift] = useState<{ serverLastDbWriteAt: string } | null>(null)
   const [compDriftBusy, setCompDriftBusy] = useState(false)
+  const [unknownBodies, setUnknownBodies] = useState<Map<string, string>>(new Map())
 
   useEffect(() => {
     if (!window.api) return
@@ -87,6 +88,15 @@ function HardeningBanners(): React.ReactElement | null {
       setCompDrift(null)
       setCompDriftBusy(false)
     }))
+    offs.push(window.api.on(IPC_CHANNELS.CAMERA_BODY_UNKNOWN, (data: unknown) => {
+      const d = data as { prefix: string; sample: string }
+      setUnknownBodies((prev) => {
+        if (prev.has(d.prefix)) return prev
+        const next = new Map(prev)
+        next.set(d.prefix, d.sample)
+        return next
+      })
+    }))
     return () => {
       for (const off of offs) {
         try { off() } catch {}
@@ -117,6 +127,18 @@ function HardeningBanners(): React.ReactElement | null {
     text: `Photo import stalled — no new photos in ${photoStall.ageMin} min. Check SD card / reconcile via PIPE chip → Kick All Stages.`,
     onDismiss: () => setPhotoStall(null),
   })
+  for (const [prefix, sample] of unknownBodies) {
+    banners.push({
+      key: `unknown-body-${prefix}`,
+      bg: '#7a3a00',
+      text: `Camera body unknown for filename pattern '${prefix}' (sample: ${sample}) — watermark filter inert for this card. Re-imports rely on DB-dedup only.`,
+      onDismiss: () => setUnknownBodies((prev) => {
+        const next = new Map(prev)
+        next.delete(prefix)
+        return next
+      }),
+    })
+  }
   // Phase 1.4 / 1.6: drift banner with two distinct actions (Refresh + Skip).
   // Rendered AFTER the standard banners list so the banners-loop renders the
   // text + dismiss-X consistently; the action buttons are appended in the

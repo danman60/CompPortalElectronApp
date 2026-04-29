@@ -723,6 +723,9 @@ export const IPC_CHANNELS = {
   COMP_STATE_DRIFT_REFRESH_REQUEST: 'comp:state-drift-refresh-request',
   COMP_STATE_DRIFT_DISMISS: 'comp:state-drift-dismiss',
   COMP_STATE_DRIFT_RESOLVED: 'comp:state-drift-resolved',
+  // Phase 2.2: camera body unknown — filename pattern doesn't match any
+  // known camera body regex. Watermark filter is inert for that card.
+  CAMERA_BODY_UNKNOWN: 'photos:camera-body-unknown',
 
   // Item 17 / A54: click-to-reassign + active take broadcast
   RECORDING_REASSIGN_TARGET: 'recording:reassign-target',
