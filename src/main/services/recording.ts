@@ -14,17 +14,32 @@ import * as tether from './tether'
 // getter-based bindings.
 import * as photos from './photos'
 import * as jobQueue from './jobQueue'
+import * as take from './take'
 import { getSettings } from './settings'
 import * as schedule from './schedule'
 import { postNowPlaying } from './compPortal'
 import { dialog, BrowserWindow } from 'electron'
-import { IPC_CHANNELS, Routine } from '../../shared/types'
+import { IPC_CHANNELS, Routine, type ActiveTake } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 
 // --- Active recording tracking ---
 let activeRecordingRoutineId: string | null = null
 let pendingStopProcessing: { promise: Promise<void>; resolve: () => void } | null = null
+
+/**
+ * Item 17: external setter so the click-to-reassign IPC handler can move the
+ * runtime pointer when the operator retargets mid-record. The take file is
+ * the durable counterpart; this exists so handleRecordingStopped (and
+ * watchdog telemetry) reflect the new target immediately.
+ */
+export function setActiveRecordingRoutineId(routineId: string | null): void {
+  activeRecordingRoutineId = routineId
+}
+
+export function getActiveRecordingRoutineId(): string | null {
+  return activeRecordingRoutineId
+}
 
 // --- Fix 11: Watchdog tracking ---
 let recordStartedAt: number | null = null
@@ -502,14 +517,36 @@ export async function handleRecordingStopped(
 ): Promise<void> {
   let stoppedRoutineId: string | null = null
   try {
-    const routineId = activeRecordingRoutineId
+    let routineId = activeRecordingRoutineId
     stoppedRoutineId = routineId
     activeRecordingRoutineId = null
     stopRecordingWatchdog()
     obs.setActiveAlertRoutineId(null)
 
+    // Item 17: read the take file so we use its `startedAt` (which survives
+    // reassigns) and `currentTargetRoutineId` (which may differ from the
+    // initial activeRecordingRoutineId after click-to-reassign).
+    const activeTake = take.readActiveTake()
+    if (activeTake?.currentTargetRoutineId) {
+      routineId = activeTake.currentTargetRoutineId
+    }
+
+    // Item 17: 999-decrement overflow when the operator never bound the take
+    // to an explicit slot (no reassign, no SAVE AS EMPTY). Mint a lateInsert
+    // routine with entryNumber = competition.nextOverflowNumber and decrement.
+    if (!routineId) {
+      const overflow = state.assignOverflowRoutineForTake(activeTake?.emptyRoutineNumber ?? null)
+      if (overflow) {
+        routineId = overflow.id
+        logger.app.info(
+          `handleRecordingStopped: take had no target — assigned overflow R${overflow.entryNumber} (id ${routineId})`,
+        )
+      }
+    }
+
     if (!routineId) {
       logger.app.error(`Recording stopped but no activeRecordingRoutineId — raw file preserved at: ${outputPath}`)
+      take.clearActiveTake()
       return
     }
 
@@ -523,8 +560,11 @@ export async function handleRecordingStopped(
       return
     }
 
-    // Update routine state
+    // Update routine state. Item 17: use the take's startedAt so reassign-
+    // or empty-routine flows land the right value on the new target routine.
+    const takeStartedAt = activeTake?.startedAt ?? routine.recordingStartedAt
     state.updateRoutineStatus(routine.id, 'recorded', {
+      recordingStartedAt: takeStartedAt,
       recordingStoppedAt: timestamp,
       outputPath,
     })
@@ -841,6 +881,10 @@ export async function handleRecordingStopped(
       state.updateRoutineStatus(stoppedRoutineId, 'recorded', { outputPath, error: String(err) })
     }
   } finally {
+    // Item 17: take is now finalized to a routine — clear persistent take.
+    // Done in finally so even mid-flow exceptions don't strand a stale file.
+    take.clearActiveTake()
+    sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, null)
     pendingStopProcessing?.resolve()
     pendingStopProcessing = null
     broadcastFullStateImmediate()
@@ -856,6 +900,17 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
   expectedObsOutputDir = await obs.getRecordDirectory().catch(() => null)
   obs.setActiveAlertRoutineId(routine.id)
   startRecordingWatchdog()
+
+  // Item 17: persist a take record so reassign-while-recording (A54) can
+  // retarget without losing the actual start time. The take file survives
+  // crashes for surface-as-stale-take recovery.
+  const newTake: ActiveTake = {
+    takeId: take.newTakeId(),
+    startedAt: timestamp,
+    currentTargetRoutineId: routine.id,
+  }
+  take.writeActiveTake(newTake)
+  sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, newTake)
 
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,

@@ -598,6 +598,26 @@ app.whenReady().then(async () => {
     logger.app.warn('Startup checks failed:', err)
   })
 
+  // Item 17: detect a stale active take from a prior crash. We don't auto-bind
+  // — the recording is already gone; the OBS file (if any) is at a separate
+  // path. Instead, surface to the renderer so the operator sees the take
+  // existed and can investigate. Then clear so subsequent recordings start
+  // clean. (Recovering an in-flight MKV is out of scope for tonight.)
+  try {
+    const { readActiveTake, clearActiveTake } = await import('./services/take')
+    const stale = readActiveTake()
+    if (stale) {
+      logger.app.warn(`Stale active take detected on boot: ${stale.takeId} (started ${stale.startedAt})`)
+      const win = BrowserWindow.getAllWindows()[0]
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.RECORDING_STALE_TAKE_DETECTED, stale)
+      }
+      clearActiveTake()
+    }
+  } catch (err) {
+    logger.app.warn(`Stale take check failed: ${err instanceof Error ? err.message : err}`)
+  }
+
   // Fix 3: dev-build warning banner
   if (!app.isPackaged) {
     setTimeout(() => {

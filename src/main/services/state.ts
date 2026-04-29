@@ -788,6 +788,99 @@ export function insertLateRoutine(): Routine | null {
   return newRoutine
 }
 
+/**
+ * Item 17: assign an overflow routine for a take that finished without an
+ * explicit slot. If `emptyRoutineNumber` is provided (operator typed a number
+ * via SAVE AS EMPTY ROUTINE flow), use that. Otherwise mint a 999-decrement
+ * fallback. Either path produces a lateInsert row that the operator can edit
+ * post-show.
+ *
+ * Returns the routine, or null when no competition is loaded.
+ */
+export function assignOverflowRoutineForTake(emptyRoutineNumber: string | null): Routine | null {
+  if (!currentCompetition) return null
+  const fullList = currentCompetition.routines
+
+  let entryNumber: string
+  if (emptyRoutineNumber && emptyRoutineNumber.trim().length > 0) {
+    entryNumber = emptyRoutineNumber.trim()
+    // Reuse an existing routine by entryNumber if one already exists (operator
+    // typed a slot they meant to target).
+    const existing = fullList.find((r) => r.entryNumber === entryNumber)
+    if (existing) {
+      logger.app.info(`assignOverflowRoutineForTake: typed entry ${entryNumber} matched existing routine ${existing.id}`)
+      return existing
+    }
+  } else {
+    const next = (currentCompetition.nextOverflowNumber ?? 999)
+    entryNumber = String(next)
+    currentCompetition.nextOverflowNumber = next - 1
+  }
+
+  const isoNow = new Date().toISOString()
+  const newId = 'empty-' + isoNow.replace(/[:.]/g, '-')
+  // Insert at end so the overflow rows pile up at the bottom of the table.
+  const newRoutine: Routine = {
+    id: newId,
+    entryNumber,
+    routineTitle: emptyRoutineNumber
+      ? '(Empty routine — fill in post-show)'
+      : `(Auto-overflow — fill in post-show)`,
+    dancers: '',
+    studioName: '',
+    studioCode: '',
+    category: '',
+    classification: '',
+    ageGroup: '',
+    sizeCategory: '',
+    durationMinutes: 0,
+    scheduledDay: '',
+    position: fullList.length + 1,
+    status: 'pending',
+    lateInsert: true,
+  }
+  fullList.push(newRoutine)
+  recomputeCachedCounts()
+  saveState()
+  logger.app.info(`assignOverflowRoutineForTake: minted ${newId} entry=${entryNumber} (lateInsert)`)
+  return newRoutine
+}
+
+/**
+ * Item 17 / A54: retarget the active recording. Reverts the old slot to
+ * pending (clearing its recordingStartedAt) and marks the new slot as
+ * recording. Returns the new routine, or null on any failure (no comp,
+ * routines not found, etc.).
+ */
+export function reassignActiveTake(
+  oldRoutineId: string | null,
+  newRoutineId: string,
+  takeStartedAt: string,
+): Routine | null {
+  if (!currentCompetition) return null
+  const fullList = currentCompetition.routines
+  const newRoutine = fullList.find((r) => r.id === newRoutineId)
+  if (!newRoutine) {
+    logger.app.warn(`reassignActiveTake: new routine ${newRoutineId} not found`)
+    return null
+  }
+  if (oldRoutineId && oldRoutineId !== newRoutineId) {
+    const oldRoutine = fullList.find((r) => r.id === oldRoutineId)
+    if (oldRoutine && oldRoutine.status === 'recording') {
+      oldRoutine.status = 'pending'
+      oldRoutine.recordingStartedAt = undefined
+      logger.app.info(`reassignActiveTake: reverted ${oldRoutine.entryNumber} to pending`)
+    }
+  }
+  // Use updateRoutineStatus so cached counts + persistence + critical-flush
+  // logic all run consistently.
+  updateRoutineStatus(newRoutine.id, 'recording', { recordingStartedAt: takeStartedAt })
+  currentRoutineId = newRoutine.id
+  saveState()
+  logger.app.info(`reassignActiveTake: retargeted to ${newRoutine.entryNumber} (id ${newRoutine.id})`)
+  return newRoutine
+}
+
 // Restore current cursor to the position the operator was at before pressing
 // START EMPTY ROUTINE. Called from recording.ts after a late-insert recording
 // stops. The late-insert routine remains in the schedule (operator fills in

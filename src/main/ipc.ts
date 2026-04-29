@@ -8,6 +8,7 @@ import * as settings from './services/settings'
 import * as schedule from './services/schedule'
 import * as stateService from './services/state'
 import * as recording from './services/recording'
+import * as take from './services/take'
 import * as ffmpegService from './services/ffmpeg'
 import * as uploadService from './services/upload'
 import * as photoService from './services/photos'
@@ -145,6 +146,38 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.RECORDING_NEXT_FULL, async () => {
     logIPC(IPC_CHANNELS.RECORDING_NEXT_FULL)
     await recording.nextFull()
+  })
+
+  // Item 17 / A54: click-to-reassign mid-recording. Renderer surfaces a
+  // non-blocking confirmation popover; on confirm, fires this IPC with the
+  // target routine id (or null+emptyRoutineNumber for empty-routine flow).
+  // Recording continues uninterrupted; only the bound target changes.
+  safeHandle(IPC_CHANNELS.RECORDING_REASSIGN_TARGET, async (payloadUnknown: unknown) => {
+    logIPC(IPC_CHANNELS.RECORDING_REASSIGN_TARGET, payloadUnknown)
+    const payload = (payloadUnknown ?? {}) as {
+      routineId?: string | null
+      emptyRoutineNumber?: string
+    }
+    const cur = take.readActiveTake()
+    if (!cur) return { error: 'No active take' }
+    const oldId = cur.currentTargetRoutineId
+    let newRoutineId: string | null = payload.routineId ?? null
+    let emptyNumber = payload.emptyRoutineNumber ?? cur.emptyRoutineNumber
+    if (!newRoutineId && emptyNumber) {
+      const newRoutine = stateService.assignOverflowRoutineForTake(emptyNumber)
+      if (newRoutine) newRoutineId = newRoutine.id
+    }
+    if (!newRoutineId) return { error: 'No target supplied' }
+    const result = stateService.reassignActiveTake(oldId, newRoutineId, cur.startedAt)
+    if (!result) return { error: 'Reassign failed' }
+    recording.setActiveRecordingRoutineId(result.id)
+    const updated = take.patchActiveTake({
+      currentTargetRoutineId: result.id,
+      emptyRoutineNumber: emptyNumber,
+    })
+    if (updated) sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, updated)
+    recording.broadcastFullState()
+    return { ok: true, routineId: result.id, entryNumber: result.entryNumber }
   })
 
   // Late-insert / empty-routine recording (UDC Toronto 2026-04-25 operator
