@@ -210,6 +210,13 @@ const activeUploadRoutineIds = new Set<string>()
 
 function sendProgress(routineId: string, progress: UploadProgress): void {
   sendToRenderer(IPC_CHANNELS.UPLOAD_PROGRESS, { routineId, progress })
+  // A56: bump upload activity timestamps. We can't easily distinguish photo
+  // vs video at this layer, so bump both — pipelineHealth differentiates by
+  // looking at jobQueue pending counts, not which one ticked.
+  void import('./pipelineHealth').then((m) => {
+    m.bumpActivity('photoUpload')
+    m.bumpActivity('videoUpload')
+  }).catch(() => {})
 }
 
 function getConnection(): { apiBase: string; apiKey: string; competitionId: string } {

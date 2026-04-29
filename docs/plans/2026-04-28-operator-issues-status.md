@@ -62,6 +62,8 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A53 | SHIPPED | CSE (this commit) | ffmpeg.ts runAudioAudit — SHA-256 of each MP4's audio stream post-encode; pairs that match fire AUDIO_IDENTICAL_TRACKS_DETECTED with matchedPairs + byHash. AudioAuditBanner renders dismissable persistent banner. NO re-record button per spec. |
 | A55 | SHIPPED | CSE (this commit) | ffmpeg.ts silencedetect (default -50dB:10s) flags >50% silent; volumedetect mean RMS < -40dBFS triggers low-loudness. AudioAuditBanner renders persistent fail banners + auto-fading pass toast. All checks settings-gated (audioAudit.identityCheckEnabled / silenceCheckEnabled / loudnessCheckEnabled). |
 
+| A56 | SHIPPED (slice) | CSE (this commit) | New service pipelineHealth.ts tracks last-activity + pending counts for 4 stages: recording (zero-tolerance red on 'recorded' without video), photoImport (30/60 routine durations), photoUpload + videoUpload (5/10 min). Periodic eval every 30s, broadcasts PIPELINE_HEALTH IPC. PipelineHealthChip in header — dot + click-expand panel. Encode/thumb/keyframe stages + "Kick all" button + persistent banners deferred. |
+
 ## Section B — CompPortal media
 
 | ID | Status | Commit | Notes |

@@ -703,6 +703,9 @@ export const IPC_CHANNELS = {
   AUDIO_LOW_LOUDNESS_DETECTED: 'audio:low-loudness-detected',
   AUDIO_AUDIT_PASS: 'audio:audit-pass',
 
+  // A56: universal pipeline detector (narrow slice — header chip)
+  PIPELINE_HEALTH: 'pipeline:health',
+
   // Upload
   UPLOAD_ALL: 'upload:all',
   UPLOAD_CANCEL_ROUTINE: 'upload:cancel-routine',
@@ -1278,6 +1281,28 @@ export interface AudioAuditPassEvent {
   routineId: string
   entryNumber: string
   trackCount: number
+}
+
+// --- Pipeline Health (A56) ---
+
+export type PipelineStageId = 'recording' | 'photoImport' | 'photoUpload' | 'videoUpload'
+
+export interface PipelineStageState {
+  id: PipelineStageId
+  /** Last activity timestamp in ms-since-epoch. 0 means never activated this session. */
+  lastActivityMs: number
+  /** Pending work count (jobs queued, photos not yet matched, etc.) */
+  pendingCount: number
+  /** Health classification computed by the evaluator. */
+  health: 'green' | 'yellow' | 'red' | 'unknown'
+  /** Optional human-readable reason for the current health (e.g. "no upload activity for 12m"). */
+  reason?: string
+}
+
+export interface PipelineHealthSnapshot {
+  worst: 'green' | 'yellow' | 'red' | 'unknown'
+  evaluatedAtMs: number
+  stages: PipelineStageState[]
 }
 
 // --- Audio Transcription ---

@@ -892,6 +892,15 @@ export function updateRoutineStatus(
 
   logger.app.info(`Routine ${routine.entryNumber} "${routine.routineTitle}": ${oldStatus} → ${status}`)
 
+  // A56: pipeline-health activity bumps for status transitions.
+  if (status === 'recording' || status === 'recorded' || status === 'encoded' || status === 'uploaded') {
+    void import('./pipelineHealth').then((m) => m.bumpActivity('recording')).catch(() => {})
+  }
+  // A56: red-flag if a routine moves to 'recorded' without a video output.
+  if (status === 'recorded' && oldStatus !== 'recorded' && !routine.outputPath && (!routine.encodedFiles || routine.encodedFiles.length === 0)) {
+    void import('./pipelineHealth').then((m) => m.flagRecordingMissingVideo(routine.id)).catch(() => {})
+  }
+
   // Critical transitions get immediate flush
   if (status === 'recording' || oldStatus === 'recording' || status === 'uploaded' || status === 'encoded') {
     saveStateImmediate()

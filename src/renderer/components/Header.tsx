@@ -6,6 +6,7 @@ import Controls from './Controls'
 import LoadCompetition from './LoadCompetition'
 import { HealthStrip } from './RightPanel'
 import VerticalMeters from './VerticalMeters'
+import PipelineHealthChip from './PipelineHealthChip'
 import '../styles/header.css'
 
 function useAppVersion(): string {
@@ -583,6 +584,7 @@ export default function Header(): React.ReactElement {
             {competition && <span className="si">{competition.routines.length} routines</span>}
             <ImportPill />
             <UploadBacklogPill />
+            <PipelineHealthChip />
           </div>
         </div>
 

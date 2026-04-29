@@ -920,6 +920,8 @@ export async function importPhotos(
       clockOffsetMs: 'clockOffsetMs' in result ? result.clockOffsetMs : 0,
       cancelled: 'cancelled' in result ? result.cancelled : false,
     })
+    // A56: bump photo-import activity timestamp.
+    void import('./pipelineHealth').then((m) => m.bumpActivity('photoImport')).catch(() => {})
     return result
   } catch (err) {
     events.emit('import.failed', { folderPath, error: err instanceof Error ? err.message : String(err) })

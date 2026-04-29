@@ -342,6 +342,9 @@ app.whenReady().then(async () => {
   // Initialize persistent job queue (must be before any service that enqueues)
   jobQueue.init()
 
+  // A56: pipeline health monitor — periodic evaluator + IPC broadcast
+  void import('./services/pipelineHealth').then((m) => m.init()).catch(() => {})
+
   // Kill orphaned FFmpeg from previous crash
   ffmpegService.killOrphanedProcess()
   wifiDisplay.killOrphanedProcess()
