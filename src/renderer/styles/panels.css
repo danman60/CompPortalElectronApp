@@ -364,8 +364,8 @@ html, body {
 }
 
 .panel-chat-msg.pinned {
-  background: rgba(255, 193, 7, 0.08);
-  border-left-color: #ffc107;
+  background: rgba(168, 85, 247, 0.08);
+  border-left-color: var(--stream-purple);
 }
 
 .panel-chat-avatar {
@@ -422,7 +422,7 @@ html, body {
 }
 
 .panel-chat-pin-btn:hover {
-  color: #ffc107;
+  color: var(--stream-purple);
 }
 
 .panel-chat-admin {

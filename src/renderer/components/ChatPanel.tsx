@@ -148,8 +148,8 @@ export default function ChatPanel(): React.ReactElement | null {
                   gap: 8,
                   padding: '6px 4px',
                   borderBottom: '1px solid rgba(255,255,255,0.05)',
-                  background: pinnedIds.has(msg.id) ? 'rgba(255, 193, 7, 0.1)' : 'transparent',
-                  borderLeft: pinnedIds.has(msg.id) ? '2px solid #ffc107' : '2px solid transparent',
+                  background: pinnedIds.has(msg.id) ? 'rgba(168, 85, 247, 0.12)' : 'transparent',
+                  borderLeft: pinnedIds.has(msg.id) ? '2px solid var(--stream-purple)' : '2px solid transparent',
                 }}
               >
                 <div
@@ -268,7 +268,7 @@ export default function ChatPanel(): React.ReactElement | null {
                     key={p.id}
                     style={{
                       display: 'flex', gap: 6, padding: '4px 6px',
-                      background: 'rgba(255, 193, 7, 0.08)',
+                      background: 'rgba(168, 85, 247, 0.10)',
                       borderRadius: 4, marginBottom: 4, alignItems: 'flex-start',
                     }}
                   >
