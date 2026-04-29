@@ -47,7 +47,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A38 | SHIPPED | present in `state.ts` (snapshot) | `getVisibleRoutines()` filters scratched/skipped; defensive walk at state.ts:644-654 advances past scratched currentRoutineId |
 | A39 | SHIPPED | CSE `9859f0f v14: fix Portal pill stuck at 'none' after successful upload` | portal status accuracy fix |
 | A40 | BLOCKED | — | spec says operator says done but no counter-related commit found 2026-04-23..now; transcript only has "Investigate, dual counter numbers came back" 2026-04-25 15:36 EDT — meaning unclear; needs operator clarification on what "dual counter regression" refers to before verifying |
-| A41 | OPEN | — | no NEXT AWARDS label commit |
+| A41 | SHIPPED | CSE (this commit) | Controls.tsx isNextEventAwardsBlock() — disables NEXT when next visible routine is across a >=15min gap or different scheduledDay; tooltip explains; gap threshold mirrors RoutineTable.tsx SESSION_GAP_MIN |
 | A42 | OPEN | — | no SD-press checkmark removal commit |
 | A43 | OPEN | — | no DART CPU mitigation commit |
 | A44 | OPEN | — | no SD swap reminder row commit |
@@ -57,7 +57,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A48 | OPEN | — | fetch-failed on app load not addressed |
 | A49 | N/A | — | pre-show checklist is operator process |
 | A50 | PARTIAL | CSE `b5872b0 v15.2: CLIP cacheDir + auto-import wins renderer race` | cacheDir change may address model path; not confirmed fix for missing onnx |
-| A51 | OPEN | — | METER-DIAG console errors not addressed |
+| A51 | SHIPPED | CSE `9859f0f v14` | "METER-DIAG renderer spam removed (pollutes machine logs)" — verified absent from current src/. Operator complaint 2026-04-24 12:26 EDT predated v14 (14:16 EDT) |
 | A52 | OPEN | — | Zero delay on NEXT — change pauseAfterStop / pauseBeforeRecord defaults to 0 (or add "instant" toggle); operator wants stop→start instantaneous, ~4s today |
 
 ## Section B — CompPortal media

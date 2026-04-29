@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
+import type { Competition, Routine } from '../../shared/types'
 import '../styles/controls.css'
 
 // Operator-spec 2026-04-25: Next button on the CSE app should flash when a
@@ -10,10 +11,34 @@ import '../styles/controls.css'
 const NEXT_FLASH_TRIGGER_SEC = 120
 const NEXT_FLASH_INTERVAL_MS = 250
 
+// A41: NEXT button disabled when next event is an awards block / break, not
+// another routine. Detection mirrors RoutineTable's session-divider inference
+// (15-min idle-gap threshold, see RoutineTable.tsx:329 SESSION_GAP_MIN).
+// Cross-day jumps are always treated as a block.
+const AWARDS_BLOCK_GAP_MIN = 15
+
+function isNextEventAwardsBlock(competition: Competition | null, current: Routine | null): boolean {
+  if (!competition || !current) return false
+  const visible = competition.routines.filter((r) => r.status !== 'scratched' && r.status !== 'skipped')
+  const idx = visible.findIndex((r) => r.id === current.id)
+  if (idx < 0 || idx >= visible.length - 1) return false
+  const next = visible[idx + 1]
+  if (current.scheduledDay && next.scheduledDay && current.scheduledDay !== next.scheduledDay) return true
+  if (!current.scheduledTime || !next.scheduledTime) return false
+  const [ch, cm] = current.scheduledTime.split(':').map(Number)
+  const [nh, nm] = next.scheduledTime.split(':').map(Number)
+  const currentEndMin = ch * 60 + (cm || 0) + (current.durationMinutes || 3)
+  const nextStartMin = nh * 60 + (nm || 0)
+  let gap = nextStartMin - currentEndMin
+  if (gap < -12 * 60) gap += 24 * 60
+  return gap >= AWARDS_BLOCK_GAP_MIN
+}
+
 export default function Controls(): React.ReactElement {
   const obsState = useStore((s) => s.obsState)
   const settings = useStore((s) => s.settings)
   const currentRoutine = useStore((s) => s.currentRoutine)
+  const competition = useStore((s) => s.competition)
 
   const isConnected = obsState.connectionStatus === 'connected'
   const isRecording = obsState.isRecording
@@ -96,6 +121,7 @@ export default function Controls(): React.ReactElement {
   }
 
   const hotkeys = settings?.hotkeys
+  const isAwardsNext = isNextEventAwardsBlock(competition, currentRoutine)
 
   const primaryBtn = (
     <button
@@ -124,10 +150,14 @@ export default function Controls(): React.ReactElement {
           <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
         </button>
         <button
-          className={`ctrl-btn${isRecording ? '' : ' disabled-muted'}${shouldFlash && flashAltPhase ? ' next-flash-alert' : ''}${shouldFlash ? ' next-flash-base' : ''}`}
-          onClick={isRecording ? handleNextFull : undefined}
-          disabled={!isRecording}
-          title={!isRecording ? 'Start recording first' : (shouldFlash ? '2:00+ — time to advance' : 'Stop, advance, record, fire LT')}
+          className={`ctrl-btn${isRecording && !isAwardsNext ? '' : ' disabled-muted'}${shouldFlash && flashAltPhase && !isAwardsNext ? ' next-flash-alert' : ''}${shouldFlash && !isAwardsNext ? ' next-flash-base' : ''}`}
+          onClick={isRecording && !isAwardsNext ? handleNextFull : undefined}
+          disabled={!isRecording || isAwardsNext}
+          title={
+            !isRecording ? 'Start recording first' :
+            isAwardsNext ? 'Next event is an awards / break block — stop manually, then resume after the break' :
+            (shouldFlash ? '2:00+ — time to advance' : 'Stop, advance, record, fire LT')
+          }
         >
           Next
         </button>
