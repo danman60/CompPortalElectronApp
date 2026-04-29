@@ -9,6 +9,13 @@ import '../styles/drive-alert.css'
 // minimized while import continues. The Header pill subscribes to the same
 // progress IPC events and reads this snapshot to render "Importing 45/2000".
 // Exported so Header.tsx can wire the re-open click without a parent prop chain.
+export type CopyFailureDetail = {
+  entryNumber: string
+  routineTitle: string
+  filename: string
+  reason: string
+}
+
 type MinimizedImportState = {
   active: boolean
   stage: string
@@ -27,6 +34,11 @@ type MinimizedImportState = {
   watermarkResume?: boolean
   watermarkLastCaptureTime?: string | null
   watermarkLastFilename?: string | null
+  // Phase 1.3: per-import copy-failure surfacing. Pill goes red when
+  // copyFailureCount > 0; click opens drawer listing failures.
+  matchableCount?: number
+  copyFailureCount?: number
+  copyFailureDetails?: CopyFailureDetail[]
 }
 let minimizedState: MinimizedImportState = {
   active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null, canRemoveCard: false,
@@ -145,6 +157,9 @@ export default function DriveAlert(): React.ReactElement | null {
         watermarkResume?: boolean
         watermarkLastCaptureTime?: string | null
         watermarkLastFilename?: string | null
+        matchableCount?: number
+        copyFailureCount?: number
+        copyFailureDetails?: CopyFailureDetail[]
       }
       setProgress((prev) => ({
         ...prev,
@@ -176,6 +191,10 @@ export default function DriveAlert(): React.ReactElement | null {
         ...(p.watermarkResume !== undefined ? { watermarkResume: p.watermarkResume } : {}),
         ...(p.watermarkLastCaptureTime !== undefined ? { watermarkLastCaptureTime: p.watermarkLastCaptureTime } : {}),
         ...(p.watermarkLastFilename !== undefined ? { watermarkLastFilename: p.watermarkLastFilename } : {}),
+        // Phase 1.3: copy-failure detail (only fires on terminal 'done' stage).
+        ...(p.matchableCount !== undefined ? { matchableCount: p.matchableCount } : {}),
+        ...(p.copyFailureCount !== undefined ? { copyFailureCount: p.copyFailureCount } : {}),
+        ...(p.copyFailureDetails !== undefined ? { copyFailureDetails: p.copyFailureDetails } : {}),
       })
     })
 

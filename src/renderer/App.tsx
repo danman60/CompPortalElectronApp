@@ -26,6 +26,7 @@ function HardeningBanners(): React.ReactElement | null {
   const [driveLost, setDriveLost] = useState<string | null>(null)
   const [stateRecovered, setStateRecovered] = useState<string | null>(null)
   const [flatChannels, setFlatChannels] = useState<Set<string>>(new Set())
+  const [photoStall, setPhotoStall] = useState<{ ageMin: number } | null>(null)
 
   useEffect(() => {
     if (!window.api) return
@@ -72,6 +73,10 @@ function HardeningBanners(): React.ReactElement | null {
         return next
       })
     }))
+    offs.push(window.api.on(IPC_CHANNELS.PHOTO_IMPORT_STALL, (data: unknown) => {
+      const d = data as { ageMin: number; lastActivityMs: number }
+      setPhotoStall({ ageMin: d.ageMin })
+    }))
     return () => {
       for (const off of offs) {
         try { off() } catch {}
@@ -96,6 +101,12 @@ function HardeningBanners(): React.ReactElement | null {
     text: `Disk space ${diskAlert.level}: ${diskAlert.freeGB}GB free`,
   })
   if (stateRecovered) banners.push({ key: 'state', bg: '#c17f00', text: stateRecovered, onDismiss: () => setStateRecovered(null) })
+  if (photoStall) banners.push({
+    key: 'photo-stall',
+    bg: '#8b0000',
+    text: `Photo import stalled — no new photos in ${photoStall.ageMin} min. Check SD card / reconcile via PIPE chip → Kick All Stages.`,
+    onDismiss: () => setPhotoStall(null),
+  })
   for (const ch of flatChannels) {
     banners.push({
       key: `flat-${ch}`,

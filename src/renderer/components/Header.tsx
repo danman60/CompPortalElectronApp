@@ -437,8 +437,10 @@ function UploadBacklogPill(): React.ReactElement | null {
 
 function ImportPill(): React.ReactElement | null {
   const s = useImportMinimizedState()
+  const [failureDrawerOpen, setFailureDrawerOpen] = useState(false)
   if (!s.active) return null
   const isComplete = s.stage === 'done' || s.canRemoveCard === true
+  const hasFailures = (s.copyFailureCount ?? 0) > 0
   const label = s.total > 0 ? `${s.current}/${s.total}` : (s.message || '...')
   const pct = s.total > 0 ? Math.min(100, Math.round((s.current / s.total) * 100)) : 0
   // Stage-aware verb so the pill reflects what the pipeline is actually doing.
@@ -494,18 +496,28 @@ function ImportPill(): React.ReactElement | null {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
       <button
-        className={`import-pill${isComplete ? ' complete' : ''}`}
-        onClick={() => restoreMinimizedImport()}
-        title="Click to re-open import panel"
-        style={{ position: 'relative' }}
+        className={`import-pill${isComplete && !hasFailures ? ' complete' : ''}${hasFailures ? ' has-failures' : ''}`}
+        onClick={() => {
+          if (hasFailures) setFailureDrawerOpen(true)
+          else restoreMinimizedImport()
+        }}
+        title={hasFailures ? 'Click to view copy errors' : 'Click to re-open import panel'}
+        style={{
+          position: 'relative',
+          ...(hasFailures
+            ? { background: '#8b0000', color: '#ffd2d2', borderColor: '#c44' }
+            : {}),
+        }}
       >
         {isComplete ? (
           <>
-            <span className="import-pill-remove-icon" aria-hidden>{'\u23CF'}</span>
+            <span className="import-pill-remove-icon" aria-hidden>{hasFailures ? '\u26A0' : '\u23CF'}</span>
             <span>
-              {s.noNewFiles
-                ? `No new photos in folder${s.skippedDedup ? ` — ${s.skippedDedup} already imported` : ''}`
-                : 'Safe to remove'}
+              {hasFailures
+                ? `Copied ${s.current}/${s.matchableCount ?? s.total} — ${s.copyFailureCount} ${s.copyFailureCount === 1 ? 'error' : 'errors'}. Click for details.`
+                : s.noNewFiles
+                  ? `No new photos in folder${s.skippedDedup ? ` — ${s.skippedDedup} already imported` : ''}`
+                  : 'Safe to remove'}
             </span>
           </>
         ) : (
@@ -571,6 +583,104 @@ function ImportPill(): React.ReactElement | null {
         >
           Cancel
         </button>
+      )}
+      {failureDrawerOpen && hasFailures && (
+        <div
+          onClick={() => setFailureDrawerOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#1a1a25',
+              border: '1px solid #c44',
+              borderRadius: 6,
+              padding: 16,
+              minWidth: 520,
+              maxWidth: '80vw',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              color: '#eaeaea',
+              fontSize: 12,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+              <h3 style={{ margin: 0, color: '#ffd2d2', fontSize: 14, fontWeight: 700 }}>
+                Import errors — {s.copyFailureCount} of {s.matchableCount ?? s.total} matched photos failed to copy
+              </h3>
+              <button
+                type="button"
+                onClick={() => setFailureDrawerOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #555',
+                  color: '#ddd',
+                  padding: '3px 10px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                }}
+              >Close</button>
+            </div>
+            {(s.copyFailureDetails && s.copyFailureDetails.length > 0) ? (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #444', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 8px', fontWeight: 600 }}>Routine</th>
+                    <th style={{ padding: '4px 8px', fontWeight: 600 }}>File</th>
+                    <th style={{ padding: '4px 8px', fontWeight: 600 }}>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.copyFailureDetails.map((d, i) => (
+                    <tr key={`${d.entryNumber}-${d.filename}-${i}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>
+                        #{d.entryNumber} {d.routineTitle}
+                      </td>
+                      <td style={{ padding: '4px 8px', fontFamily: 'monospace', fontSize: 10 }}>{d.filename}</td>
+                      <td style={{ padding: '4px 8px', color: '#f99' }}>{d.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div style={{ opacity: 0.7 }}>No detailed error list available.</div>
+            )}
+            {(s.copyFailureCount ?? 0) > (s.copyFailureDetails?.length ?? 0) && (
+              <div style={{ marginTop: 10, fontSize: 11, opacity: 0.7 }}>
+                ({(s.copyFailureCount ?? 0) - (s.copyFailureDetails?.length ?? 0)} additional errors not shown — see main.log for full list.)
+              </div>
+            )}
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setFailureDrawerOpen(false)
+                  try { setImportPillActiveFromHeader(null) } catch {}
+                }}
+                style={{
+                  background: '#8b0000',
+                  border: '1px solid #c44',
+                  color: '#fff',
+                  padding: '5px 14px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >Acknowledge &amp; Dismiss</button>
+            </div>
+          </div>
+        </div>
       )}
     </span>
   )

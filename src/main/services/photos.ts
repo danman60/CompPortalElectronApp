@@ -1582,6 +1582,10 @@ async function runImport(
   let copiedCount = 0
   let perRoutineFailures = 0
   let skippedDiskExists = 0
+  // Phase 1.3: per-file copy-failure detail for the operator-facing pill +
+  // drawer. Capped at 50 entries to bound IPC payload size.
+  const copyFailureDetails: Array<{ entryNumber: string; routineTitle: string; filename: string; reason: string }> = []
+  const COPY_FAILURE_DETAIL_CAP = 50
   // A15 stage emit — total reflects matchable matches; copying loop skips
   // unmatched + dedup'd internally so current may not reach total exactly.
   const matchableCount = matches.filter((m) => m.confidence !== 'unmatched').length
@@ -1644,9 +1648,18 @@ async function runImport(
     } catch (mkdirErr) {
       perRoutineFailures++
       failedRoutineIds.add(routine.id)
+      const reason = mkdirErr instanceof Error ? mkdirErr.message : String(mkdirErr)
       logger.photos.error(
-        `Skipping routine #${routine.entryNumber} "${routine.routineTitle}": mkdir failed for ${routineDir}: ${mkdirErr instanceof Error ? mkdirErr.message : mkdirErr}`,
+        `Skipping routine #${routine.entryNumber} "${routine.routineTitle}": mkdir failed for ${routineDir}: ${reason}`,
       )
+      if (copyFailureDetails.length < COPY_FAILURE_DETAIL_CAP) {
+        copyFailureDetails.push({
+          entryNumber: routine.entryNumber,
+          routineTitle: routine.routineTitle,
+          filename: path.basename(match.filePath),
+          reason: `mkdir failed: ${reason}`,
+        })
+      }
       continue
     }
 
@@ -1681,9 +1694,18 @@ async function runImport(
     } catch (copyErr) {
       perRoutineFailures++
       failedRoutineIds.add(routine.id)
+      const reason = copyErr instanceof Error ? copyErr.message : String(copyErr)
       logger.photos.error(
-        `Skipping routine #${routine.entryNumber} "${routine.routineTitle}": copyFile failed ${originalBasename} → ${destFile}: ${copyErr instanceof Error ? copyErr.message : copyErr}`,
+        `Skipping routine #${routine.entryNumber} "${routine.routineTitle}": copyFile failed ${originalBasename} → ${destFile}: ${reason}`,
       )
+      if (copyFailureDetails.length < COPY_FAILURE_DETAIL_CAP) {
+        copyFailureDetails.push({
+          entryNumber: routine.entryNumber,
+          routineTitle: routine.routineTitle,
+          filename: originalBasename,
+          reason: `copyFile failed: ${reason}`,
+        })
+      }
       continue
     }
 
@@ -1914,11 +1936,20 @@ async function runImport(
   // A15 / Northstar UX: emit terminal "done" stage AFTER copy + queue both
   // complete. Operator can safely remove card once this fires (uploads run
   // async after; pulling card is OK — local copies + queue are durable).
+  //
+  // Phase 1.3: include copy-failure detail. When copyFailureCount > 0, the
+  // pill stays red ("Copied X/Y — N errors. Click for details.") instead of
+  // green "Safe to remove" — operator must explicitly dismiss after seeing
+  // the failure list. canRemoveCard is still true (files that DID copy are
+  // durable on disk + queued for upload), but the pill messaging changes.
   sendToRenderer(IPC_CHANNELS.PHOTOS_PROGRESS, {
     stage: 'done',
     total: copiedCount,
     current: copiedCount,
     canRemoveCard: true,
+    matchableCount,
+    copyFailureCount: perRoutineFailures,
+    copyFailureDetails,
   })
 
   logger.photos.info(

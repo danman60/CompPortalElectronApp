@@ -33,18 +33,27 @@ const stages: Record<PipelineStageId, PipelineStageState> = {
   videoUpload:  { id: 'videoUpload',  lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
 }
 
-// Default routine duration baseline for photo-import tolerance: 3 min.
-// 30 routines * 3 min = 90 min before yellow, 180 min before red.
-const PHOTO_IMPORT_YELLOW_MS = 30 * 3 * 60_000
-const PHOTO_IMPORT_RED_MS    = 60 * 3 * 60_000
+// Photo-import staleness thresholds (operator-locked 2026-04-29 13:09 EDT).
+// Tightened from the original 90/180min defaults. Burlington context: a 9-hour
+// silent stall at UDC Toronto was the headline failure; chip + banner together
+// catch any repeat within the first hour.
+const PHOTO_IMPORT_YELLOW_MS = 10 * 60_000   // chip → yellow
+const PHOTO_IMPORT_RED_MS    = 30 * 60_000   // chip → red
+// Sticky HardeningBanner fires once per session when crossed (visual only —
+// no audio anywhere in the app, ever).
+const PHOTO_IMPORT_BANNER_MS = 60 * 60_000
 
 const UPLOAD_YELLOW_MS = 5 * 60_000
 const UPLOAD_RED_MS    = 10 * 60_000
 
 let evalTimer: NodeJS.Timeout | null = null
+let stallBannerFiredAt = 0   // session-scoped; resets on activity bump.
 
 export function bumpActivity(stage: PipelineStageId): void {
   stages[stage].lastActivityMs = Date.now()
+  // Activity on photoImport clears the one-shot banner gate so a future stall
+  // (after recovery) re-fires the banner instead of staying dormant.
+  if (stage === 'photoImport') stallBannerFiredAt = 0
 }
 
 export function setPendingCount(stage: PipelineStageId, n: number): void {
@@ -105,8 +114,8 @@ function evaluate(): void {
     stages.recording.reason = undefined
   }
 
-  // Photo import: stale if no activity for 30+ routine durations during
-  // active comp. Idle outside active comp = green.
+  // Photo import: stale if no activity for 10+ min during active comp.
+  // Idle outside active comp = green.
   if (compActive) {
     stages.photoImport.health = classifyStaleness(
       stages.photoImport.lastActivityMs, PHOTO_IMPORT_YELLOW_MS, PHOTO_IMPORT_RED_MS,
@@ -116,6 +125,23 @@ function evaluate(): void {
       stages.photoImport.reason = `No new photos imported in ${ageMin} min`
     } else {
       stages.photoImport.reason = undefined
+    }
+    // 60-min sticky banner — fires ONCE per stall episode. bumpActivity()
+    // resets stallBannerFiredAt so a recovered-then-stalled-again pipeline
+    // re-fires. Skipped for fresh-boot (lastActivityMs===0) so the banner
+    // doesn't appear in idle competitions that haven't ingested yet today.
+    if (
+      stages.photoImport.lastActivityMs > 0 &&
+      stallBannerFiredAt === 0 &&
+      Date.now() - stages.photoImport.lastActivityMs >= PHOTO_IMPORT_BANNER_MS
+    ) {
+      stallBannerFiredAt = Date.now()
+      const ageMin = Math.round((Date.now() - stages.photoImport.lastActivityMs) / 60_000)
+      sendToRenderer(IPC_CHANNELS.PHOTO_IMPORT_STALL, {
+        ageMin,
+        lastActivityMs: stages.photoImport.lastActivityMs,
+      })
+      logger.app.warn(`Pipeline health: photo-import stall ≥ 60 min — banner fired (${ageMin} min since last activity)`)
     }
   } else {
     stages.photoImport.health = 'green'

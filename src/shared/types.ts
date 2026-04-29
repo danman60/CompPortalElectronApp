@@ -709,6 +709,9 @@ export const IPC_CHANNELS = {
 
   // A56: universal pipeline detector (narrow slice — header chip)
   PIPELINE_HEALTH: 'pipeline:health',
+  // Phase 1.1: 60-min photo-import stall banner (visual only, dismissible).
+  // Fires once per stall episode; bumpActivity('photoImport') re-arms.
+  PHOTO_IMPORT_STALL: 'pipeline:photo-import-stall',
 
   // Item 17 / A54: click-to-reassign + active take broadcast
   RECORDING_REASSIGN_TARGET: 'recording:reassign-target',
