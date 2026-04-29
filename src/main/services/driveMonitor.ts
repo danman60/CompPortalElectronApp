@@ -80,40 +80,27 @@ function countJpegsRecursive(dir: string, maxDepth: number): number {
 }
 
 /**
- * Collect up to N JPEG paths for EXIF sampling — biased toward the NEWEST
- * files on the card, not the alphabetically-first. Rationale: SDs often
- * retain older, already-uploaded photos from prior days; sampling from the
- * lexicographic head produces false "camera N days off" popups
- * (2026-04-19 UDC London: H:\ flagged 17-days-off, F:\ flagged 2-days-off
- * despite both cameras being correctly clocked — samples hit leftover old
- * photos). Panasonic filenames are monotonically increasing, so the
- * highest-numbered files are the most recently shot. We walk the whole
- * tree first, then sort descending and take the top N.
+ * Collect up to N JPEG paths for EXIF sampling — the N MOST-RECENTLY-MODIFIED
+ * files across the whole card.
+ *
+ * A1 fix 2026-04-28 (root cause from Sunday 2026-04-26 machine_logs): the
+ * prior implementation walked the SD breadth-first in `readdirSync` order and
+ * bailed after `max * 200` files. On a card with both prior-day subfolders
+ * (e.g., `100EOSR6`) and today's subfolder (e.g., `124NZ6_2`), the BFS
+ * frequently hit the cap inside the older subfolders and never reached
+ * today's. The "highest basename = most recent" assumption only holds within
+ * a single subfolder, so basename-sort then picked yesterday's tail rather
+ * than today's photos. Result: 3 samples from yesterday → "<2/3 are today" →
+ * auto-import skipped during a live event (10:35, 12:18, 14:01 EDT).
+ *
+ * Now reuses `enumerateSdSamples` (full walk, mtime per file, 50k safety
+ * cap), sorts by mtimeMs descending, returns the top N. Identifies today's
+ * actual newest shutter actions regardless of which subfolder.
  */
-function collectJpegSamples(dir: string, max: number, maxDepth = 3): string[] {
-  const all: string[] = []
-  const pendingDirs: { dir: string; depth: number }[] = [{ dir, depth: 0 }]
-  while (pendingDirs.length > 0) {
-    const cur = pendingDirs.shift()!
-    if (cur.depth > maxDepth) continue
-    try {
-      const entries = fs.readdirSync(cur.dir, { withFileTypes: true })
-      for (const entry of entries) {
-        const fullPath = path.join(cur.dir, entry.name)
-        if (entry.isFile() && /\.(jpg|jpeg)$/i.test(entry.name)) {
-          all.push(fullPath)
-        } else if (entry.isDirectory()) {
-          pendingDirs.push({ dir: fullPath, depth: cur.depth + 1 })
-        }
-      }
-    } catch {}
-    // Bail early once we have far more than we need — sorting 50k paths is
-    // still fast but there's no value in scanning every partition.
-    if (all.length >= max * 200) break
-  }
-  // Sort by basename descending (Panasonic: highest sequence = most recent).
-  all.sort((a, b) => path.basename(b).localeCompare(path.basename(a)))
-  return all.slice(0, max)
+async function collectJpegSamples(dir: string, max: number, maxDepth = 4): Promise<string[]> {
+  const samples = await enumerateSdSamples(dir, maxDepth)
+  samples.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  return samples.slice(0, max).map((s) => s.fullPath)
 }
 
 /** Read EXIF DateTimeOriginal → local Date. No mtime/DateTime/DateTimeDigitized fallback. */
@@ -166,7 +153,7 @@ async function sampleAndReportCameraClock(
     // partially-imported SD re-inserted produced false "N days off" popups
     // because the sampler hit leftover old photos even though today's shots
     // were there too. Over-collect 5× to survive filtering.
-    const rawSamples = collectJpegSamples(photoPath, 5 * 5)
+    const rawSamples = await collectJpegSamples(photoPath, 5 * 5)
     const watermarks = state.listSdWatermarks()
     const samples: string[] = []
     let watermarkFiltered = 0
@@ -305,6 +292,7 @@ const SIZE_BOUNDS_DEFAULT_MIN = 10
 
 export interface SdPhotoSample {
   filename: string
+  fullPath: string
   body: string | null
   mtimeMs: number
 }
@@ -414,6 +402,7 @@ async function enumerateSdSamples(photoPath: string, maxDepth = 4): Promise<SdPh
         const st = fs.statSync(full)
         out.push({
           filename: e.name,
+          fullPath: full,
           body: getCameraBodyKey(full) ?? null,
           mtimeMs: st.mtimeMs,
         })
@@ -588,7 +577,7 @@ function poll(): void {
         void (async () => {
           try {
             // Quick pre-check: if any 2 of 3 sampled photos are not today, skip.
-            const preSamples = collectJpegSamples(camera.photoPath, 3, 3)
+            const preSamples = await collectJpegSamples(camera.photoPath, 3, 3)
             let todayHits = 0
             for (const p of preSamples) {
               const dt = await readExifDateTimeOriginal(p)

@@ -7,7 +7,7 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 
 | ID | Status | Commit | Notes |
 |---|---|---|---|
-| A1 | PARTIAL | CSE `efa9b03 v15: auto-import on fresh SD insert + dedup-by-DB + latest-routine-first` / `0cf1c88 boot+driveMonitor` | auto-import + latest-first added; operator still seeing "no jpgs found" 04-26 |
+| A1 | SHIPPED | CSE `efa9b03 v15` / `0cf1c88 boot+driveMonitor` / (this commit) | auto-import + latest-first; A1 SD pre-check root cause fixed: collectJpegSamples now reuses enumerateSdSamples, sorts by mtimeMs desc across whole card, removes 600-file cap. Sunday 2026-04-26 false skips (10:35/12:18/14:01) caused by BFS hitting older subfolders first |
 | A2 | PARTIAL | CSE `aafb00c v10: re-record hard-gate modal` | hard-gate landed; auto-stash/cascade UX still open |
 | A3 | OPEN | — | no VDD/tablet display fixes since 04-23 |
 | A4 | OPEN | — | no monitor/touch-routing commits |
