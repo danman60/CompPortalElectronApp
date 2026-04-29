@@ -10,7 +10,7 @@ import { getSettings } from './settings'
 import * as state from './state'
 import * as uploadService from './upload'
 import * as jobQueue from './jobQueue'
-import { broadcastFullState, broadcastRoutineUpdate } from './recording'
+import { broadcastFullState, broadcastRoutineUpdate, pickLongestMkv } from './recording'
 
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
