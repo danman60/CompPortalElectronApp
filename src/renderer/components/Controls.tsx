@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { Competition, Routine } from '../../shared/types'
+import { requestReassign } from './ReassignPopover'
 import '../styles/controls.css'
 
 // Operator-spec 2026-04-25: Next button on the CSE app should flash when a
@@ -112,7 +113,14 @@ export default function Controls(): React.ReactElement {
   // scratch case.
   async function handleStartEmpty(): Promise<void> {
     if (!isConnected) return
-    if (isRecording) return
+    // Item 17 / A54: while a recording is active, clicking SAVE AS EMPTY
+    // ROUTINE opens a number-input popover to bind the in-flight take to a
+    // typed slot (e.g., "226.5" or "355"). Pre-recording behavior unchanged
+    // (insertLateRoutine + start record).
+    if (isRecording) {
+      requestReassign({ kind: 'empty' })
+      return
+    }
     try { await (window.api as any).recordingStartEmpty?.() } catch { /* handled server-side */ }
   }
 
@@ -187,10 +195,10 @@ export default function Controls(): React.ReactElement {
         <button
           className="ctrl-btn"
           onClick={handleStartEmpty}
-          disabled={!isConnected || isRecording}
+          disabled={!isConnected}
           title={
             isRecording
-              ? 'Stop current recording first'
+              ? 'Save the active recording into a typed empty-routine slot (e.g., 226.5).'
               : 'Insert an off-schedule routine slot and start recording. Operator fills in title/dancer post-show.'
           }
           style={{
@@ -198,10 +206,10 @@ export default function Controls(): React.ReactElement {
             border: '1px solid rgba(63, 168, 108, 0.7)',
             color: '#9ce5b4',
             fontWeight: 700,
-            opacity: !isConnected || isRecording ? 0.4 : 1,
+            opacity: !isConnected ? 0.4 : 1,
           }}
         >
-          START EMPTY ROUTINE</button>
+          {isRecording ? 'SAVE AS EMPTY ROUTINE' : 'START EMPTY ROUTINE'}</button>
         {/* Old SCRATCH path retained for hotkey + legacy invocations.
             Per-row scratch button in RoutineTable still handles in-table use. */}
         <button className="ctrl-btn" onClick={handleScratch} style={{ display: 'none' }}>

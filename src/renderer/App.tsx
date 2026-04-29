@@ -14,6 +14,7 @@ import ClockSyncReminder from './components/ClockSyncReminder'
 import StartOfDayModal from './components/StartOfDayModal'
 import EndOfDayModal from './components/EndOfDayModal'
 import AudioAuditBanner from './components/AudioAuditBanner'
+import ReassignPopover from './components/ReassignPopover'
 import './styles/app.css'
 
 function HardeningBanners(): React.ReactElement | null {
@@ -932,6 +933,7 @@ export default function App(): React.ReactElement {
       <StartOfDayModal />
       <EndOfDayModal />
       <AudioAuditBanner />
+      <ReassignPopover />
     </div>
   )
 }

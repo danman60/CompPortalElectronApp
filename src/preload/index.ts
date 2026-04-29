@@ -215,6 +215,8 @@ const api = {
   chatPostMessage: (payload: { text: string; name: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_POST_MESSAGE, payload),
   recordingStartEmpty: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_START_EMPTY),
+  recordingReassignTarget: (payload: { routineId?: string | null; emptyRoutineNumber?: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_REASSIGN_TARGET, payload),
 
   // Recovery
   recoveryBrowseMkv: () => ipcRenderer.invoke(IPC_CHANNELS.RECOVERY_BROWSE_MKV),

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
+import { requestReassign } from './ReassignPopover'
 import '../styles/table.css'
 
 // ── Pipeline stage indicators ──────────────────────────────────────
@@ -681,7 +682,14 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   }
 
   async function handleJumpTo(routine: Routine): Promise<void> {
-    if (obsState.isRecording) return
+    // Item 17 / A54: when actively recording, a routine row click does NOT
+    // jump the cursor — it surfaces the reassign-confirmation popover so
+    // the operator can save the in-flight take to a different slot. Pre-
+    // recording behavior unchanged.
+    if (obsState.isRecording) {
+      requestReassign({ kind: 'routine', routine })
+      return
+    }
     await window.api.jumpToRoutine(routine.id)
   }
 
