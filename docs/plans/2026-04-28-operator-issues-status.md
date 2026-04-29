@@ -3,6 +3,22 @@ Source: 2026-04-28-operator-issues-grouped.md
 Method: git log cross-reference 2026-04-23 → 2026-04-28
 Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 
+## Live progress 2026-04-29
+
+Three asar deploys to DART today:
+- 08:32 EDT — autonomous overnight bundle (A1, A15, A19, A35, A37/38, A41, A44, A47, A51, A52, A53/55, A56, A57)
+- 09:09 EDT — Item 17 take-immutable + click-to-reassign + 999-overflow + SAVE AS EMPTY
+- 09:18 EDT — fix round 1 (3.5 position, sticky header, audio banner consolidation)
+
+Item 17 verified end-to-end live on TEST2026 — operator started recording on R1, clicked R2 mid-record, confirmed reassign, R1 cleanly reverted to pending, R2 finalized as recorded with original start time.
+
+Active fix list (post-09:18 smoke):
+- F1 ✅ Empty-routine 3.5 inserts after R3 (was bottom) — `76a71dc`
+- F2 ✅ Sticky table header now sticks — `76a71dc`
+- F3 ✅ Audio audit banners consolidated, top-row, Dismiss all — `76a71dc`
+- F4 🟡 HardeningBanners need Dismiss all when multiple fire (uncommitted)
+- F5 🚫 X-on-hover bug; needs operator screenshot to locate
+
 ## Section A — CSE recorder app
 
 | ID | Status | Commit | Notes |

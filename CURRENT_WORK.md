@@ -1,94 +1,163 @@
 # Current Work — CompSyncElectronApp
 
-**Status: 2026-04-29 ~02:30 EDT (Wednesday). Autonomous run COMPLETED 14/17 items. Item 17 (take-immutable) DEFERRED for operator review.**
+**Status: 2026-04-29 ~09:25 EDT (Wednesday). Burlington 2 days away. Item 17 deployed + smoke-tested live; fix-list in progress.**
 
-## Autonomous run results (Burlington-prep)
+Branch: **`master`** (operator chose master; `feat/sd-import-overnight` retired).
 
-Branch: `master` (per operator request, not `feat/sd-import-overnight` — fast-forwarded master to absorb 63 prior commits + new work).
+---
 
-**Shipped (this run):**
-| Item | Commit | Notes |
+## Live deploys today
+
+| Time (EDT) | Asar build | Notes |
 |---|---|---|
-| 1. A52 zero-delay NEXT | `7b57839` (snapshot) | pause settings deleted from type + UI + recording.ts |
-| 2. A57 thumb/keyframe cols | `7b57839` (snapshot) | THUMB + KEY pipeline columns in RoutineTable |
-| 3. A19 chat pin styling | `b28608d` | 4 #ffc107 → --stream-purple |
-| 4. A37 close-out checklist | (verified in snapshot) | EndOfDayModal + dayChecklist fully wired |
-| 5. A38 auto-skip scratched | (verified in snapshot) | state.ts:644-654 walks past scratched currentRoutineId |
-| 6. A40 dual-counter regression | **BLOCKED** | meaning unclear; operator clarification needed |
-| 7. A47 audio silent banner | (closed per spec) | Stream Deck variant shipped previously |
-| 8. A51 METER-DIAG console | (already shipped in v14 `9859f0f`) | not in current src/, operator was on stale asar |
-| 9. A41 NEXT disabled at awards | `5e32a97` | Controls.tsx isNextEventAwardsBlock; 15-min gap or cross-day |
-| 10. A44 SD-swap heads-up | `e71cc56` | removed sessionContainsCurrent suppression |
-| 11. A1 SD pre-check fix | `0755240` | collectJpegSamples uses mtime-sort across whole card |
-| 12. A15 Northstar UX | `241b381` | copying/queueing/done stages; "Safe to remove" + no-new-files toast |
-| 13. A35 scratch-notify CSE | `6c1df97` | new JobType, prune exempt, drain + bulk sync |
-| 14. A53 audio identity | `59e4605` | SHA-256 audio streams post-encode + banner |
-| 15. A55 silence/loudness | `59e4605` | silencedetect + volumedetect post-encode + banner |
-| 16. A56 pipeline detector slice | `30c93e7` | new pipelineHealth service + header chip |
+| 08:32 | first overnight deploy | items A1, A15, A19, A35, A37/38, A41, A44, A47, A51, A52, A53/55, A56, A57 + snapshot |
+| 09:09 | item 17 round 1 | take-immutable + click-to-reassign + 999-overflow + SAVE AS EMPTY |
+| 09:18 | item 17 fix round 1 | 3.5-position fix, sticky header, audio-banner consolidation |
 
-**Deferred:**
-- **Item 17** (take-immutable refactor + A54 + empty-routine + 999-decrement). Touches recording hot path; smoke requires real OBS + camera (impossible from Linux). Operator must review and ship in a smoke-able environment.
-- **A40** (dual-counter regression) — meaning unclear in transcript ("Investigate, dual counter numbers came back" is the only clue). Need operator clarification on what "dual counter" refers to before verifying.
+DART backups (rollback path):
+- `app.asar.bak.20260429-091847` — pre-09:18 deploy (item 17 v1)
+- `app.asar.bak.20260429-090937` — pre-09:09 deploy (pre-item-17)
+- `app.asar.bak.20260429-083148` — pre-08:32 deploy (Apr-25 baseline)
 
-**Caveats on shipped items:** all type-check clean. None boot-smoke tested (Linux dev env can't boot Windows-targeted Electron with sharp-win32-x64 + OBS). Operator should boot dev build against TEST2026 and exercise each surface BEFORE Burlington 2026-05-01.
+DART state cleared this morning: `job-queue.json` = `[]`, `compsync-state.json` removed (loads TEST2026 fresh on boot).
 
-**Smoke test order suggestion (highest-risk first):**
-1. A1 SD pre-check (live event critical — exercise by inserting SD with mixed older/today subfolders)
-2. A15 Northstar UX (import a folder; confirm pill walks scanning → matching → copying → queueing → Safe to remove)
-3. A41 NEXT-button awards-block disable
-4. A44 SD-swap heads-up at session halfway
-5. A19 chat pin purple
-6. A53/A55 audio audit (record a routine, confirm banner behavior — easier to verify post-Burlington)
-7. A56 pipeline chip (verify dot color + click-expand)
-8. A35 scratch-notify (will 404 until CompPortal side ships routes — that's fine; jobs queue for retry)
+---
 
-## Code state at handoff
+## Verified working in production (this morning, on TEST2026)
 
-## ACTIVE TASK (handed to fresh session)
+✅ **Item 17 take-immutable + click-to-reassign — full E2E proven:**
+Operator started recording on R1, clicked R2 mid-record, confirmed reassign, stopped → R1 reverted to pending, R2 finalized as recorded with the original 13:10:08 start time. machine_logs trace at 09:10:08–09:10:33 EDT confirms `take: wrote`, `reassignActiveTake: reverted 1 to pending`, `retargeted to 2`, `take: cleared` cleanly.
 
-Execute the autonomous block defined in `docs/plans/2026-04-28-burlington-prep-approved.md`. That doc is self-contained — every operator decision from the 11:00–22:30 EDT session is captured. Do NOT re-litigate any decision.
+✅ **Items 1–16 from the autonomous run** (deployed 08:32, no regressions reported)
 
-**Key behavior contract:**
-- Branch: `feat/sd-import-overnight` (no new branch).
-- Commit per item, push after smoke test passes against share code `TEST2026`.
-- On smoke-test failure: HALT, write `docs/plans/2026-04-28-autonomous-failure-<item>.md`, do NOT push the broken item.
-- Hard rules in the spec doc must be honored (never block recording start, never kill processes, never destructive DB ops, never skip pre-commit hooks, never self-invoke /fresh or /wrap-up, never push on failure).
+---
 
-## Recent Changes (2026-04-28 evening session)
+## Open fix list (from 09:11–09:25 EDT smoke)
 
-- Consolidated all transcripts 2026-04-23 → 2026-04-28 into 474 raw operator quotes → 103 grouped clusters → status doc (31 SHIPPED / 14 PARTIAL / 47 OPEN / 11 N/A).
-  - Files: `docs/plans/2026-04-28-operator-issues-raw.md`, `2026-04-28-operator-issues-grouped.md`, `2026-04-28-operator-issues-status.md`
-- Walked through ~30 decision questions; updated R199 incident report scope to R199–R310 (~112 routines).
-- Investigated Sunday's import-stall in machine_logs — root cause confirmed: `driveMonitor.ts:93 collectJpegSamples` BFS hits 600-file cap inside older-day subfolders before reaching today's subfolder. Fix locked in spec doc.
-- A52 (zero-delay NEXT) and A57 (thumb/keyframe columns) edits made in chat — type-checked clean. NOT YET COMMITTED.
+| # | Issue | State | Fix landed in | Notes |
+|---|---|---|---|---|
+| F1 | Empty-routine "3.5" jumped to bottom | ✅ FIXED | commit `76a71dc` | splice after R3 |
+| F2 | Sticky table header didn't stick when scrolling | ✅ FIXED | commit `76a71dc` | overflow:hidden was breaking sticky |
+| F3 | Audio audit banners too aggressive (9 floats stacked) | ✅ FIXED | commit `76a71dc` | one top-banner per routine + Dismiss all |
+| F4 | All HardeningBanners need "Dismiss all" when multiple fire | 🟡 CODED, NOT DEPLOYED | uncommitted in App.tsx | needs build + redeploy |
+| F5 | X symbol shows when hovering a row | 🚫 OPEN | — | Claude couldn't locate via grep; needs operator screenshot showing where the X appears |
 
-## Files touched in chat (uncommitted)
+---
 
-- `src/shared/types.ts` — A52: removed `pauseAfterStopMs` and `pauseBeforeRecordMs` from type + defaults. Kept `pauseBeforeLowerThirdMs`.
-- `src/main/services/recording.ts` — A52: removed two `await sleep(...)` calls in `nextFull` sequence.
-- `src/renderer/components/Settings.tsx` — A52: removed two pause input fields.
-- `src/renderer/components/RoutineTable.tsx` — A57: added THUMB and KEY pipeline columns + their stage logic.
+## Open / blocked items NOT in active fix list
 
-## Next Steps (fresh session)
+| # | Item | State | Notes |
+|---|---|---|---|
+| A40 | Dual-counter regression | 🚫 BLOCKED | meaning of "dual counter" unclear in transcript; needs operator clarification |
+| A1 | SD pre-check fix | ⏳ DEFERRED VERIFICATION | code shipped + verified in bundle; needs real SD-insert event to smoke (Burlington) |
+| Item 17 sweep | Boot-time stale-take recovery UI | ⏳ thin slice | currently logs + clears; future: surface a "recover MKV" button if file present |
+| A35 server side | CompPortal /api/plugin/routine-status[-bulk] | ⏳ separate session | CSE side queues jobs that 404 until portal lands |
 
-1. Read `docs/plans/2026-04-28-burlington-prep-approved.md` IN FULL.
-2. Commit A52 (already coded). Smoke test on TEST2026. Push.
-3. Commit A57 (already coded). Smoke test. Push.
-4. Proceed through remaining items in the order listed in the spec doc. Each item: code → type-check → smoke test → commit → push.
-5. Take-immutable refactor + A54 + empty-routine + 999-decrement is the largest piece — saved for last; runs past midnight.
+---
 
-## State of recovery (UDC Toronto, mostly closed)
+## Plan hierarchy (read in this order)
 
-- All R540–R675 photos: 1,807 rows recovered.
-- R667–R675 + R665–R666 videos: recovered.
-- EXIF +00:00 bug: CompPortal corrected (3,514 photos +4h).
-- **R199–R310 judge audio: NOT recoverable.** Documented in incident report.
+1. **`docs/plans/2026-04-26-fix-plan.md`** — the BIG plan. 1756 lines, post-mortem-driven, Phase 1–5, operator North Star, full goal-backward derivation. This is the ground-truth multi-point plan; everything else descends from here.
+2. **`docs/plans/2026-04-28-burlington-prep-approved.md`** — the SUBSET locked for the Burlington autonomous run. 17 items, smaller scope, all decisions locked across 30 questions on 2026-04-28.
+3. **`docs/plans/2026-04-28-operator-issues-status.md`** — the 103-row operator-issues table (A1-A56 + B1-B40). This is the running ledger of every operator complaint with shipped/open/blocked status and commit references.
+4. **`docs/plans/2026-04-26-photo-import-incident.md`** + **`docs/plans/2026-04-26-rerecord-redesign.md`** — input docs that drove the big plan.
+5. **`docs/plans/2026-04-28-incident-r199-judge-audio-loss.md`** — UDC Toronto judge-audio incident (not recoverable; documented).
 
-## Cross-project status
+This CURRENT_WORK.md is the deploy + fix-loop scratchpad. Items by ID (A1, A52, etc.) cross-reference back into 1+2+3.
 
-- CompPortal INBOX coordination items folded into CP audit doc.
-- Burlington 2026-05-01 countdown: 3 days. Pre-Burlington shortlist locked (A52, A53, A57 are highest-impact small wins).
+## Coverage relative to the big plan (2026-04-26-fix-plan.md)
 
-## Reason for fresh
+The Burlington prep run (item 1+2 above) deliberately picked the highest-impact small wins from each phase of the big plan — NOT the entire phase. So phases are mostly partial-shipped:
 
-End of decision-locking session (~30 questions answered, 11:00–22:30 EDT). Context burned heavily; fresh slate so the autonomous block reads from the written spec, not chat memory. Spec is self-contained for autonomous execution.
+| Big-plan phase | Item count | Status |
+|---|---|---|
+| **Phase 1** (Detection & Escape valves) | ~10 | A35 (scratch-notify CSE-side) + A56 (pipeline chip) shipped. Phase 1.4 (lying-success toast), 1.5 (queue-bulk-prune UI), 1.6 (clear-on-startup option), CompPortal CD no-flow banner — NOT in this run. |
+| **Phase 2** (Watermark + matcher invariants + take-immutable) | ~8 | A1 (SD pre-check mtime fix) + Item 17 (take-immutable + click-to-reassign + 999-overflow + SAVE AS EMPTY) shipped. Phase 2.7 (DB partial unique index) — operator deferred. Watermark generalization for NAP_/Q53A bodies — NOT in this run. |
+| **Phase 3** (NORTH STAR UX) | ~6 | A15 (Scanning→Matching→Copying→Queueing→Safe to remove + No new photos toast) shipped. Top-left chip + escalating mismatch banners — NOT in this run. |
+| **Phase 4** (Re-record drama, Phase-1-of-rerecord-redesign) | ~5 | None — entirely deferred. |
+| **Phase 5** (long tail) | ~10 | A53/A55 (audio audit) + A56 (pipeline detector slice) shipped. Timezone contract / asar packaging / R2 reconcile — NOT in this run. |
+
+**What's NOT yet shipped from the big plan** (paraphrased priority items the next session should re-evaluate against Burlington-readiness):
+
+- Phase 1.4 — Lying-success toast fix (the "Import Complete" toast that fires when match returns, not when files copy). A15 covers part of this; the "lying" wording fix may still need one more pass.
+- Phase 1.5 — Job-queue bulk-prune UI button.
+- Phase 1.6 — Queue clear-on-startup setting (operator escalation 2026-04-27 12:01 EDT).
+- Phase 2.4 — Watermark per (volume-serial, body-key) instead of just body. NAP_/Q53A/Pxx camera-body regex generalization.
+- Phase 2.6 — Manual `PHOTOS_IMPORT` IPC routed through the same watermark/dedup path as auto-import.
+- Phase 2.8 — Immutable take-windows: PARTIALLY shipped (Item 17 took the data-model + UI piece; the matcher-side awareness of historical take windows is still on the table).
+- Phase 3 NORTH STAR top-left chip is NOT yet built (A15 ships staged pill in the existing header pill location, not the spec'd top-left chip surface).
+- Phase 4 entire — re-record decision modal redesign per `2026-04-26-rerecord-redesign.md`.
+
+## Next session pickup contract
+
+You're walking into this fresh. Read the plan hierarchy above + this file.
+
+### Immediate actions (in order)
+
+1. **Build asar** (already coded, just needs build+deploy):
+   - Uncommitted F4 ("Dismiss all" on HardeningBanners) is in `src/renderer/App.tsx`. `git status` will show it.
+   - Stage + commit it as a separate commit.
+   - Run `npx electron-vite build && npx electron-builder --win --dir`
+   - Output: `release/win-unpacked/resources/app.asar`
+2. **Wait for operator close-app + "go"**, then deploy:
+   - Backup existing asar with timestamped `.bak`
+   - `scp release/win-unpacked/resources/app.asar dart:/Users/User/AppData/Local/Temp/app.asar.new`
+   - `ssh dart "powershell -NoProfile -Command \"Move-Item ... -Force\""`
+3. **Ask operator for the X-on-hover screenshot** (F5). Without that, I can't locate the bug.
+4. **Continue fix loop** — operator surfaces issues, I fix on master, rebuild, redeploy. Each asar swap = its own gated "go".
+
+### Hard rules carried forward
+
+1. NEVER block start of a recording.
+2. NEVER kill user-facing processes (operator closes the app for asar swaps).
+3. Asar swap is its own gated action — never bundle with other writes.
+4. **PowerShell JSON writes for Node.js consumers must be no-BOM** — incident 2026-04-29 08:31 wiped settings; memory entry exists.
+5. NEVER self-invoke /fresh / /wrap-up / /compact unless operator explicitly says so. Operator did say so this round.
+6. NEVER push on smoke-test failure.
+
+### Diagnostics on DART
+
+- machine_logs: Supabase project COMPSYNC, table `machine_logs` (cols `ts`, `level`, `source`, `message`)
+- Debug HTTP server: `http://127.0.0.1:8765/debug` on DART, accessible via SSH-PowerShell `Invoke-WebRequest`
+- Routes: `/debug/state`, `/debug/queue`, `/debug/routines`, `/debug/health`, `/debug/logs`, `/debug/events`
+
+### Files touched in this session you'll see git history on
+
+- `src/main/services/take.ts` (new — item 17 persistence)
+- `src/main/services/recording.ts` (handleRecordingStarted/Stopped — take wiring + overflow fallback)
+- `src/main/services/state.ts` (assignOverflowRoutineForTake, reassignActiveTake)
+- `src/main/services/pipelineHealth.ts` (A56)
+- `src/main/services/ffmpeg.ts` (A53/A55 audio audit)
+- `src/main/services/driveMonitor.ts` (A1 mtime-sort)
+- `src/main/services/compPortal.ts` (A35 scratch-notify drain)
+- `src/main/services/photos.ts` (A15 staged emit)
+- `src/main/services/jobQueue.ts` (A35 prune exempt scratch-notify)
+- `src/renderer/App.tsx` (mounts, HardeningBanners + Dismiss all uncommitted)
+- `src/renderer/components/AudioAuditBanner.tsx` (rewritten 09:13 — top banner consolidation)
+- `src/renderer/components/PipelineHealthChip.tsx` (new — A56 chip)
+- `src/renderer/components/ReassignPopover.tsx` (new — item 17 / A54)
+- `src/renderer/components/RoutineTable.tsx` (THUMB/KEY columns + handleJumpTo branch + A44)
+- `src/renderer/components/Controls.tsx` (A41 NEXT-disable + SAVE AS EMPTY label)
+- `src/renderer/components/Header.tsx` (A15 pill verbs + chip mount)
+- `src/renderer/components/EndOfDayModal.tsx` (A37)
+- `src/main/services/dayChecklist.ts` (A37)
+- `src/shared/types.ts` (Take, AppSettings.audioAudit, IPC channels)
+- `src/preload/index.ts` (recordingReassignTarget, dayChecklist*, etc.)
+- `src/main/ipc.ts` (RECORDING_REASSIGN_TARGET handler)
+- `src/main/index.ts` (pipelineHealth init + stale-take detect on boot)
+
+### Build pattern
+
+```bash
+rm -rf out release/win-unpacked release/builder-debug.yml
+npx electron-vite build && npx electron-builder --win --dir
+# Output: release/win-unpacked/resources/app.asar (~132 MB)
+```
+
+`npm run dist` triggers `predist` which fails on `dotnet not found` (WPD helper). Skip predist; the existing `tools/wpd-helper/bin/wpd-helper.exe` placeholder is fine — DART's deployed app has the real binary alongside the asar.
+
+---
+
+## Burlington countdown
+
+2026-04-29 09:25 EDT — **2 days, 14 hours** until Burlington 2026-05-01 doors. Fix loop is the priority; item 17 take-immutable changes the recording hot path so smoke-test thoroughly before Friday.

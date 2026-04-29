@@ -114,8 +114,50 @@ function HardeningBanners(): React.ReactElement | null {
 
   if (banners.length === 0) return null
 
+  // Operator-spec 2026-04-29: when multiple alert banners stack, surface a
+  // "Dismiss all" header so the operator can clear in one click. Only
+  // dismisses the dismissable ones (drive-lost / disk-alert intentionally
+  // sticky until state changes).
+  const dismissableCount = banners.filter((b) => b.onDismiss).length
+  function dismissAll(): void {
+    for (const b of banners) {
+      if (b.onDismiss) try { b.onDismiss() } catch {}
+    }
+  }
+
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
+      {banners.length > 1 && dismissableCount > 1 && (
+        <div
+          style={{
+            background: '#1a1a25',
+            color: '#cfcfdc',
+            padding: '4px 12px',
+            fontSize: 11,
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: '1px solid rgba(0,0,0,0.4)',
+          }}
+        >
+          <span>{banners.length} alert{banners.length === 1 ? '' : 's'} active</span>
+          <button
+            type="button"
+            onClick={dismissAll}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.3)',
+              color: '#cfcfdc',
+              padding: '2px 10px',
+              borderRadius: 3,
+              cursor: 'pointer',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >Dismiss all</button>
+        </div>
+      )}
       {banners.map((b) => (
         <div
           key={b.key}
