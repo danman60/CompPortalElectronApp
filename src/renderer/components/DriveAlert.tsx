@@ -337,29 +337,19 @@ export default function DriveAlert(): React.ReactElement | null {
     setMinimizedLocal(true)
   }, [detected, autoImportOnDrive])
 
-  useEffect(() => {
-    if (!autoImportOnDrive) return
-    if (!detected || !competition) return
-    if (progress.stage !== 'idle') return
-    const key = `${detected.drivePath}::${detected.photoCount}`
-    if (autoImportFiredRef.current.has(key)) return
-    autoImportFiredRef.current.add(key)
-    // Initialize the Header progress pill AND overlay-mode pill (same
-    // module state backs both). The operator sees a soft pill no matter
-    // which window mode they're in.
-    setMinimized({
-      active: true,
-      stage: 'scanning',
-      current: 0,
-      total: detected.photoCount ?? 0,
-      message: `SD matched: ${detected.photoCount ?? 0} photos — importing`,
-      driveKey: `${detected.drivePath}::${detected.photoCount}`,
-      canRemoveCard: false,
-    })
-    runImport(detected.photoPath)
-    // runImport identity changes every render; intentional single-fire guard via ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detected, competition, autoImportOnDrive, progress.stage])
+  // Phase 5.1 (2026-04-29): renderer-side auto-fire DELETED.
+  // The main-process driveMonitor (driveMonitor.ts) is now the single
+  // canonical auto-import trigger — it fires importPhotos directly with
+  // dedupByDb + offset-gate options as soon as a camera SD is detected.
+  // The pill state arrives via the PHOTOS_PROGRESS IPC's setMinimized() in
+  // the unsubProgress handler above, so the operator still sees the pill
+  // within ~100ms of the import starting.
+  //
+  // This redundant renderer auto-fire was a known race condition (~9s head
+  // start before main's claim) — see v15.2 comment in driveMonitor.ts.
+  // Demoted to dead code by Phase 2.1's main-process watermark + dedup
+  // path. fireImportOnce + autoImportFiredRef remain for the manual
+  // "Start Import" button, but no auto-effect.
 
   function handleStartTether(): void {
     if (!detected) return
