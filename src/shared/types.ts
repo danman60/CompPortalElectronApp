@@ -195,6 +195,10 @@ export interface Competition {
   // schedule re-imports (item 5, 2026-04-25): IDs no longer in `routines`
   // drop out automatically; new IDs append in schedule order.
   displayOrder?: string[]
+  // Item 17: 999-decrement overflow counter for takes saved without an
+  // explicit slot assignment. Decrements per use (999, 998, 997, ...).
+  // Persists across app restarts within a competition.
+  nextOverflowNumber?: number
 }
 
 // --- OBS ---
@@ -705,6 +709,11 @@ export const IPC_CHANNELS = {
 
   // A56: universal pipeline detector (narrow slice — header chip)
   PIPELINE_HEALTH: 'pipeline:health',
+
+  // Item 17 / A54: click-to-reassign + active take broadcast
+  RECORDING_REASSIGN_TARGET: 'recording:reassign-target',
+  RECORDING_ACTIVE_TAKE: 'recording:active-take',
+  RECORDING_STALE_TAKE_DETECTED: 'recording:stale-take-detected',
 
   // Upload
   UPLOAD_ALL: 'upload:all',
@@ -1281,6 +1290,31 @@ export interface AudioAuditPassEvent {
   routineId: string
   entryNumber: string
   trackCount: number
+}
+
+// --- Take-immutable + click-to-reassign (Item 17 / A54) ---
+
+/**
+ * A "take" is a single uninterrupted OBS recording session — from RECORD press
+ * to STOP press. It exists independently of routine slots: an operator can
+ * start a recording without a target routine, or reassign mid-flow via
+ * click-to-reassign / SAVE AS EMPTY ROUTINE. The active take is persisted to
+ * `_active_take.json` so a crash mid-record still reveals what was being
+ * recorded for which target.
+ */
+export interface ActiveTake {
+  takeId: string                          // uuid
+  startedAt: string                       // ISO timestamp from OBS RecordingStarted
+  currentTargetRoutineId: string | null   // updated on click-to-reassign / SAVE AS EMPTY
+  /** Optional descriptor for empty-routine flows: "226.5", "355", etc. */
+  emptyRoutineNumber?: string
+}
+
+export interface RecordingReassignTargetPayload {
+  /** Existing routineId, or null to indicate "save as 999-decrement overflow." */
+  routineId: string | null
+  /** Optional explicit entry number (e.g., "226.5"); when provided, may create a new lateInsert row. */
+  emptyRoutineNumber?: string
 }
 
 // --- Pipeline Health (A56) ---
