@@ -93,8 +93,13 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS),
   photosOffsetDecision: (proposalId: string, decision: 'yes' | 'no' | 'skip') =>
     ipcRenderer.invoke(IPC_CHANNELS.PHOTOS_OFFSET_DECISION, proposalId, decision),
-  recordingRerecDecision: (proposalId: string, decision: 'advance' | 'archive') =>
-    ipcRenderer.invoke(IPC_CHANNELS.RECORDING_REREC_DECISION, proposalId, decision),
+  recordingRerecDecision: (
+    proposalId: string,
+    decision:
+      | { kind: 'archive' }
+      | { kind: 'specify-routine'; routineId: string }
+      | { kind: 'save-as-extra'; emptyRoutineNumber: string },
+  ) => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_REREC_DECISION, proposalId, decision),
 
   // Lower Third
   ltFire: () => ipcRenderer.invoke(IPC_CHANNELS.LT_FIRE),

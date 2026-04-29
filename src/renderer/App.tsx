@@ -459,13 +459,27 @@ interface RerecDecisionRequest {
   detectedAt: string
 }
 
-// Re-record hard-gate modal (E1): blocks post-stop processing until the
-// operator explicitly chooses between "advance to next routine" (this take
-// was meant for the next entry) or "archive prior" (legacy re-record).
-// Cannot be dismissed without a choice. Default (autofocus) = advance.
+// Re-record decision modal — Phase 2.8 / Take architecture (2026-04-29).
+// Blocks post-stop processing until the operator picks one of three actions:
+//   - Archive (default): new take canonical for THIS routine; prior MKV →
+//                        _archive/v{N}/, prior take's window preserved.
+//   - Specify Routine:   dropdown anchored at the routine the take was
+//                        originally bound to. New take's currentRoutineId
+//                        mutates to the picked routine; photos follow.
+//   - Save as Extra:     text input default {entry}.5; creates lateInsert
+//                        row; new take's currentRoutineId points there.
+// Visually-only — no audible alerts.
+type RerecDecisionPayload =
+  | { kind: 'archive' }
+  | { kind: 'specify-routine'; routineId: string }
+  | { kind: 'save-as-extra'; emptyRoutineNumber: string }
+
 function RerecordDecisionModal(): React.ReactElement | null {
+  const competition = useStore((s) => s.competition)
   const [requests, setRequests] = useState<RerecDecisionRequest[]>([])
-  const advanceBtnRef = React.useRef<HTMLButtonElement | null>(null)
+  const archiveBtnRef = React.useRef<HTMLButtonElement | null>(null)
+  const [pickedRoutineId, setPickedRoutineId] = useState<string>('')
+  const [extraEntry, setExtraEntry] = useState<string>('')
 
   useEffect(() => {
     if (!window.api) return
@@ -476,16 +490,24 @@ function RerecordDecisionModal(): React.ReactElement | null {
     return () => { try { off() } catch {} }
   }, [])
 
-  // Autofocus the safer default ("Advance") each time a new modal appears.
+  // Autofocus default (Archive) when a new modal appears + reset picker
+  // defaults: dropdown anchored at the take's original routine; extra
+  // entry default = {currentEntry}.5.
   useEffect(() => {
-    if (requests.length > 0 && advanceBtnRef.current) {
-      advanceBtnRef.current.focus()
+    if (requests.length > 0) {
+      if (archiveBtnRef.current) archiveBtnRef.current.focus()
+      const r = requests[0]
+      setPickedRoutineId(r.currentRoutineId)
+      // Default to {entry}.5 unless the entry already has a decimal.
+      const baseNum = parseFloat(r.currentEntryNumber)
+      const defaultExtra = isNaN(baseNum) ? `${r.currentEntryNumber}.5` : `${Math.floor(baseNum)}.5`
+      setExtraEntry(defaultExtra)
     }
   }, [requests.length])
 
-  function decide(proposalId: string, decision: 'advance' | 'archive'): void {
+  function decide(proposalId: string, payload: RerecDecisionPayload): void {
     try {
-      (window.api as any).recordingRerecDecision(proposalId, decision)
+      (window.api as any).recordingRerecDecision(proposalId, payload)
     } catch {
       // ignore
     }
@@ -494,14 +516,20 @@ function RerecordDecisionModal(): React.ReactElement | null {
 
   if (requests.length === 0) return null
 
-  // Only render the first request. Modal is strictly blocking —
-  // additional requests queue behind it and render once the current
-  // one resolves.
   const r = requests[0]
-  const nextLabel = r.nextEntryNumber ?? '?'
   const durMin = Math.floor(r.newDurationSec / 60)
   const durSec = r.newDurationSec % 60
   const durStr = durMin > 0 ? `${durMin}m ${durSec}s` : `${durSec}s`
+
+  // Build dropdown of routines anchored at the take's original routine —
+  // operator usually picks "the slot 1-2 away from where I thought I was."
+  const allRoutines = competition?.routines ?? []
+  const anchorIdx = allRoutines.findIndex((x) => x.id === r.currentRoutineId)
+  // Show ±10 routines around anchor. If anchor isn't visible (scratched
+  // mid-show), fall back to all visible routines.
+  const dropdownStart = Math.max(0, anchorIdx - 10)
+  const dropdownEnd = anchorIdx >= 0 ? Math.min(allRoutines.length, anchorIdx + 11) : allRoutines.length
+  const visibleSlice = anchorIdx >= 0 ? allRoutines.slice(dropdownStart, dropdownEnd) : allRoutines
 
   return (
     <div
@@ -542,41 +570,25 @@ function RerecordDecisionModal(): React.ReactElement | null {
             color: '#ffca55',
           }}
         >
-          {'\u26A0\uFE0F'} Re-record or missed advance?
+          Where does this take belong?
         </div>
         <div style={{ marginBottom: 16, color: '#d4d4d4' }}>
-          R<strong>{r.currentEntryNumber}</strong> already has an encoded output
-          {' '}({r.priorEncodedFiles.slice(0, 2).join(', ')}
-          {r.priorEncodedFiles.length > 2 ? `, +${r.priorEncodedFiles.length - 2} more` : ''})
-          {' '}and the take you just stopped is <strong>{durStr}</strong> long.
+          R<strong>{r.currentEntryNumber}</strong> already has an encoded recording
+          {r.priorEncodedFiles.length > 0 && (
+            <> ({r.priorEncodedFiles.slice(0, 2).join(', ')}
+            {r.priorEncodedFiles.length > 2 ? `, +${r.priorEncodedFiles.length - 2} more` : ''})</>
+          )}.
+          The new take you just stopped is <strong>{durStr}</strong> long. Nothing has
+          been overwritten {'—'} pick where this new take belongs:
         </div>
-        <div
-          style={{
-            marginBottom: 16,
-            padding: '8px 12px',
-            background: 'rgba(63, 168, 108, 0.12)',
-            border: '1px solid rgba(63, 168, 108, 0.4)',
-            borderRadius: 4,
-            fontSize: 12,
-            color: '#c8e6cb',
-          }}
-        >
-          {'⏱️'} A {durStr} take is almost always a <strong>real routine</strong>.
-          {nextLabel !== '?' ? <> The most likely correct action is <strong>Advance to R{nextLabel}</strong>.</> : null}
-        </div>
-        <div style={{ marginBottom: 20, color: '#d4d4d4' }}>
-          This usually means you forgot to tap <strong>Next Routine</strong> before
-          starting the new take. Pick one:
-        </div>
-
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button
-            ref={advanceBtnRef}
-            onClick={() => decide(r.proposalId, 'advance')}
+            ref={archiveBtnRef}
+            onClick={() => decide(r.proposalId, { kind: 'archive' })}
             style={{
-              background: '#2d7a4f',
+              background: '#2d4f7a',
               color: '#fff',
-              border: '2px solid #3fa86c',
+              border: '2px solid #3f6ca8',
               padding: '14px 16px',
               borderRadius: 6,
               cursor: 'pointer',
@@ -586,35 +598,109 @@ function RerecordDecisionModal(): React.ReactElement | null {
             }}
           >
             <div style={{ fontSize: 15, marginBottom: 4 }}>
-              Advance to next routine {'\u2014'} R{nextLabel}
+              Archive {'\u2014'} this take is the new R{r.currentEntryNumber}
             </div>
-            <div style={{ fontWeight: 400, fontSize: 12, color: '#d4f4dd' }}>
-              This new take is R{nextLabel}, not R{r.currentEntryNumber}. The prior take
-              for R{r.currentEntryNumber} is already recorded and stays as-is.
+            <div style={{ fontWeight: 400, fontSize: 12, color: '#cfdded' }}>
+              Old MKV moves to _archive/v{'{N}'}/. Photos shot during BOTH windows
+              still bind to R{r.currentEntryNumber}.
             </div>
           </button>
 
-          <button
-            onClick={() => decide(r.proposalId, 'archive')}
+          <div
             style={{
-              background: '#6b2a2a',
-              color: '#fff',
-              border: '2px solid #a84444',
-              padding: '14px 16px',
+              background: '#3a2d10',
+              border: '1px solid #6a5020',
+              padding: '12px 14px',
               borderRadius: 6,
-              cursor: 'pointer',
-              fontWeight: 700,
-              fontSize: 14,
-              textAlign: 'left',
             }}
           >
-            <div style={{ fontSize: 15, marginBottom: 4 }}>
-              It{'\u2019'}s a re-record, archive the old one
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#ffd28a', marginBottom: 8 }}>
+              Specify routine {'\u2014'} pick which routine this take is for
             </div>
-            <div style={{ fontWeight: 400, fontSize: 12, color: '#f4d4d4' }}>
-              Keep R{r.currentEntryNumber} = new take. Archive prior to _archive/.
+            <select
+              value={pickedRoutineId}
+              onChange={(e) => setPickedRoutineId(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                background: '#1a1a25',
+                color: '#fff',
+                border: '1px solid #555',
+                borderRadius: 4,
+                fontSize: 13,
+                marginBottom: 8,
+              }}
+            >
+              {visibleSlice.map((rt) => (
+                <option key={rt.id} value={rt.id}>
+                  R{rt.entryNumber} {'\u2014'} {rt.routineTitle.slice(0, 60)}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => decide(r.proposalId, { kind: 'specify-routine', routineId: pickedRoutineId })}
+              disabled={!pickedRoutineId || pickedRoutineId === r.currentRoutineId}
+              style={{
+                background: '#7a5020',
+                color: '#fff',
+                border: '1px solid #a86c30',
+                padding: '8px 14px',
+                borderRadius: 4,
+                cursor: !pickedRoutineId || pickedRoutineId === r.currentRoutineId ? 'not-allowed' : 'pointer',
+                opacity: !pickedRoutineId || pickedRoutineId === r.currentRoutineId ? 0.5 : 1,
+                fontWeight: 600,
+                fontSize: 13,
+              }}
+            >
+              Use picked routine
+            </button>
+          </div>
+
+          <div
+            style={{
+              background: '#2a3a10',
+              border: '1px solid #4a6a20',
+              padding: '12px 14px',
+              borderRadius: 6,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#cfff8a', marginBottom: 8 }}>
+              Save as extra routine {'\u2014'} create a new entry
             </div>
-          </button>
+            <input
+              type="text"
+              value={extraEntry}
+              onChange={(e) => setExtraEntry(e.target.value)}
+              placeholder={`e.g. ${r.currentEntryNumber}.5`}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                background: '#1a1a25',
+                color: '#fff',
+                border: '1px solid #555',
+                borderRadius: 4,
+                fontSize: 13,
+                marginBottom: 8,
+              }}
+            />
+            <button
+              onClick={() => decide(r.proposalId, { kind: 'save-as-extra', emptyRoutineNumber: extraEntry.trim() })}
+              disabled={!extraEntry.trim()}
+              style={{
+                background: '#4a7a20',
+                color: '#fff',
+                border: '1px solid #6caa30',
+                padding: '8px 14px',
+                borderRadius: 4,
+                cursor: !extraEntry.trim() ? 'not-allowed' : 'pointer',
+                opacity: !extraEntry.trim() ? 0.5 : 1,
+                fontWeight: 600,
+                fontSize: 13,
+              }}
+            >
+              Save as R{extraEntry.trim() || '?'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -1335,6 +1335,41 @@ export interface ActiveTake {
   emptyRoutineNumber?: string
 }
 
+/**
+ * Phase 2.8 / Take entity architecture (2026-04-29).
+ *
+ * A Take is a first-class entity representing one OBS recording session
+ * (RECORD press → STOP press). It exists independently of routines: the
+ * `currentRoutineId` pointer is mutable and can change via:
+ *   - Item 17 click-to-reassign mid-recording (routes the in-flight take)
+ *   - Post-stop modal "Specify Routine" or "Save as Extra Routine"
+ *   - Future post-event admin reassignment
+ *
+ * Photos are matched to a take's (startedAt, stoppedAt) window — NOT to a
+ * routine's window. Photo's effective routine = take.currentRoutineId.
+ * When a take is reassigned, its photos automatically follow because the
+ * matcher reads currentRoutineId at query time.
+ *
+ * Immutability invariants:
+ *   - takeId, startedAt, mkvPath, archivedPath: never change after set
+ *   - stoppedAt: set exactly once when recording finalizes
+ *   - currentRoutineId, emptyRoutineNumber: free to mutate
+ *
+ * Persisted in compsync-state.json under top-level `takes[]`.
+ *
+ * End-of-comp invariant: every recorded second of the comp is covered by
+ * exactly one take's (startedAt, stoppedAt) window. Forensic queryable.
+ */
+export interface Take {
+  takeId: string                          // uuid, immutable
+  startedAt: string                       // ISO, immutable
+  stoppedAt: string | null                // ISO; null = in-flight
+  mkvPath: string | null                  // path; null until stop finalized
+  archivedPath?: string                   // set when mkv moves to _archive/v{N}/
+  currentRoutineId: string | null         // mutable
+  emptyRoutineNumber?: string             // for SAVE AS EMPTY ROUTINE / lateInsert flows
+}
+
 export interface RecordingReassignTargetPayload {
   /** Existing routineId, or null to indicate "save as 999-decrement overflow." */
   routineId: string | null

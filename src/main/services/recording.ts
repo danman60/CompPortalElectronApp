@@ -109,11 +109,21 @@ function stopRecordingWatchdog(): void {
 }
 
 // --- Re-record hard-gate decision registry (E1) ---
-// When we detect a suspect re-record (new take > 90s AND prior routine dir
-// has an encoded output), post-stop processing fires a modal to the renderer
-// and awaits an operator decision. Keyed by proposalId so multiple in-flight
-// prompts (pathological, but safe) don't clobber each other.
-type RerecDecision = 'advance' | 'archive'
+// Phase 2.8 / Take architecture (2026-04-29): three actions instead of two.
+// Threshold lowered from 90s → 30s. Sub-30s = silent archive.
+//   - 'archive':         new take canonical; prior MKV → _archive/v{N}/.
+//                        Prior take's window preserved in state.takes[];
+//                        currentRoutineId stays pointing here.
+//   - 'specify-routine': new take's currentRoutineId mutates to picked
+//                        routine. Prior take stays for original routine.
+//                        File moves to picked routine's folder.
+//   - 'save-as-extra':   new take's currentRoutineId mutates to a freshly-
+//                        created lateInsert row at the typed entry number.
+type RerecDecisionKind = 'archive' | 'specify-routine' | 'save-as-extra'
+type RerecDecision =
+  | { kind: 'archive' }
+  | { kind: 'specify-routine'; routineId: string }
+  | { kind: 'save-as-extra'; emptyRoutineNumber: string }
 const rerecDecisionResolvers = new Map<string, (d: RerecDecision) => void>()
 let rerecProposalCounter = 0
 
@@ -144,7 +154,7 @@ async function requestRerecDecision(payload: {
       if (rerecDecisionResolvers.has(proposalId)) {
         rerecDecisionResolvers.delete(proposalId)
         logger.app.warn(`Re-record decision ${proposalId} timed out after 120s — defaulting to 'archive'`)
-        resolve('archive')
+        resolve({ kind: 'archive' })
       }
     }, 120_000)
     rerecDecisionResolvers.set(proposalId, (d) => {
@@ -315,11 +325,18 @@ export async function confirmReRecordIfNeeded(): Promise<boolean> {
   const win = BrowserWindow.getAllWindows()[0]
   if (!win) return true
 
+  // Phase 4.1 / Take architecture (2026-04-29): reassuring wording so the
+  // operator knows nothing destructive happens. Stays blocking — operator
+  // must acknowledge — so accidental RECORD presses can be cancelled before
+  // anything changes.
   const result = await dialog.showMessageBox(win, {
-    type: 'warning',
-    title: 'Re-record Routine?',
+    type: 'info',
+    title: 'Re-record this routine?',
     message: `Routine #${routine.entryNumber} "${routine.routineTitle}" already has a recording (status: ${routine.status}).`,
-    detail: 'Starting a new recording will archive the existing files. Continue?',
+    detail:
+      'Starting a new one keeps the old recording safe in an archive folder — nothing is overwritten or lost. ' +
+      'After you stop, you can either keep this slot or move the new take to a different routine.\n\n' +
+      'Hit Cancel if you started recording the wrong slot — you can pick the right one then.',
     buttons: ['Cancel', 'Re-record'],
     defaultId: 0,
     cancelId: 0,
@@ -506,6 +523,19 @@ async function archiveExistingFiles(routineDir: string): Promise<void> {
     const src = path.join(routineDir, entry)
     const dest = path.join(versionDir, entry)
     await fs.promises.rename(src, dest)
+    // Phase 2.8: if any prior take's mkvPath pointed at this src, update its
+    // archivedPath so post-event recovery + matcher know where the MKV
+    // really is now. currentRoutineId stays — operator's intent on archive
+    // is "this MKV was wrong for this slot but the photos shot during its
+    // window still belong to the slot." See locked spec in CURRENT_WORK.md.
+    try {
+      const priorTakes = state.getTakes().filter((t) => t.mkvPath === src)
+      for (const pt of priorTakes) {
+        state.setTakeArchived(pt.takeId, dest)
+      }
+    } catch (err) {
+      logger.app.warn(`archiveExistingFiles: failed to update prior take archivedPath: ${err instanceof Error ? err.message : err}`)
+    }
   }
 
   logger.app.info(`Archived existing files to ${versionDir}`)
@@ -569,6 +599,17 @@ export async function handleRecordingStopped(
       outputPath,
     })
 
+    // Phase 2.8: finalize the Take entity. mkvPath gets corrected to the
+    // post-rename location later in this function (after the file move into
+    // routineDir). Sync the routineId in case it diverged from the active
+    // take's currentTargetRoutineId via reassign/overflow.
+    if (activeTake?.takeId) {
+      state.setTakeStopped(activeTake.takeId, timestamp, outputPath)
+      if (state.getTake(activeTake.takeId)?.currentRoutineId !== routineId) {
+        state.setTakeRoutine(activeTake.takeId, routineId, activeTake.emptyRoutineNumber)
+      }
+    }
+
     // Venue TV "now playing" sync — clear on stop
     postNowPlaying(null).catch(() => {})
 
@@ -624,42 +665,35 @@ export async function handleRecordingStopped(
         }
       } catch {}
 
-      // Re-record heuristic (E1): if the new take is > 90s AND the existing
-      // routine dir holds a non-.mkv output (typically a performance.mp4 from
-      // a finished prior encode), the operator has likely started recording
-      // the NEXT routine without tapping "Next Routine". Hard-gate: pause
-      // post-stop processing, prompt the operator via blocking modal, and
-      // branch on their choice:
-      //   - 'archive' → legacy behavior: archive prior, new take replaces.
-      //   - 'advance' → skip archive, call state.advanceToNext(), move the
-      //     new MKV into the NEW current routine's dir. Prior stays intact
-      //     as the canonical take for the previously-current routine.
-      let rerecDecision: RerecDecision = 'archive'
+      // Phase 2.8 (2026-04-29): 30s threshold (was 90s). Modal fires when new
+      // take ≥ 30s AND prior take exists in the slot. Three actions:
+      //   - 'archive':         new take canonical for THIS routine. Prior MKV
+      //                        moves to _archive/v{N}/. Prior take's window
+      //                        preserved in state.takes[]; currentRoutineId
+      //                        keeps pointing here. Photos shot in BOTH
+      //                        windows still bind to this routine.
+      //   - 'specify-routine': new take's currentRoutineId mutates to the
+      //                        operator-picked routine. Prior take stays for
+      //                        original routine. File moves to picked dir.
+      //   - 'save-as-extra':   creates a lateInsert row at typed entry
+      //                        number; new take's currentRoutineId points
+      //                        at it. Prior take stays for original routine.
+      let rerecDecision: RerecDecision = { kind: 'archive' }
       let rerecAdvancedToRoutine: Routine | null = null
-      // peekNext is captured BEFORE the modal so we can pass the resolved
-      // routine id straight through to jumpToRoutine after the operator clicks.
-      // Re-deriving via state.advanceToNext() after the modal returns was the
-      // R354 → R356 bug source on UDC Toronto Day 2 (2026-04-25): if anything
-      // advances current state during the modal pause (Stream Deck "Next
-      // Routine" button, hotkey, another IPC handler), advanceToNext() walks
-      // forward an extra step. Using the captured peek id removes the race.
-      let peekNextIdForAdvance: string | null = null
       try {
-        const NEW_DURATION_THRESHOLD_SEC = 90
-        if (durationSec > NEW_DURATION_THRESHOLD_SEC) {
+        const NEW_DURATION_THRESHOLD_SEC = 30
+        if (durationSec >= NEW_DURATION_THRESHOLD_SEC) {
           const priorEncoded = preArchiveFiles.some((f) => /\.(mp4|webm|mov)$/i.test(f.name))
           if (priorEncoded) {
             const priorMkv = preArchiveFiles.find((f) => /\.mkv$/i.test(f.name))
-            const peekNext = state.getNextRoutine()
-            peekNextIdForAdvance = peekNext?.id ?? null
             logger.app.warn(
               `Re-record SUSPECT: routine ${routine.entryNumber} had encoded output AND new take is ${durationSec}s. ` +
-              `Awaiting operator decision (advance | archive). peekNext=R${peekNext?.entryNumber ?? '<none>'}`,
+              `Awaiting operator decision (archive | specify-routine | save-as-extra).`,
             )
             rerecDecision = await requestRerecDecision({
               currentRoutineId: routine.id,
               currentEntryNumber: routine.entryNumber,
-              nextEntryNumber: peekNext?.entryNumber ?? null,
+              nextEntryNumber: state.getNextRoutine()?.entryNumber ?? null,
               priorMkvName: priorMkv?.name ?? null,
               priorEncodedFiles: preArchiveFiles
                 .filter((f) => /\.(mp4|webm|mov)$/i.test(f.name))
@@ -667,44 +701,49 @@ export async function handleRecordingStopped(
               newMkvPath: outputPath,
               newDurationSec: durationSec,
             })
-            logger.app.info(`Re-record decision for routine ${routine.entryNumber}: ${rerecDecision}`)
+            logger.app.info(`Re-record decision for routine ${routine.entryNumber}: ${rerecDecision.kind}`)
           }
         }
       } catch (err) {
         logger.app.warn(`Re-record heuristic failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
       }
 
-      if (rerecDecision === 'advance') {
-        // Operator confirmed this take belongs to the NEXT routine. Use the
-        // routine id we captured at modal-show time — NOT a fresh advanceToNext
-        // call — so the action lands on the same routine the modal advertised.
-        // Falls back to advanceToNext if the captured id has since become
-        // invisible (scratched/skipped during the pause), with a clear log.
-        if (peekNextIdForAdvance) {
-          rerecAdvancedToRoutine = state.jumpToRoutine(peekNextIdForAdvance)
-          if (!rerecAdvancedToRoutine) {
-            logger.app.warn(
-              `Re-record ADVANCE: peekNext id ${peekNextIdForAdvance} no longer visible — fallback to advanceToNext().`,
-            )
-            rerecAdvancedToRoutine = state.advanceToNext()
-          }
-        } else {
-          rerecAdvancedToRoutine = state.advanceToNext()
-        }
-        if (!rerecAdvancedToRoutine) {
+      if (rerecDecision.kind === 'specify-routine') {
+        // Operator picked a different routine for this new take. Move file
+        // into that routine's folder; prior take stays where it was.
+        const target = state.getCompetition()?.routines.find((r) => r.id === rerecDecision.routineId) ?? null
+        if (!target) {
           logger.app.error(
-            `Re-record advance requested but no next routine available — falling back to archive for ${routine.entryNumber}`,
+            `specify-routine decision: routine ${rerecDecision.routineId} not found — falling back to archive`,
           )
-          rerecDecision = 'archive'
+          rerecDecision = { kind: 'archive' }
         } else {
+          rerecAdvancedToRoutine = target
           logger.app.info(
-            `Re-record ADVANCE: leaving prior take intact for R${routine.entryNumber}. ` +
-            `New take retargeted to R${rerecAdvancedToRoutine.entryNumber}.`,
+            `Specify-Routine: new take retargeted to R${target.entryNumber} (${target.id.slice(0, 8)}). ` +
+            `Prior take for R${routine.entryNumber} stays intact.`,
+          )
+        }
+      } else if (rerecDecision.kind === 'save-as-extra') {
+        // Operator wants the new take saved as an extra — typically {entry}.5
+        // — alongside the existing routine. Mint a lateInsert row at the
+        // typed number; new take's mkv goes to its folder.
+        const overflowRow = state.assignOverflowRoutineForTake(rerecDecision.emptyRoutineNumber)
+        if (!overflowRow) {
+          logger.app.error(
+            `save-as-extra decision: assignOverflowRoutineForTake('${rerecDecision.emptyRoutineNumber}') failed — falling back to archive`,
+          )
+          rerecDecision = { kind: 'archive' }
+        } else {
+          rerecAdvancedToRoutine = overflowRow
+          logger.app.info(
+            `Save-as-Extra: created lateInsert R${overflowRow.entryNumber} for new take. ` +
+            `Prior take for R${routine.entryNumber} stays intact.`,
           )
         }
       }
 
-      if (rerecDecision === 'archive') {
+      if (rerecDecision.kind === 'archive') {
         await archiveExistingFiles(routineDir)
 
         // Clear stale upload jobs and photo state from previous recording
@@ -731,12 +770,13 @@ export async function handleRecordingStopped(
         } catch {}
       }
 
-      // If operator chose to advance, retarget the remainder of post-stop
-      // processing at the NEW current routine. Rebind `routine` and
-      // `routineDir` so the file move, state updates, and auto-encode all
-      // run against the advanced routine. Prior routine keeps its existing
-      // canonical encoded output untouched.
-      if (rerecDecision === 'advance' && rerecAdvancedToRoutine) {
+      // If operator chose specify-routine OR save-as-extra, retarget the
+      // remainder of post-stop processing at the NEW routine. Rebind
+      // `routine` and `routineDir` so the file move, state updates, and
+      // auto-encode all run against the picked routine. Prior routine keeps
+      // its existing canonical encoded output untouched.
+      const isRetarget = rerecDecision.kind === 'specify-routine' || rerecDecision.kind === 'save-as-extra'
+      if (isRetarget && rerecAdvancedToRoutine) {
         // Undo the early "recorded" update we applied to the PRIOR routine
         // before we knew the decision. Its canonical encodedFiles are
         // already present and its status should reflect whatever it was
@@ -753,22 +793,28 @@ export async function handleRecordingStopped(
           logger.app.warn(`Failed to revert prior-routine state for ${priorRoutine.entryNumber}: ${err instanceof Error ? err.message : err}`)
         }
         routine = rerecAdvancedToRoutine
-        // Ensure the advanced routine is marked as the current recorded one
-        // with the fresh stop timestamp. outputPath is overwritten below
-        // once the MKV is moved into the new routine dir.
+        // Ensure the picked/created routine is marked recorded with the
+        // fresh stop timestamp. outputPath is overwritten below once the
+        // MKV is moved into the new routine dir.
         state.updateRoutineStatus(routine.id, 'recorded', {
           recordingStoppedAt: timestamp,
           outputPath,
         })
+        // Phase 2.8: mutate the active take's currentRoutineId so photos
+        // bound to the take's window follow it to the picked routine.
+        if (activeTake?.takeId) {
+          const empty = rerecDecision.kind === 'save-as-extra' ? rerecDecision.emptyRoutineNumber : undefined
+          state.setTakeRoutine(activeTake.takeId, routine.id, empty)
+        }
         const newDir = getRoutineOutputDir(routine, outputPath)
         if (!newDir) {
-          logger.app.warn('Advance-retarget: no output directory for new current routine — aborting move')
+          logger.app.warn(`Retarget (${rerecDecision.kind}): no output directory for new routine — aborting move`)
           broadcastFullState()
           return
         }
         routineDir = newDir
         fileName = buildFileName(routine)
-        logger.app.info(`Advance-retarget: routine dir now ${routineDir}, fileName ${fileName}`)
+        logger.app.info(`Retarget (${rerecDecision.kind}): routine dir now ${routineDir}, fileName ${fileName}`)
       }
     }
 
@@ -804,6 +850,12 @@ export async function handleRecordingStopped(
     logger.app.info(`Moved: ${outputPath} → ${newPath} (${fileSizeMB} MB)`)
 
     state.updateRoutineStatus(routine.id, 'recorded', { outputPath: newPath, outputDir: routineDir })
+
+    // Phase 2.8: update Take.mkvPath to the post-rename location so post-event
+    // recovery + the matcher can find the actual file.
+    if (activeTake?.takeId) {
+      state.setTakeMkvPath(activeTake.takeId, newPath)
+    }
 
     // Auto-encode if enabled.
     // Operator rule: a short accidental re-record must NEVER overwrite a
@@ -904,13 +956,24 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
   // Item 17: persist a take record so reassign-while-recording (A54) can
   // retarget without losing the actual start time. The take file survives
   // crashes for surface-as-stale-take recovery.
+  //
+  // Phase 2.8 (2026-04-29): also write a first-class Take entity to
+  // state.takes[]. The _active_take.json file persists in parallel for
+  // back-compat during the transition; eventually it becomes purely a
+  // crash-recovery artifact while state.takes[] is the canonical source.
+  const newTakeId = take.newTakeId()
   const newTake: ActiveTake = {
-    takeId: take.newTakeId(),
+    takeId: newTakeId,
     startedAt: timestamp,
     currentTargetRoutineId: routine.id,
   }
   take.writeActiveTake(newTake)
   sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, newTake)
+  state.addTake({
+    takeId: newTakeId,
+    startedAt: timestamp,
+    currentRoutineId: routine.id,
+  })
 
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,

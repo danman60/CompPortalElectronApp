@@ -1,163 +1,172 @@
 # Current Work — CompSyncElectronApp
 
-**Status: 2026-04-29 ~09:25 EDT (Wednesday). Burlington 2 days away. Item 17 deployed + smoke-tested live; fix-list in progress.**
+**Status: 2026-04-29 ~15:15 EDT (Wednesday). Burlington 2 days away. Decision-mode rapid build session.**
 
-Branch: **`master`** (operator chose master; `feat/sd-import-overnight` retired).
+Branch: **`master`**.
 
 ---
 
-## Live deploys today
+## What's deployed live on DART RIGHT NOW
 
-| Time (EDT) | Asar build | Notes |
+Last deploy at 13:31 EDT — asar `132,207,681` bytes — commit `e29a4e3`.
+
+**Live changes:** F5 cursor · swap-SD halfway math · IMPORT BUSY gate · Kick→PIPE merge · NORTH STAR §3.1 (modal suppress) · §3.2 (watermark-aware chip copy) · Phase 1.1 (10/30/60 min photo-stall thresholds + banner) · Phase 1.3 (lying-success toast partial-failure surfacing).
+
+Backups on DART: `bak.20260429-133123` (pre-e29a4e3), `bak.20260429-124744` (pre-d3e2c47), `bak.20260429-092651`, `bak.20260429-091847`, `bak.20260429-090937`, `bak.20260429-083148`.
+
+---
+
+## Committed but NOT YET deployed (queued for next deploy)
+
+| Commit | What | Burlington-critical? |
 |---|---|---|
-| 08:32 | first overnight deploy | items A1, A15, A19, A35, A37/38, A41, A44, A47, A51, A52, A53/55, A56, A57 + snapshot |
-| 09:09 | item 17 round 1 | take-immutable + click-to-reassign + 999-overflow + SAVE AS EMPTY |
-| 09:18 | item 17 fix round 1 | 3.5-position fix, sticky header, audio-banner consolidation |
+| `d2a0e24` | Phase 1.4+1.6 drift sync (feature-flag OFF; needs CompPortal endpoint) | No — gated |
+| `7d0cf88` | Phase 2.2 body-key regex generalize (Lumix+Nikon+Sony+Canon) + unknown-body banner | YES |
+| `f08af32` | Phase 2.1+2.3+2.4+2.6 — watermark-driven import (replaces `<2/3 today` pre-check), filename-seq tiebreaker, manual import parity, exifTz.ts helper, Settings clear-watermarks rewording, includePriorDayPhotos toggle | YES |
 
-DART backups (rollback path):
-- `app.asar.bak.20260429-091847` — pre-09:18 deploy (item 17 v1)
-- `app.asar.bak.20260429-090937` — pre-09:09 deploy (pre-item-17)
-- `app.asar.bak.20260429-083148` — pre-08:32 deploy (Apr-25 baseline)
+**Building now** (background `bv8u1x4uf`) — bundles all 3 commits + everything from `e29a4e3`. Asar will be ~132MB, deploy when operator closes app.
 
-DART state cleared this morning: `job-queue.json` = `[]`, `compsync-state.json` removed (loads TEST2026 fresh on boot).
+CompPortal-side work pending — see `~/projects/CompPortal/INBOX.md` (added `/api/plugin/comp-fingerprint` endpoint spec for Phase 1.4/1.6).
 
 ---
 
-## Verified working in production (this morning, on TEST2026)
+## Decisions LOCKED (per operator, this session) — pending implementation
 
-✅ **Item 17 take-immutable + click-to-reassign — full E2E proven:**
-Operator started recording on R1, clicked R2 mid-record, confirmed reassign, stopped → R1 reverted to pending, R2 finalized as recorded with the original 13:10:08 start time. machine_logs trace at 09:10:08–09:10:33 EDT confirms `take: wrote`, `reassignActiveTake: reverted 1 to pending`, `retargeted to 2`, `take: cleared` cleanly.
+### Take architecture (Phase 2.8 + Phase 4 redesign §4.2)
 
-✅ **Items 1–16 from the autonomous run** (deployed 08:32, no regressions reported)
+**Data model:**
+```
+Take {
+  takeId             uuid, immutable
+  startedAt          ISO, immutable (set on OBS RecordingStarted)
+  stoppedAt          ISO|null, immutable once set
+  mkvPath            path; immutable once set
+  archivedPath?      set when mkv moves to _archive/v{N}/
+  currentRoutineId   string|null, MUTABLE (reassign / re-record / save-as-extra)
+  emptyRoutineNumber? Item 17 SAVE AS EMPTY case
+}
+```
+
+- New top-level `state.takes[]`, persisted in `compsync-state.json`
+- Photos bind to take's window. Photo's routine = `take.currentRoutineId`. Take moves → photos follow.
+- Item 17's `_active_take.json` collapses to "the take with `stoppedAt === null`"
+- `Routine.recordingStartedAt/stoppedAt` becomes denormalized convenience field (= latest take's window for that routine)
+- Boot migration: synthesize Take rows from existing `recordingStartedAt + recordingStoppedAt` fields
+- **End-of-comp invariant:** every second of the comp covered by some take's window. Forensic queryable.
+
+### Pre-record modal (already-recorded slot)
+
+- **Stays blocking** — operator must click OK
+- New wording: *"This routine already has a recording. Starting a new one keeps the old recording safe in an archive folder — nothing is overwritten or lost. Continue?"*
+- Buttons: [Cancel] | [Re-record]
+
+### Post-stop modal (replaces "Advance | Archive")
+
+**Trigger:** new take ≥ **30 seconds** AND prior take existed in this slot. Sub-30s = silent archive (was 90s threshold).
+
+**Three actions:**
+1. **Archive** (default) — new take canonical for this routine. Prior MKV → `_archive/v{N}/`. Prior take's `(startedAt, stoppedAt, archivedPath)` PRESERVED in state.takes[]; `currentRoutineId` keeps pointing to this routine. Photos in BOTH windows still bind to this routine.
+2. **Specify Routine** — dropdown of routines starting at the **routine the take was originally bound to**. New take's `currentRoutineId` → picked routine. Prior take stays in this routine.
+3. **Save as Extra Routine** — text input default `{currentEntryNumber}.5`. Creates `lateInsert: true` row. New take's `currentRoutineId` → new lateInsert row.
+
+**Mid-record reassign (Item 17, already shipped) uses same patterns** (Specify Routine / Save as Extra) for unified UX.
+
+### Phase 2.8 — Photo matcher rewrite
+
+`photos.ts:1405-1412` source of windows: switch from `routines.filter().map()` to `state.takes.filter(t => t.stoppedAt && t.currentRoutineId).map()`. Photos bind to `take.currentRoutineId`.
+
+**On any path that mutates `currentRoutineId`:** encoding + upload pipelines re-fire for the new routine.
 
 ---
 
-## Open fix list (from 09:11–09:25 EDT smoke)
+## Implementation order for next session
 
-| # | Issue | State | Fix landed in | Notes |
-|---|---|---|---|---|
-| F1 | Empty-routine "3.5" jumped to bottom | ✅ FIXED | commit `76a71dc` | splice after R3 |
-| F2 | Sticky table header didn't stick when scrolling | ✅ FIXED | commit `76a71dc` | overflow:hidden was breaking sticky |
-| F3 | Audio audit banners too aggressive (9 floats stacked) | ✅ FIXED | commit `76a71dc` | one top-banner per routine + Dismiss all |
-| F4 | All HardeningBanners need "Dismiss all" when multiple fire | 🟡 CODED, NOT DEPLOYED | uncommitted in App.tsx | needs build + redeploy |
-| F5 | X symbol shows when hovering a row | 🚫 OPEN | — | Claude couldn't locate via grep; needs operator screenshot showing where the X appears |
+If picking this up fresh, the sequence is:
+
+### Stage A — Data layer (~1.5 hrs)
+1. Add `Take` type to `src/shared/types.ts` (after `ActiveTake` definition)
+2. Add `takes: Take[]` to `PersistedState` interface in `src/main/services/state.ts`
+3. Add module-level `let takes: Take[] = []` and getters/setters: `getTakes()`, `addTake()`, `updateTake(takeId, patch)`, `setTakeStopped(takeId, stoppedAt, mkvPath)`, `setTakeArchived(takeId, archivedPath)`, `setTakeRoutine(takeId, routineId)`
+4. Persist takes alongside competition/cameraOffsets/sdWatermarks in saveState
+5. Boot migration in `loadState`: for any routine with `recordingStartedAt + recordingStoppedAt` and no synthesized take yet, create a synthetic Take with auto-generated takeId, `currentRoutineId = routine.id`
+6. **Type-check + commit checkpoint**
+
+### Stage B — Recording lifecycle (~2 hrs)
+1. `recording.ts:907-917` `handleRecordingStarted`: in addition to writing `_active_take.json`, also call `state.addTake({ takeId, startedAt, currentRoutineId: routine.id })`. Keep `_active_take.json` write for back-compat during transition.
+2. `recording.ts:514+` `handleRecordingStopped`: when finalizing, call `state.setTakeStopped(takeId, timestamp, outputPath)`. After file move, call `state.setTakeArchived(takeId, finalPath)` if it ended up in `_archive/v{N}/` due to advance branch. Reassign before stop → already mutates currentRoutineId on the active take, but ensure state.takes record matches.
+3. `state.ts:reassignActiveTake`: also call `state.setTakeRoutine(takeId, newRoutineId)`.
+4. Re-record archive branch (`recording.ts:707`): mark archivedPath for prior take's record. KEEP `currentRoutineId` pointing to same routine (per operator: photos in old window still belong here).
+5. **Type-check + commit checkpoint**
+
+### Stage C — Pre-record modal rewording (~30 min)
+1. `recording.ts:309-328` `confirmReRecordIfNeeded`: update message + detail + buttons to the new reassuring wording.
+2. **Type-check + commit checkpoint**
+
+### Stage D — Post-stop modal redesign (~3 hrs)
+1. Threshold change at `recording.ts:649`: `NEW_DURATION_THRESHOLD_SEC = 30` (was 90).
+2. `RerecDecision` type: change from `'advance' | 'archive'` to `'archive' | 'specify-routine' | 'save-as-extra'`.
+3. Default decision in resolver timeout: `'archive'` (was `'archive'` already).
+4. Renderer modal component: new design with dropdown (anchored at original routine) + text input.
+5. Renderer dispatches one of 3 decisions back. Main process handles each:
+   - `archive`: existing path
+   - `specify-routine`: file move to picked routine, currentRoutineId mutate, encoding + upload re-fire for new routine
+   - `save-as-extra`: create `lateInsert: true` row at typed entry number, file move, currentRoutineId mutate, encoding + upload re-fire
+6. **Type-check + commit checkpoint**
+
+### Stage E — Matcher rewrite (~2 hrs)
+1. `photos.ts:1405-1412`: change source from `routines.filter().map()` to `state.getTakes().filter(t => t.stoppedAt && t.currentRoutineId).map(t => ({ routineId: t.currentRoutineId, ..., recordingStarted: new Date(t.startedAt), recordingStopped: new Date(t.stoppedAt) }))`.
+2. Verify photo binding flows through correctly: matchedRoutineId on PhotoMatch points at the take's `currentRoutineId`.
+3. Smoke against TEST2026 with synthetic re-record scenario.
+4. **Final commit + build + deploy.**
 
 ---
 
-## Open / blocked items NOT in active fix list
+## Files touched in this session you'll see git history on
 
-| # | Item | State | Notes |
-|---|---|---|---|
-| A40 | Dual-counter regression | 🚫 BLOCKED | meaning of "dual counter" unclear in transcript; needs operator clarification |
-| A1 | SD pre-check fix | ⏳ DEFERRED VERIFICATION | code shipped + verified in bundle; needs real SD-insert event to smoke (Burlington) |
-| Item 17 sweep | Boot-time stale-take recovery UI | ⏳ thin slice | currently logs + clears; future: surface a "recover MKV" button if file present |
-| A35 server side | CompPortal /api/plugin/routine-status[-bulk] | ⏳ separate session | CSE side queues jobs that 404 until portal lands |
+- `src/main/services/photos.ts` — body-key regex, watermark seq, exifTz integration, dedupByDb default, copy-failure detail
+- `src/main/services/state.ts` — SdWatermarkEntry seq, watermark gate
+- `src/main/services/exifTz.ts` (NEW)
+- `src/main/services/driveMonitor.ts` — `<2/3` removed, exifTz integration, kickPhotoImports
+- `src/main/services/compStateSync.ts` (NEW) — Phase 1.4/1.6
+- `src/main/services/pipelineHealth.ts` — 10/30/60 min thresholds + banner
+- `src/main/index.ts` — checkOnBoot wiring
+- `src/main/ipc.ts` — manual import parity, drift refresh/dismiss, kick all
+- `src/preload/index.ts` — drift IPC bindings
+- `src/shared/types.ts` — many new types/channels/settings
+- `src/renderer/App.tsx` — drift banner, photo-stall banner, unknown-body banner, IMPORT BUSY gate
+- `src/renderer/components/Settings.tsx` — clear-watermarks button, includePriorDayPhotos toggle
+- `src/renderer/components/Header.tsx` — pill failure surfacing, Kick→PIPE merge, watermark resume copy
+- `src/renderer/components/PipelineHealthChip.tsx` — Kick All Stages button
+- `src/renderer/components/RoutineTable.tsx` — F5 cursor, swap-SD halfway math
+- `src/renderer/components/DriveAlert.tsx` — failure detail propagation, watermark fields, modal suppression
 
 ---
 
-## Plan hierarchy (read in this order)
+## Hard rules carried forward
 
-1. **`docs/plans/2026-04-26-fix-plan.md`** — the BIG plan. 1756 lines, post-mortem-driven, Phase 1–5, operator North Star, full goal-backward derivation. This is the ground-truth multi-point plan; everything else descends from here.
-2. **`docs/plans/2026-04-28-burlington-prep-approved.md`** — the SUBSET locked for the Burlington autonomous run. 17 items, smaller scope, all decisions locked across 30 questions on 2026-04-28.
-3. **`docs/plans/2026-04-28-operator-issues-status.md`** — the 103-row operator-issues table (A1-A56 + B1-B40). This is the running ledger of every operator complaint with shipped/open/blocked status and commit references.
-4. **`docs/plans/2026-04-26-photo-import-incident.md`** + **`docs/plans/2026-04-26-rerecord-redesign.md`** — input docs that drove the big plan.
-5. **`docs/plans/2026-04-28-incident-r199-judge-audio-loss.md`** — UDC Toronto judge-audio incident (not recoverable; documented).
+1. NEVER block start of recording (Phase 4.1 future cleanup; pre-record toast spec'd but not built)
+2. NEVER kill user-facing processes; operator closes app for asar swaps
+3. Asar swap is its own gated action — never bundle with other writes
+4. PowerShell JSON writes must be no-BOM
+5. NEVER self-invoke /fresh / /wrap-up / /compact unless operator explicitly says so (operator did say so this session for /fresh continuation)
+6. NEVER push on smoke-test failure
+7. NEVER add audible alerts (Audio/AudioContext/Notification etc) — visual signals only
+8. `git add <specific files>`, never `-A` (290+ untracked test artifacts must not be committed)
 
-This CURRENT_WORK.md is the deploy + fix-loop scratchpad. Items by ID (A1, A52, etc.) cross-reference back into 1+2+3.
+---
 
-## Coverage relative to the big plan (2026-04-26-fix-plan.md)
-
-The Burlington prep run (item 1+2 above) deliberately picked the highest-impact small wins from each phase of the big plan — NOT the entire phase. So phases are mostly partial-shipped:
-
-| Big-plan phase | Item count | Status |
-|---|---|---|
-| **Phase 1** (Detection & Escape valves) | ~10 | A35 (scratch-notify CSE-side) + A56 (pipeline chip) shipped. Phase 1.4 (lying-success toast), 1.5 (queue-bulk-prune UI), 1.6 (clear-on-startup option), CompPortal CD no-flow banner — NOT in this run. |
-| **Phase 2** (Watermark + matcher invariants + take-immutable) | ~8 | A1 (SD pre-check mtime fix) + Item 17 (take-immutable + click-to-reassign + 999-overflow + SAVE AS EMPTY) shipped. Phase 2.7 (DB partial unique index) — operator deferred. Watermark generalization for NAP_/Q53A bodies — NOT in this run. |
-| **Phase 3** (NORTH STAR UX) | ~6 | A15 (Scanning→Matching→Copying→Queueing→Safe to remove + No new photos toast) shipped. Top-left chip + escalating mismatch banners — NOT in this run. |
-| **Phase 4** (Re-record drama, Phase-1-of-rerecord-redesign) | ~5 | None — entirely deferred. |
-| **Phase 5** (long tail) | ~10 | A53/A55 (audio audit) + A56 (pipeline detector slice) shipped. Timezone contract / asar packaging / R2 reconcile — NOT in this run. |
-
-**What's NOT yet shipped from the big plan** (paraphrased priority items the next session should re-evaluate against Burlington-readiness):
-
-- Phase 1.4 — Lying-success toast fix (the "Import Complete" toast that fires when match returns, not when files copy). A15 covers part of this; the "lying" wording fix may still need one more pass.
-- Phase 1.5 — Job-queue bulk-prune UI button.
-- Phase 1.6 — Queue clear-on-startup setting (operator escalation 2026-04-27 12:01 EDT).
-- Phase 2.4 — Watermark per (volume-serial, body-key) instead of just body. NAP_/Q53A/Pxx camera-body regex generalization.
-- Phase 2.6 — Manual `PHOTOS_IMPORT` IPC routed through the same watermark/dedup path as auto-import.
-- Phase 2.8 — Immutable take-windows: PARTIALLY shipped (Item 17 took the data-model + UI piece; the matcher-side awareness of historical take windows is still on the table).
-- Phase 3 NORTH STAR top-left chip is NOT yet built (A15 ships staged pill in the existing header pill location, not the spec'd top-left chip surface).
-- Phase 4 entire — re-record decision modal redesign per `2026-04-26-rerecord-redesign.md`.
-
-## Next session pickup contract
-
-You're walking into this fresh. Read the plan hierarchy above + this file.
-
-### Immediate actions (in order)
-
-1. **Build asar** (already coded, just needs build+deploy):
-   - Uncommitted F4 ("Dismiss all" on HardeningBanners) is in `src/renderer/App.tsx`. `git status` will show it.
-   - Stage + commit it as a separate commit.
-   - Run `npx electron-vite build && npx electron-builder --win --dir`
-   - Output: `release/win-unpacked/resources/app.asar`
-2. **Wait for operator close-app + "go"**, then deploy:
-   - Backup existing asar with timestamped `.bak`
-   - `scp release/win-unpacked/resources/app.asar dart:/Users/User/AppData/Local/Temp/app.asar.new`
-   - `ssh dart "powershell -NoProfile -Command \"Move-Item ... -Force\""`
-3. **Ask operator for the X-on-hover screenshot** (F5). Without that, I can't locate the bug.
-4. **Continue fix loop** — operator surfaces issues, I fix on master, rebuild, redeploy. Each asar swap = its own gated "go".
-
-### Hard rules carried forward
-
-1. NEVER block start of a recording.
-2. NEVER kill user-facing processes (operator closes the app for asar swaps).
-3. Asar swap is its own gated action — never bundle with other writes.
-4. **PowerShell JSON writes for Node.js consumers must be no-BOM** — incident 2026-04-29 08:31 wiped settings; memory entry exists.
-5. NEVER self-invoke /fresh / /wrap-up / /compact unless operator explicitly says so. Operator did say so this round.
-6. NEVER push on smoke-test failure.
-
-### Diagnostics on DART
+## Diagnostics on DART
 
 - machine_logs: Supabase project COMPSYNC, table `machine_logs` (cols `ts`, `level`, `source`, `message`)
 - Debug HTTP server: `http://127.0.0.1:8765/debug` on DART, accessible via SSH-PowerShell `Invoke-WebRequest`
 - Routes: `/debug/state`, `/debug/queue`, `/debug/routines`, `/debug/health`, `/debug/logs`, `/debug/events`
 
-### Files touched in this session you'll see git history on
-
-- `src/main/services/take.ts` (new — item 17 persistence)
-- `src/main/services/recording.ts` (handleRecordingStarted/Stopped — take wiring + overflow fallback)
-- `src/main/services/state.ts` (assignOverflowRoutineForTake, reassignActiveTake)
-- `src/main/services/pipelineHealth.ts` (A56)
-- `src/main/services/ffmpeg.ts` (A53/A55 audio audit)
-- `src/main/services/driveMonitor.ts` (A1 mtime-sort)
-- `src/main/services/compPortal.ts` (A35 scratch-notify drain)
-- `src/main/services/photos.ts` (A15 staged emit)
-- `src/main/services/jobQueue.ts` (A35 prune exempt scratch-notify)
-- `src/renderer/App.tsx` (mounts, HardeningBanners + Dismiss all uncommitted)
-- `src/renderer/components/AudioAuditBanner.tsx` (rewritten 09:13 — top banner consolidation)
-- `src/renderer/components/PipelineHealthChip.tsx` (new — A56 chip)
-- `src/renderer/components/ReassignPopover.tsx` (new — item 17 / A54)
-- `src/renderer/components/RoutineTable.tsx` (THUMB/KEY columns + handleJumpTo branch + A44)
-- `src/renderer/components/Controls.tsx` (A41 NEXT-disable + SAVE AS EMPTY label)
-- `src/renderer/components/Header.tsx` (A15 pill verbs + chip mount)
-- `src/renderer/components/EndOfDayModal.tsx` (A37)
-- `src/main/services/dayChecklist.ts` (A37)
-- `src/shared/types.ts` (Take, AppSettings.audioAudit, IPC channels)
-- `src/preload/index.ts` (recordingReassignTarget, dayChecklist*, etc.)
-- `src/main/ipc.ts` (RECORDING_REASSIGN_TARGET handler)
-- `src/main/index.ts` (pipelineHealth init + stale-take detect on boot)
-
-### Build pattern
-
-```bash
-rm -rf out release/win-unpacked release/builder-debug.yml
-npx electron-vite build && npx electron-builder --win --dir
-# Output: release/win-unpacked/resources/app.asar (~132 MB)
-```
-
-`npm run dist` triggers `predist` which fails on `dotnet not found` (WPD helper). Skip predist; the existing `tools/wpd-helper/bin/wpd-helper.exe` placeholder is fine — DART's deployed app has the real binary alongside the asar.
-
 ---
 
 ## Burlington countdown
 
-2026-04-29 09:25 EDT — **2 days, 14 hours** until Burlington 2026-05-01 doors. Fix loop is the priority; item 17 take-immutable changes the recording hot path so smoke-test thoroughly before Friday.
+2026-04-29 15:15 EDT — **2 days, 8 hours** until Burlington 2026-05-01.
+
+Burlington-critical items: ALL DONE pending deploy of `f08af32` build.
+
+Take architecture: separate session, separate deploy. Recommend TEST2026 soak before live event.

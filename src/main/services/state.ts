@@ -1,7 +1,8 @@
 import fs from 'fs'
 import path from 'path'
 import { app, BrowserWindow } from 'electron'
-import { Competition, Routine, RoutineStatus, IPC_CHANNELS } from '../../shared/types'
+import { Competition, Routine, RoutineStatus, IPC_CHANNELS, Take } from '../../shared/types'
+import crypto from 'crypto'
 import { logger } from '../logger'
 import * as jobQueue from './jobQueue'
 
@@ -70,6 +71,9 @@ interface PersistedState {
   savedAt: string
   cameraOffsets?: Record<string, CameraOffsetEntry>
   sdWatermarks?: Record<string, SdWatermarkEntry>
+  // Phase 2.8 Take entity architecture (2026-04-29). First-class takes
+  // collection — see Take type docs in shared/types.ts.
+  takes?: Take[]
 }
 
 let currentCompetition: Competition | null = null
@@ -78,6 +82,7 @@ let saveTimer: NodeJS.Timeout | null = null
 let savePending = false
 let cameraOffsets: Record<string, CameraOffsetEntry> = {}
 let sdWatermarks: Record<string, SdWatermarkEntry> = {}
+let takes: Take[] = []
 
 // Fix 8: Cached counts for WS broadcasts — updated incrementally
 let cachedSkippedCount = 0
@@ -136,6 +141,7 @@ function doSave(): void {
     savedAt: new Date().toISOString(),
     cameraOffsets,
     sdWatermarks,
+    takes,
   }
 
   try {
@@ -196,6 +202,33 @@ function applyLoadedState(data: PersistedState): void {
   if (wmCount > 0) {
     logger.app.info(`Hydrated ${wmCount} SD watermark(s): ` +
       Object.entries(sdWatermarks).map(([k, v]) => `${k}=${v.lastCaptureTime}`).join(', '))
+  }
+  // Phase 2.8: hydrate takes + boot migration. For any routine with a
+  // recordingStartedAt+stoppedAt that has no corresponding take row yet,
+  // synthesize one. This ensures the matcher can find historical windows
+  // for competitions saved before the Take entity existed.
+  takes = (data.takes ?? []).slice()
+  const existingTakeRoutineIds = new Set(takes.map((t) => t.currentRoutineId).filter(Boolean) as string[])
+  if (data.competition) {
+    let synthesized = 0
+    for (const r of data.competition.routines) {
+      if (r.recordingStartedAt && r.recordingStoppedAt && !existingTakeRoutineIds.has(r.id)) {
+        takes.push({
+          takeId: crypto.randomUUID(),
+          startedAt: r.recordingStartedAt,
+          stoppedAt: r.recordingStoppedAt,
+          mkvPath: r.outputPath ?? null,
+          currentRoutineId: r.id,
+        })
+        synthesized++
+      }
+    }
+    if (synthesized > 0) {
+      logger.app.info(`Phase 2.8 boot migration: synthesized ${synthesized} take(s) from existing routine windows`)
+    }
+  }
+  if (takes.length > 0) {
+    logger.app.info(`Hydrated ${takes.length} take(s)`)
   }
   recomputeCachedCounts()
 
@@ -1378,4 +1411,104 @@ export function clearSdWatermarks(): void {
 
 export function listSdWatermarks(): Record<string, SdWatermarkEntry> {
   return { ...sdWatermarks }
+}
+
+// --- Phase 2.8 Take entity API ---
+
+export function getTakes(): Take[] {
+  return takes.slice()
+}
+
+export function getTake(takeId: string): Take | null {
+  return takes.find((t) => t.takeId === takeId) ?? null
+}
+
+/**
+ * Get the in-flight take (the one with stoppedAt === null). At most one
+ * should exist at a time — Item 17's ActiveTake collapses to this.
+ */
+export function getActiveTake(): Take | null {
+  return takes.find((t) => t.stoppedAt === null) ?? null
+}
+
+/**
+ * Add a new take when recording starts. Caller supplies takeId, startedAt,
+ * currentRoutineId; stoppedAt + mkvPath start null and get filled by
+ * setTakeStopped() at finalization.
+ */
+export function addTake(input: {
+  takeId: string
+  startedAt: string
+  currentRoutineId: string | null
+  emptyRoutineNumber?: string
+}): Take {
+  const t: Take = {
+    takeId: input.takeId,
+    startedAt: input.startedAt,
+    stoppedAt: null,
+    mkvPath: null,
+    currentRoutineId: input.currentRoutineId,
+    emptyRoutineNumber: input.emptyRoutineNumber,
+  }
+  takes.push(t)
+  logger.app.info(`Take added: ${t.takeId.slice(0, 8)} startedAt=${t.startedAt} routine=${t.currentRoutineId ?? 'null'}`)
+  saveState()
+  return t
+}
+
+export function setTakeStopped(takeId: string, stoppedAt: string, mkvPath: string | null): Take | null {
+  const t = takes.find((x) => x.takeId === takeId)
+  if (!t) {
+    logger.app.warn(`setTakeStopped: take ${takeId} not found`)
+    return null
+  }
+  if (t.stoppedAt) {
+    logger.app.warn(`setTakeStopped: take ${takeId} already stopped at ${t.stoppedAt} — ignoring`)
+    return t
+  }
+  t.stoppedAt = stoppedAt
+  t.mkvPath = mkvPath
+  logger.app.info(`Take stopped: ${takeId.slice(0, 8)} stoppedAt=${stoppedAt} mkv=${mkvPath ?? 'null'}`)
+  saveState()
+  return t
+}
+
+/** Update mkvPath after the post-stop file rename moves the recording into
+ * the routine's folder. Doesn't touch immutable fields. */
+export function setTakeMkvPath(takeId: string, mkvPath: string): Take | null {
+  const t = takes.find((x) => x.takeId === takeId)
+  if (!t) {
+    logger.app.warn(`setTakeMkvPath: take ${takeId} not found`)
+    return null
+  }
+  if (t.mkvPath === mkvPath) return t
+  t.mkvPath = mkvPath
+  saveState()
+  return t
+}
+
+export function setTakeArchived(takeId: string, archivedPath: string): Take | null {
+  const t = takes.find((x) => x.takeId === takeId)
+  if (!t) {
+    logger.app.warn(`setTakeArchived: take ${takeId} not found`)
+    return null
+  }
+  t.archivedPath = archivedPath
+  logger.app.info(`Take archived: ${takeId.slice(0, 8)} → ${archivedPath}`)
+  saveState()
+  return t
+}
+
+export function setTakeRoutine(takeId: string, routineId: string | null, emptyRoutineNumber?: string): Take | null {
+  const t = takes.find((x) => x.takeId === takeId)
+  if (!t) {
+    logger.app.warn(`setTakeRoutine: take ${takeId} not found`)
+    return null
+  }
+  const old = t.currentRoutineId
+  t.currentRoutineId = routineId
+  if (emptyRoutineNumber !== undefined) t.emptyRoutineNumber = emptyRoutineNumber
+  logger.app.info(`Take routine changed: ${takeId.slice(0, 8)} ${old ?? 'null'} → ${routineId ?? 'null'}`)
+  saveState()
+  return t
 }

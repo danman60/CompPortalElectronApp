@@ -176,6 +176,8 @@ export function registerAllHandlers(): void {
       emptyRoutineNumber: emptyNumber,
     })
     if (updated) sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, updated)
+    // Phase 2.8: keep state.takes[] in sync with the active take's reassign.
+    stateService.setTakeRoutine(cur.takeId, result.id, emptyNumber)
     recording.broadcastFullState()
     return { ok: true, routineId: result.id, entryNumber: result.entryNumber }
   })
@@ -743,12 +745,24 @@ export function registerAllHandlers(): void {
     return { ok: true }
   })
 
-  // E1: re-record hard-gate decision — operator chose 'advance' (this take
-  // belongs to next routine) or 'archive' (legacy re-record overwrite).
+  // Phase 2.8: re-record decision — operator picks one of three actions.
+  //   { kind: 'archive' } | { kind: 'specify-routine', routineId } |
+  //   { kind: 'save-as-extra', emptyRoutineNumber }
   safeHandle(IPC_CHANNELS.RECORDING_REREC_DECISION, async (proposalId: unknown, decision: unknown) => {
     logIPC(IPC_CHANNELS.RECORDING_REREC_DECISION, { proposalId, decision })
-    const d = decision === 'advance' || decision === 'archive' ? decision : 'archive'
-    recording.resolveRerecDecision(proposalId as string, d)
+    let parsed: { kind: 'archive' } | { kind: 'specify-routine'; routineId: string } | { kind: 'save-as-extra'; emptyRoutineNumber: string }
+      = { kind: 'archive' }
+    if (decision && typeof decision === 'object') {
+      const d = decision as Record<string, unknown>
+      if (d.kind === 'specify-routine' && typeof d.routineId === 'string') {
+        parsed = { kind: 'specify-routine', routineId: d.routineId }
+      } else if (d.kind === 'save-as-extra' && typeof d.emptyRoutineNumber === 'string') {
+        parsed = { kind: 'save-as-extra', emptyRoutineNumber: d.emptyRoutineNumber }
+      } else if (d.kind === 'archive') {
+        parsed = { kind: 'archive' }
+      }
+    }
+    recording.resolveRerecDecision(proposalId as string, parsed)
     return { ok: true }
   })
 

@@ -1425,15 +1425,60 @@ async function runImport(
     maxCaptureByBody,
   })
 
-  // Build recording windows from routines
-  const windows: RecordingWindow[] = routines
-    .filter((r) => r.status !== 'scratched' && r.recordingStartedAt && r.recordingStoppedAt)
-    .map((r) => ({
+  // Phase 2.8 matcher rewrite (2026-04-29): build recording windows from
+  // state.takes[] instead of routines. Each take provides one window,
+  // bound to its currentRoutineId at query time. Photos in the take's
+  // (startedAt, stoppedAt) window match to take.currentRoutineId. When a
+  // take is reassigned via Item 17 click-to-reassign or the post-stop
+  // modal's Specify Routine / Save as Extra paths, photos automatically
+  // follow because the matcher reads currentRoutineId fresh each import.
+  //
+  // Old takes archived to _archive/v{N}/ keep their startedAt/stoppedAt
+  // immutable AND keep currentRoutineId pointing at their routine — so
+  // photos shot during BOTH the archived and canonical take's windows
+  // bind to the same routine (operator's stated intent on archive).
+  //
+  // Falls back to the routine-window approach for any routine that has
+  // recordingStartedAt+stoppedAt but no synthesized take yet (boot-time
+  // migration in state.ts handles 99% of these — fallback handles the
+  // race where a routine is recorded in this session before takes[]
+  // existed).
+  const allTakes = state.getTakes()
+  const visibleRoutineIds = new Set(
+    routines.filter((r) => r.status !== 'scratched').map((r) => r.id),
+  )
+  const routineEntryById = new Map(routines.map((r) => [r.id, r.entryNumber]))
+  const windows: RecordingWindow[] = []
+  const synthesizedRoutineIds = new Set<string>()
+  for (const t of allTakes) {
+    if (!t.stoppedAt || !t.currentRoutineId) continue
+    if (!visibleRoutineIds.has(t.currentRoutineId)) continue
+    const entryNumber = routineEntryById.get(t.currentRoutineId)
+    if (!entryNumber) continue
+    windows.push({
+      routineId: t.currentRoutineId,
+      entryNumber,
+      recordingStarted: new Date(t.startedAt),
+      recordingStopped: new Date(t.stoppedAt),
+    })
+    synthesizedRoutineIds.add(t.currentRoutineId)
+  }
+  // Fallback: any visible routine with a recording window but NO take row
+  // yet (race / pre-2.8 data not migrated).
+  for (const r of routines) {
+    if (r.status === 'scratched') continue
+    if (!r.recordingStartedAt || !r.recordingStoppedAt) continue
+    if (synthesizedRoutineIds.has(r.id)) continue
+    windows.push({
       routineId: r.id,
       entryNumber: r.entryNumber,
-      recordingStarted: new Date(r.recordingStartedAt!),
-      recordingStopped: new Date(r.recordingStoppedAt!),
-    }))
+      recordingStarted: new Date(r.recordingStartedAt),
+      recordingStopped: new Date(r.recordingStoppedAt),
+    })
+  }
+  logger.photos.info(
+    `Matcher windows: ${windows.length} total (${synthesizedRoutineIds.size} from takes, ${windows.length - synthesizedRoutineIds.size} from routine fallback)`,
+  )
 
   // ── Per-camera-body offset detection ────────────────────────────────
   // Group photos by filename-prefix body key ("P16", "P10", etc). Run
