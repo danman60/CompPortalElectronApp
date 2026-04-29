@@ -728,7 +728,7 @@ export function startMonitoring(): void {
   knownDrives = new Set<string>()
   logger.photos.info(
     `Drive monitor started — ${initialDrives.length} mounted drive(s), ${startupCameraDrives.length} camera-looking; ` +
-    `boot-mounted SDs will fire DRIVE_DETECTED on first poll (today-pre-check + dedup-by-DB gate re-imports)`,
+    `boot-mounted SDs will fire DRIVE_DETECTED on first poll (per-photo today-filter + watermark + dedup-by-DB gate re-imports)`,
   )
   pollTimer = setInterval(poll, POLL_INTERVAL_MS)
 }
