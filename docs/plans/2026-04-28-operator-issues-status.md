@@ -58,7 +58,9 @@ Repos: CompSyncElectronApp (CSE), CompPortal (CP)
 | A49 | N/A | — | pre-show checklist is operator process |
 | A50 | PARTIAL | CSE `b5872b0 v15.2: CLIP cacheDir + auto-import wins renderer race` | cacheDir change may address model path; not confirmed fix for missing onnx |
 | A51 | SHIPPED | CSE `9859f0f v14` | "METER-DIAG renderer spam removed (pollutes machine logs)" — verified absent from current src/. Operator complaint 2026-04-24 12:26 EDT predated v14 (14:16 EDT) |
-| A52 | OPEN | — | Zero delay on NEXT — change pauseAfterStop / pauseBeforeRecord defaults to 0 (or add "instant" toggle); operator wants stop→start instantaneous, ~4s today |
+| A52 | SHIPPED | CSE `7b57839 (snapshot)` | nextSequence type drops pauseAfterStopMs + pauseBeforeRecordMs; recording.ts removes both await sleep() calls; Settings UI fields removed |
+| A53 | SHIPPED | CSE (this commit) | ffmpeg.ts runAudioAudit — SHA-256 of each MP4's audio stream post-encode; pairs that match fire AUDIO_IDENTICAL_TRACKS_DETECTED with matchedPairs + byHash. AudioAuditBanner renders dismissable persistent banner. NO re-record button per spec. |
+| A55 | SHIPPED | CSE (this commit) | ffmpeg.ts silencedetect (default -50dB:10s) flags >50% silent; volumedetect mean RMS < -40dBFS triggers low-loudness. AudioAuditBanner renders persistent fail banners + auto-fading pass toast. All checks settings-gated (audioAudit.identityCheckEnabled / silenceCheckEnabled / loudnessCheckEnabled). |
 
 ## Section B — CompPortal media
 

@@ -362,6 +362,188 @@ function probeAudioTrackCount(ffmpegPath: string, inputPath: string): Promise<nu
   })
 }
 
+// ── A53 / A55: post-encode audio audit ──────────────────────────────────────
+
+/** Hash an MP4's audio stream (SHA-256). Returns null on failure. */
+function hashAudioStream(ffmpegPath: string, mp4Path: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffmpegPath,
+      ['-hide_banner', '-i', mp4Path, '-map', '0:a', '-c:a', 'copy', '-f', 'hash', '-hash', 'sha256', '-'],
+      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+    )
+    let stdout = ''
+    proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
+    proc.on('close', () => {
+      const m = stdout.match(/SHA256=([0-9a-f]+)/i)
+      resolve(m ? m[1].toLowerCase() : null)
+    })
+    proc.on('error', () => resolve(null))
+    setTimeout(() => { proc.kill(); resolve(null) }, 30000)
+  })
+}
+
+/** Run silencedetect on an MP4 and return total silent fraction (0..1). */
+function detectSilenceFraction(
+  ffmpegPath: string,
+  mp4Path: string,
+  noiseFloorDb: number,
+  minDurationSec: number,
+): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffmpegPath,
+      ['-hide_banner', '-nostats', '-i', mp4Path,
+       '-af', `silencedetect=noise=${noiseFloorDb}dB:d=${minDurationSec}`,
+       '-f', 'null', '-'],
+      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+    )
+    let stderr = ''
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    proc.on('close', () => {
+      const durMatch = stderr.match(/Duration:\s+(\d+):(\d+):(\d+\.\d+)/)
+      if (!durMatch) { resolve(0); return }
+      const totalSec = parseInt(durMatch[1], 10) * 3600 + parseInt(durMatch[2], 10) * 60 + parseFloat(durMatch[3])
+      if (totalSec <= 0) { resolve(0); return }
+      // Sum silence_duration: lines.
+      let silentSec = 0
+      const re = /silence_duration:\s+([0-9.]+)/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(stderr)) !== null) {
+        silentSec += parseFloat(m[1])
+      }
+      resolve(Math.min(1, silentSec / totalSec))
+    })
+    proc.on('error', () => resolve(0))
+    setTimeout(() => { proc.kill(); resolve(0) }, 60000)
+  })
+}
+
+/** Measure mean RMS volume in dBFS. Returns 0 on failure (treat as inconclusive). */
+function measureMeanRmsDb(ffmpegPath: string, mp4Path: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffmpegPath,
+      ['-hide_banner', '-nostats', '-i', mp4Path, '-af', 'volumedetect', '-f', 'null', '-'],
+      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+    )
+    let stderr = ''
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    proc.on('close', () => {
+      const m = stderr.match(/mean_volume:\s+(-?[0-9.]+)\s+dB/)
+      resolve(m ? parseFloat(m[1]) : null)
+    })
+    proc.on('error', () => resolve(null))
+    setTimeout(() => { proc.kill(); resolve(null) }, 60000)
+  })
+}
+
+/**
+ * Run audio audit on a routine's encoded MP4s. Fires IPC events for any
+ * findings (identical hashes, excessive silence, low loudness). Otherwise
+ * fires AUDIO_AUDIT_PASS for a small dismissable success toast.
+ *
+ * Fully fire-and-forget. Errors logged, never thrown. ~7s background CPU
+ * for 4 files (perf + 3 judges) with all checks on.
+ */
+async function runAudioAudit(
+  routineId: string,
+  entryNumber: string,
+  encodedFiles: EncodedFile[],
+): Promise<void> {
+  const cfg = getSettings().audioAudit
+  if (!cfg) return
+  if (encodedFiles.length === 0) return
+  const ffmpegPath = getFFmpegPath()
+
+  let anyFinding = false
+
+  // A53: identity check
+  if (cfg.identityCheckEnabled) {
+    const hashByRole: Record<string, string> = {}
+    for (const ef of encodedFiles) {
+      try {
+        const h = await hashAudioStream(ffmpegPath, ef.filePath)
+        if (h) hashByRole[ef.role] = h
+      } catch (err) {
+        logger.ffmpeg.warn(`A53 hash failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+    const byHash: Record<string, string[]> = {}
+    for (const [role, hash] of Object.entries(hashByRole)) {
+      if (!byHash[hash]) byHash[hash] = []
+      byHash[hash].push(role)
+    }
+    const matchedPairs: Array<[string, string]> = []
+    for (const roles of Object.values(byHash)) {
+      if (roles.length < 2) continue
+      for (let i = 0; i < roles.length; i++) {
+        for (let j = i + 1; j < roles.length; j++) {
+          matchedPairs.push([roles[i], roles[j]])
+        }
+      }
+    }
+    if (matchedPairs.length > 0) {
+      anyFinding = true
+      logger.ffmpeg.warn(
+        `A53 identical-tracks: routine ${entryNumber} — ${matchedPairs.map(p => `${p[0]}=${p[1]}`).join(', ')}`,
+      )
+      sendToRenderer(IPC_CHANNELS.AUDIO_IDENTICAL_TRACKS_DETECTED, {
+        routineId, entryNumber, matchedPairs, byHash,
+      })
+    }
+  }
+
+  // A55: silence + loudness per file
+  for (const ef of encodedFiles) {
+    if (cfg.silenceCheckEnabled) {
+      try {
+        const frac = await detectSilenceFraction(
+          ffmpegPath, ef.filePath, cfg.silenceNoiseFloorDb, cfg.silenceMinDurationSec,
+        )
+        if (frac > 0.5) {
+          anyFinding = true
+          logger.ffmpeg.warn(
+            `A55 silence: routine ${entryNumber} ${ef.role} silent fraction ${(frac * 100).toFixed(0)}%`,
+          )
+          sendToRenderer(IPC_CHANNELS.AUDIO_SILENCE_DETECTED, {
+            routineId, entryNumber, role: ef.role,
+            silentFraction: frac,
+            noiseFloorDb: cfg.silenceNoiseFloorDb,
+            minDurationSec: cfg.silenceMinDurationSec,
+          })
+        }
+      } catch (err) {
+        logger.ffmpeg.warn(`A55 silence failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+    if (cfg.loudnessCheckEnabled) {
+      try {
+        const rms = await measureMeanRmsDb(ffmpegPath, ef.filePath)
+        if (rms !== null && rms < cfg.loudnessFloorDb) {
+          anyFinding = true
+          logger.ffmpeg.warn(
+            `A55 loudness: routine ${entryNumber} ${ef.role} mean ${rms.toFixed(1)} dB < ${cfg.loudnessFloorDb} dB`,
+          )
+          sendToRenderer(IPC_CHANNELS.AUDIO_LOW_LOUDNESS_DETECTED, {
+            routineId, entryNumber, role: ef.role,
+            meanRmsDb: rms,
+            thresholdDb: cfg.loudnessFloorDb,
+          })
+        }
+      } catch (err) {
+        logger.ffmpeg.warn(`A55 loudness failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+  }
+
+  if (!anyFinding) {
+    sendToRenderer(IPC_CHANNELS.AUDIO_AUDIT_PASS, {
+      routineId, entryNumber, trackCount: encodedFiles.length,
+    })
+  }
+}
+
 function setPriority(pid: number): void {
   const settings = getSettings()
   if (process.platform !== 'win32' || settings.ffmpeg.cpuPriority === 'normal') return
@@ -465,6 +647,16 @@ async function processNext(): Promise<void> {
       state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles, keyframes: keyframePaths })
       jobQueue.updateStatus(jobRecord.id, 'done')
       broadcastRoutineUpdate(job.routineId)
+
+      // A53 / A55: post-encode audio audit. Fire-and-forget — runs in
+      // background while the next routine queues up. Settings-gated; each
+      // check (identity / silence / loudness) toggleable independently.
+      const compForAudit = state.getCompetition()
+      const routineForAudit = compForAudit?.routines.find((r) => r.id === job.routineId)
+      const entryNumberForAudit = routineForAudit?.entryNumber ?? job.routineId.slice(0, 8)
+      void runAudioAudit(job.routineId, entryNumberForAudit, encodedFiles).catch((err) => {
+        logger.ffmpeg.warn(`Audio audit threw for ${job.routineId}: ${err instanceof Error ? err.message : err}`)
+      })
 
       // Auto-upload if enabled
       const settings = getSettings()

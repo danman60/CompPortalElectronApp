@@ -559,6 +559,17 @@ export interface AppSettings {
     useExifWorker: boolean    // D1: route EXIF reads through worker_threads pool
     useMatcherWorker: boolean // D2: route detectClockOffset + window assignment through worker
   }
+  // A53 / A55: per-routine audio verification toggles + thresholds. Run
+  // post-encode against the 4 muxed MP4s (perf + 3 judges). All checks
+  // default ON. Each can be disabled independently.
+  audioAudit: {
+    identityCheckEnabled: boolean       // A53: SHA-256 audio streams, flag any pair match
+    silenceCheckEnabled: boolean        // A55: silencedetect filter
+    silenceNoiseFloorDb: number         // dB; default -50
+    silenceMinDurationSec: number       // sec; default 10
+    loudnessCheckEnabled: boolean       // A55: mean RMS via volumedetect
+    loudnessFloorDb: number             // dB; default -40
+  }
 }
 
 // --- IPC Channels ---
@@ -685,6 +696,12 @@ export const IPC_CHANNELS = {
 
   // Recording
   RECORDING_NEXT_FULL: 'recording:next-full',
+
+  // A53 / A55: post-encode audio audit results
+  AUDIO_IDENTICAL_TRACKS_DETECTED: 'audio:identical-tracks-detected',
+  AUDIO_SILENCE_DETECTED: 'audio:silence-detected',
+  AUDIO_LOW_LOUDNESS_DETECTED: 'audio:low-loudness-detected',
+  AUDIO_AUDIT_PASS: 'audio:audit-pass',
 
   // Upload
   UPLOAD_ALL: 'upload:all',
@@ -1219,6 +1236,48 @@ export const DEFAULT_SETTINGS: AppSettings = {
     useExifWorker: false,
     useMatcherWorker: false,
   },
+  audioAudit: {
+    identityCheckEnabled: true,
+    silenceCheckEnabled: true,
+    silenceNoiseFloorDb: -50,
+    silenceMinDurationSec: 10,
+    loudnessCheckEnabled: true,
+    loudnessFloorDb: -40,
+  },
+}
+
+// --- Audio Audit (A53 / A55) ---
+
+export interface AudioIdenticalTracksEvent {
+  routineId: string
+  entryNumber: string
+  /** Pairs of role names whose audio streams hash to the same value. */
+  matchedPairs: Array<[string, string]>
+  /** Hash → list of roles producing it (for debug/log purposes). */
+  byHash: Record<string, string[]>
+}
+
+export interface AudioSilenceDetectedEvent {
+  routineId: string
+  entryNumber: string
+  role: string
+  silentFraction: number   // 0..1 of total duration flagged silent
+  noiseFloorDb: number
+  minDurationSec: number
+}
+
+export interface AudioLowLoudnessEvent {
+  routineId: string
+  entryNumber: string
+  role: string
+  meanRmsDb: number
+  thresholdDb: number
+}
+
+export interface AudioAuditPassEvent {
+  routineId: string
+  entryNumber: string
+  trackCount: number
 }
 
 // --- Audio Transcription ---
