@@ -1062,13 +1062,15 @@ export function updateRoutineStatus(
   // only (not on re-records). Lazy-required to avoid any chance of a circular
   // import between state.ts and dayChecklist.ts at module load.
   if (oldStatus !== 'recorded' && status === 'recorded') {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const dc = require('./dayChecklist') as typeof import('./dayChecklist')
+    // Use ESM dynamic import — Vite preserves these as proper module
+    // references in the bundle. The original CommonJS require() failed at
+    // runtime because Vite's ESM output doesn't expose Node's require to
+    // bundled modules. Fire-and-forget; updateRoutineStatus stays sync.
+    import('./dayChecklist').then((dc) => {
       dc.maybeFireEndOfDay(routine)
-    } catch (err) {
+    }).catch((err) => {
       logger.app.warn(`dayChecklist end-of-day trigger failed: ${err instanceof Error ? err.message : err}`)
-    }
+    })
   }
 
   return routine

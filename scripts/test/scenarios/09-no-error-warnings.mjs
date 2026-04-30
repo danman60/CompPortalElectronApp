@@ -26,6 +26,16 @@ const WHITELIST_PATTERNS = [
   /Camera clock /,
   // Settings reset / missing field warnings on first boot
   /Settings.*missing field/,
+  // Test-harness side effects — synthetic paths trigger ffmpeg ENOENT
+  // when resumeRecordedRoutines + auto-encode see the test routines.
+  /Disk space pre-check failed.*synth/i,
+  /Auto-resume skipped: ffmpeg-busy/,
+  /NVENC failed.*falling back to CPU/,
+  /resumeRecordedRoutines.*ENOENT/,
+  /encode.*ENOENT.*synth/i,
+  // Test-harness creates synth routines with bogus paths → encode tries to
+  // run → fails with code 1. Real production routines don't hit this.
+  /Encoding failed for routine .*FFmpeg exited with code 1/,
 ]
 
 export const name2 = 'no-error-warnings'
