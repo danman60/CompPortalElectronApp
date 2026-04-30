@@ -357,19 +357,28 @@ export async function handleTestSetTakeRoutine(req: IncomingMessage, res: Server
     sendJson(res, 400, { error: 'takeId required' })
     return
   }
-  const before = state.getTake(takeId)
-  if (!before) {
+  const beforeRef = state.getTake(takeId)
+  if (!beforeRef) {
     sendJson(res, 404, { error: 'take not found' })
     return
+  }
+  // Snapshot before mutation — getTake returns a live reference; subsequent
+  // setTakeRoutine mutates currentRoutineId in place, so we'd lose the
+  // pre-state otherwise.
+  const beforeSnap = {
+    currentRoutineId: beforeRef.currentRoutineId,
+    emptyRoutineNumber: beforeRef.emptyRoutineNumber,
+    startedAt: beforeRef.startedAt,
+    stoppedAt: beforeRef.stoppedAt,
   }
   const newRoutineId = (body.routineId as string | null) ?? null
   const emptyNumber = body.emptyRoutineNumber as string | undefined
   const after = state.setTakeRoutine(takeId, newRoutineId, emptyNumber)
   sendJson(res, 200, {
     ok: true,
-    before: { currentRoutineId: before.currentRoutineId, emptyRoutineNumber: before.emptyRoutineNumber },
+    before: { currentRoutineId: beforeSnap.currentRoutineId, emptyRoutineNumber: beforeSnap.emptyRoutineNumber },
     after: { currentRoutineId: after?.currentRoutineId, emptyRoutineNumber: after?.emptyRoutineNumber },
-    windowImmutable: before.startedAt === after?.startedAt && before.stoppedAt === after?.stoppedAt,
+    windowImmutable: beforeSnap.startedAt === after?.startedAt && beforeSnap.stoppedAt === after?.stoppedAt,
   })
 }
 
