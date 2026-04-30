@@ -103,37 +103,30 @@ export function HealthStrip(): React.ReactElement {
 
   return (
     <div className="health-strip">
-      <div className="health-tile">
-        <span className="health-label">Processing</span>
+      <div className="health-tile" title="Processing (encode queue)">
+        <span className="health-label">Proc</span>
         <strong>{encodingCount}</strong>
       </div>
-      <div className="health-tile">
-        <span className="health-label">Uploading</span>
+      <div className="health-tile" title="Uploading">
+        <span className="health-label">Up</span>
         <strong>{visibleUploadingCount}</strong>
       </div>
-      <div className="health-tile">
-        <span className="health-label">Complete</span>
+      <div className="health-tile" title="Complete">
+        <span className="health-label">Done</span>
         <strong>{completeCount}</strong>
       </div>
-      <div className="health-tile">
-        <span className="health-label">Photos</span>
+      <div className="health-tile" title="Photos pending">
+        <span className="health-label">Pix</span>
         <strong>{photosPendingCount}</strong>
       </div>
-      <div className="health-tile">
-        <span className="health-label">Recorded</span>
-        <strong>{recorded} / {total}</strong>
+      <div className="health-tile" title="Recorded routines">
+        <span className="health-label">Rec</span>
+        <strong>{recorded}/{total}</strong>
       </div>
-      <div className="health-tile">
-        <span className="health-label">Remaining</span>
+      <div className="health-tile" title="Remaining routines">
+        <span className="health-label">Rem</span>
         <strong>{remaining}</strong>
       </div>
-      <button
-        className="output-dir-change health-export"
-        onClick={handleExportReport}
-        title="Export session report (CSV)"
-      >
-        Export Report
-      </button>
     </div>
   )
 }

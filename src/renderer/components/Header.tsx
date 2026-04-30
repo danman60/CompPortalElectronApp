@@ -236,15 +236,6 @@ function ActionBar(): React.ReactElement {
       <div className="ab-divider" />
 
       <button
-        className="ab-btn import-vid"
-        onClick={handleImportVideo}
-        title="Import video files from a folder"
-      >
-        <span className="ab-icon">{'\u{1F3AC}'}</span>
-        <span className="ab-label">Video</span>
-      </button>
-
-      <button
         className={`ab-btn import-photo${autoWatchActive ? ' watching' : ''}`}
         onClick={handleImportPhotos}
         onContextMenu={toggleAutoWatchPhotos}
@@ -260,15 +251,6 @@ function ActionBar(): React.ReactElement {
       </button>
 
       <div className="ab-divider" />
-
-      <button
-        className="ab-btn recovery"
-        onClick={() => useStore.getState().setRecoveryOpen(true)}
-        title="Post-event recovery: split full-day MKV into per-routine clips"
-      >
-        <span className="ab-icon">{'\u{1F6E0}'}</span>
-        <span className="ab-label">Recovery</span>
-      </button>
 
       <button
         className="ab-btn tablet streaming"
@@ -712,14 +694,19 @@ export default function Header(): React.ReactElement {
             {appVersion && <span className="topband-version">v{appVersion}</span>}
           </div>
           <div className="header-status">
-            {competition && <span className="si">{competition.routines.length} routines</span>}
+            {/* Iter-8 (2026-04-30): "16 routines" pill dropped — same number
+                appears as the denominator in the REC N/16 stat tile. UploadBacklogPill
+                dropped — same numbers appear inline as PROC / UP / PIX stat tiles. */}
             <ImportPill />
-            <UploadBacklogPill />
             <PipelineHealthChip />
           </div>
         </div>
 
         <SystemMonitor />
+
+        <div className="topband-meta-stats">
+          <HealthStrip />
+        </div>
 
         <div className="header-right topband-actions">
           <ActionBar />
@@ -737,10 +724,6 @@ export default function Header(): React.ReactElement {
             Settings
           </button>
         </div>
-      </div>
-
-      <div className="topband-row topband-stats-strip">
-        <HealthStrip />
       </div>
 
       <div className="topband-row topband-live">

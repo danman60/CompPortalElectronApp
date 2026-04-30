@@ -29,9 +29,10 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   column-gap: 14px;
-  row-gap: 4px;
+  row-gap: 0;
+  flex: 0 0 auto;
 }
 
 .app-logo {
@@ -257,72 +258,98 @@
 }
 
 /*
- * UI redesign pass 1 (2026-04-30): stats are now a single horizontal strip
- * above the live row, not a 6-tile card. Reclaims ~120px of vertical so
- * the schedule can show ~3 more rows. Each metric: "LABEL value" inline
- * with subtle separators. Export Report sits right-aligned.
+ * UI redesign pass 1 iter-8 (2026-04-30): stats live INSIDE the meta row
+ * between SystemMonitor and the action area. Standalone stats-strip row
+ * eliminated. Recovery + Video buttons moved to Settings → Tools section
+ * to free ~92px in ActionBar. Stats labels abbreviated (Proc/Up/Done/
+ * Pix/Rec/Rem) with full names on hover via title.
+ *
+ * SystemMonitor at content width (no flex grow). meta-stats grows to
+ * fill remaining space. Tiles don't shrink below natural width — overflow
+ * preferred over clipping.
  */
-.topband-stats-strip {
+.topband-stats-strip,
+.topband-meta-stats {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  padding: 0;
+  background: transparent;
+}
+
+.topband-meta-stats {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  border-right: 1px solid rgba(255,255,255,0.08);
+  margin: 0 6px;
+  padding: 0 12px;
+  overflow: visible;
+}
+
+/* The whole row's spare width goes BEFORE the action area so meta-stats
+ * sits at content width and ActionBar pushes to the right via its own
+ * margin-left:auto. */
+
+.topband-stats-strip {
   padding: 6px 14px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
   background: rgba(255,255,255,0.025);
 }
 
-.topband-stats-strip .health-strip {
+/* SystemMonitor at content width — don't compete with stats for flex space. */
+.topband-meta > .header-status.topband-system {
+  flex: 0 0 auto;
+}
+
+.topband-stats-strip .health-strip,
+.topband-meta-stats .health-strip {
   display: flex;
-  flex: 1;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   padding: 0;
   border-bottom: none;
   background: transparent;
+  white-space: nowrap;
 }
 
-.topband-stats-strip .health-tile {
+.topband-stats-strip .health-tile,
+.topband-meta-stats .health-tile {
   display: flex;
   flex-direction: row;
   align-items: baseline;
-  gap: 6px;
+  gap: 5px;
   padding: 0;
   border: none;
   background: transparent;
   border-radius: 0;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
-.topband-stats-strip .health-tile + .health-tile {
+.topband-stats-strip .health-tile + .health-tile,
+.topband-meta-stats .health-tile + .health-tile {
   border-left: 1px solid rgba(255,255,255,0.08);
-  padding-left: 18px;
+  padding-left: 10px;
   margin-left: 0;
 }
 
-.topband-stats-strip .health-label {
+.topband-stats-strip .health-label,
+.topband-meta-stats .health-label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
 
-.topband-stats-strip .health-tile strong {
+.topband-stats-strip .health-tile strong,
+.topband-meta-stats .health-tile strong {
   font-size: 13px;
   font-weight: 700;
   color: #fff;
-}
-
-.topband-stats-strip .health-export {
-  margin-left: auto;
-  align-self: center;
-  justify-self: end;
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: 600;
 }
 
 .topband-stats-card .health-export {

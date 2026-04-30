@@ -921,6 +921,50 @@ export default function Settings(): React.ReactElement {
           </div>
         </div>
 
+        {/* Tools — moved here from header ActionBar 2026-04-30 to free top-strip width */}
+        <div className="settings-section">
+          <div className="settings-section-title">Tools</div>
+          <p className="section-desc">
+            Manual import + recovery utilities. Moved here from the header
+            action bar to free up top-strip space for live operator status.
+          </p>
+          <div className="settings-grid single">
+            <div className="field">
+              <button
+                type="button"
+                className="settings-btn"
+                style={{ padding: '8px 14px', fontSize: '12px' }}
+                onClick={async () => {
+                  const folderPath = await window.api.settingsBrowseDir()
+                  if (folderPath) {
+                    await window.api.importFolder(folderPath)
+                  }
+                }}
+              >
+                Import Video Folder…
+              </button>
+              <span className="hint">
+                Bulk-import existing video files from a folder. Use after a
+                day of recording on a different machine to ingest the MP4s.
+              </span>
+            </div>
+            <div className="field">
+              <button
+                type="button"
+                className="settings-btn"
+                style={{ padding: '8px 14px', fontSize: '12px' }}
+                onClick={() => useStore.getState().setRecoveryOpen(true)}
+              >
+                Open Recovery Panel…
+              </button>
+              <span className="hint">
+                Post-event recovery: split a full-day MKV into per-routine
+                clips when the recorder didn&apos;t auto-segment.
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Upload Recovery — T-V7-22 */}
         <div className="settings-section">
           <div className="settings-section-title">Upload Recovery</div>
