@@ -55,7 +55,7 @@ function makeApi(host) {
     },
     watermarks: () => call('GET', '/debug/watermarks'),
     events: (limit = 50) => call('GET', `/debug/events?limit=${limit}`),
-    logs: (tail = 100) => call('GET', `/debug/logs?tail=${tail}`),
+    logs: (tail = 100, grep = '') => call('GET', `/debug/logs?tail=${tail}${grep ? `&grep=${encodeURIComponent(grep)}` : ''}`),
 
     // Test mutation endpoints
     recordingStart: (body) => call('POST', '/debug/test/recording/start', body),

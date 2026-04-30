@@ -13,10 +13,11 @@ export async function run(api) {
   const events = (await api.events(50)).body
   api.assert(Array.isArray(events.events), 'events array')
 
-  // Boot log line via /debug/logs (large tail — many wifi-display stat lines push it back)
-  const logs = (await api.logs(2000)).body
+  // Boot log line — use grep query so it survives long sessions where
+  // the init line has aged past raw tail.
+  const logs = (await api.logs(10000, 'Pipeline health monitor')).body
   const hasInitLine = typeof logs === 'string' && logs.includes('Pipeline health monitor initialized')
-  api.assert(hasInitLine, 'Pipeline health monitor initialized line in logs')
+  api.assert(hasInitLine, 'Pipeline health monitor initialized line in logs (grep)')
 
   return { ok: true }
 }
