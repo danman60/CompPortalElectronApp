@@ -309,16 +309,16 @@ export async function handleTestTriggerAudioAudit(req: IncomingMessage, res: Ser
     // the existing handler if it's callable; otherwise we run inline by
     // calling the internals via dynamic import. For now just signal the
     // caller to watch /debug/events for AUDIO_* signals.
-    const ffmpeg = await import('./ffmpeg') as any
-    if (typeof ffmpeg.runAudioAudit === 'function') {
-      void ffmpeg.runAudioAudit(routineId, routine.entryNumber, encodedFiles.map((e) => ({
+    const ffmpeg = await import('./ffmpeg')
+    if (typeof ffmpeg.runAudioAuditForTest === 'function') {
+      void ffmpeg.runAudioAuditForTest(routineId, routine.entryNumber, encodedFiles.map((e) => ({
         role: e.role,
         filePath: e.filePath,
         uploaded: false,
-      })))
+      })) as Array<{ role: string; filePath: string; uploaded: boolean }> as never)
       sendJson(res, 200, { ok: true, async: true, message: 'audit running, watch /debug/events' })
     } else {
-      sendJson(res, 501, { error: 'runAudioAudit not exported from ffmpeg.ts' })
+      sendJson(res, 501, { error: 'runAudioAuditForTest not exported from ffmpeg.ts' })
     }
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })

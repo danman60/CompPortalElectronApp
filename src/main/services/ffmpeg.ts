@@ -501,6 +501,19 @@ function measureMeanRmsDb(ffmpegPath: string, mp4Path: string): Promise<number |
  * Fully fire-and-forget. Errors logged, never thrown. ~7s background CPU
  * for 4 files (perf + 3 judges) with all checks on.
  */
+/**
+ * Test harness wrapper — fires the audio audit synchronously for a given
+ * routine + encoded files. Used only by /debug/test/trigger-audio-audit;
+ * production code goes through the post-encode finalize pipeline.
+ */
+export async function runAudioAuditForTest(
+  routineId: string,
+  entryNumber: string,
+  encodedFiles: EncodedFile[],
+): Promise<void> {
+  return runAudioAudit(routineId, entryNumber, encodedFiles)
+}
+
 async function runAudioAudit(
   routineId: string,
   entryNumber: string,
