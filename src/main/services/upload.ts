@@ -1317,12 +1317,22 @@ async function callPluginComplete(info: {
   // 2026-04-18: `files.photo_captured_at` added as a second parallel array carrying
   // EXIF DateTimeOriginal (ISO) per photo. CompPortal persists as
   // `media_photos[i].captured_at`. Empty string means no EXIF timestamp available.
+  // Phase 1.10 (rescoped 2026-04-29): forward manually_recovered flag when
+  // ANY take for this routine was operator-overridden via click-to-reassign
+  // or empty-routine number entry. CompPortal Verify Media uses this to
+  // sort/filter operator-flagged takes into a priority bucket. Field is
+  // optional CompPortal-side — older builds ignore it gracefully.
+  const manuallyRecovered = state.getTakes()
+    .filter((t) => t.currentRoutineId === info.routineId)
+    .some((t) => t.manuallyRecovered)
+
   const body = {
     entryId: info.entryId,
     competitionId: info.competitionId,
     uploadRunId: info.uploadRunId,
     video_start_timestamp: routine?.recordingStartedAt || undefined,
     video_end_timestamp: routine?.recordingStoppedAt || undefined,
+    manually_recovered: manuallyRecovered || undefined,
     files: {
       performance: info.storagePaths['performance'] || undefined,
       judge1: info.storagePaths['judge1'] || undefined,

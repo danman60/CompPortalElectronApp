@@ -178,7 +178,15 @@ export function registerAllHandlers(): void {
     if (updated) sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, updated)
     // Phase 2.8: keep state.takes[] in sync with the active take's reassign.
     stateService.setTakeRoutine(cur.takeId, result.id, emptyNumber)
-    recording.broadcastFullState()
+    // Phase 1.10 (rescoped): operator override = manually_recovered flag.
+    // Set silently. Forwarded in /api/plugin/complete to CompPortal Verify
+    // Media. No modal, no toast, no blocking input.
+    stateService.setTakeManuallyRecovered(cur.takeId)
+    // Phase 1.9 (rescoped): reassign mid-recording (click-to-reassign or
+    // SAVE-AS-EMPTY-ROUTINE number entry) must update the burned-in overlay
+    // counter immediately. broadcastFullState is debounced and skips
+    // syncOverlayFromCurrent; broadcastFullStateImmediate forces the sync.
+    recording.broadcastFullStateImmediate()
     return { ok: true, routineId: result.id, entryNumber: result.entryNumber }
   })
 

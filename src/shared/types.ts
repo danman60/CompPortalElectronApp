@@ -1385,6 +1385,14 @@ export interface Take {
   archivedPath?: string                   // set when mkv moves to _archive/v{N}/
   currentRoutineId: string | null         // mutable
   emptyRoutineNumber?: string             // for SAVE AS EMPTY ROUTINE / lateInsert flows
+  /**
+   * Phase 1.10 (rescoped 2026-04-29): true when the operator overrode the
+   * schedule-driven target via click-to-reassign or empty-routine number
+   * entry. Forwarded as `manually_recovered` on /api/plugin/complete so
+   * CompPortal Verify Media can sort/filter operator-flagged takes into a
+   * priority bucket. Silent — never blocks recording or surfaces a modal.
+   */
+  manuallyRecovered?: boolean
 }
 
 export interface RecordingReassignTargetPayload {

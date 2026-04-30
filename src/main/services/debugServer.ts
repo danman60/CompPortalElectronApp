@@ -43,6 +43,7 @@ import {
   handleTestClearWatermarks,
   handleTestSetTakeRoutine,
   handleTestExtractKeyframes,
+  handleTestReassignRecording,
   handleSnapshot,
 } from './debugTestRoutes'
 
@@ -308,6 +309,7 @@ const POST_ROUTES: Record<string, Handler> = {
   '/debug/test/clear-watermarks': handleTestClearWatermarks,
   '/debug/test/set-take-routine': handleTestSetTakeRoutine,
   '/debug/test/extract-keyframes': handleTestExtractKeyframes,
+  '/debug/test/recording/reassign': handleTestReassignRecording,
 }
 
 export function startDebugServer(): void {

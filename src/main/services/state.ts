@@ -1514,3 +1514,21 @@ export function setTakeRoutine(takeId: string, routineId: string | null, emptyRo
   saveState()
   return t
 }
+
+/**
+ * Phase 1.10 (rescoped 2026-04-29): mark a take as operator-overridden.
+ * Called from the RECORDING_REASSIGN_TARGET handler when click-to-reassign
+ * or empty-routine number entry fires. Idempotent. Persisted with the take.
+ */
+export function setTakeManuallyRecovered(takeId: string): Take | null {
+  const t = takes.find((x) => x.takeId === takeId)
+  if (!t) {
+    logger.app.warn(`setTakeManuallyRecovered: take ${takeId} not found`)
+    return null
+  }
+  if (t.manuallyRecovered) return t
+  t.manuallyRecovered = true
+  logger.app.info(`Take flagged manually_recovered: ${takeId.slice(0, 8)}`)
+  saveState()
+  return t
+}

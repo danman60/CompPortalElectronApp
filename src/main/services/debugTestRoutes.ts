@@ -29,6 +29,7 @@ import { logger } from '../logger'
 import { getSettings } from './settings'
 import * as state from './state'
 import * as jobQueue from './jobQueue'
+import * as overlay from './overlay'
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   try {
@@ -90,12 +91,25 @@ export async function handleTestRecordingStart(req: IncomingMessage, res: Server
     routineId = cur.id
   }
   const takeId = crypto.randomUUID()
+  // Match production handleRecordingStarted: jumpToRoutine sets the
+  // global currentRoutineId pointer so getCurrentRoutine() resolves to the
+  // recording target, then broadcastFullStateImmediate() pushes overlay
+  // counter via syncOverlayFromCurrent. Without these calls the test
+  // surface diverges from production and overlay assertions misfire.
+  state.jumpToRoutine(routineId)
   state.addTake({
     takeId,
     startedAt: ts,
     currentRoutineId: routineId,
   })
   state.updateRoutineStatus(routineId, 'recording', { recordingStartedAt: ts })
+  try {
+    const recording = await import('./recording')
+    recording.setActiveRecordingRoutineId(routineId)
+    recording.broadcastFullStateImmediate()
+  } catch (err) {
+    logger.app.warn(`handleTestRecordingStart: overlay sync skipped — ${err instanceof Error ? err.message : err}`)
+  }
   sendJson(res, 200, { ok: true, takeId, routineId, startedAt: ts })
 }
 
@@ -390,6 +404,53 @@ export async function handleTestSetTakeRoutine(req: IncomingMessage, res: Server
   })
 }
 
+// ── POST /debug/test/recording/reassign ────────────────────────────────
+// Body: { newRoutineId, takeStartedAt? }
+// Mimics the full RECORDING_REASSIGN_TARGET IPC handler post-fix flow:
+//   1. find the in-flight take (stoppedAt === null)
+//   2. state.reassignActiveTake — mutates state currentRoutineId
+//   3. recording.setActiveRecordingRoutineId — runtime pointer
+//   4. state.setTakeRoutine — keeps takes[] in sync
+//   5. state.setTakeManuallyRecovered — Phase 1.10 flag
+//   6. recording.broadcastFullStateImmediate — sync overlay counter
+// Used by Phase 1.9/1.10 scenarios.
+export async function handleTestReassignRecording(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!gateEnabled(res)) return
+  const body = await readBody(req).catch(() => ({}))
+  const newRoutineId = body.newRoutineId as string | undefined
+  if (!newRoutineId) {
+    sendJson(res, 400, { error: 'newRoutineId required' })
+    return
+  }
+  try {
+    const activeTake = state.getTakes().find((t) => !t.stoppedAt)
+    if (!activeTake) {
+      sendJson(res, 400, { error: 'no in-flight take to reassign' })
+      return
+    }
+    const takeStartedAt = (body.takeStartedAt as string) || activeTake.startedAt
+    const oldId = activeTake.currentRoutineId
+    const result = state.reassignActiveTake(oldId, newRoutineId, takeStartedAt)
+    if (!result) {
+      sendJson(res, 500, { error: 'reassignActiveTake returned null' })
+      return
+    }
+    const recording = await import('./recording')
+    recording.setActiveRecordingRoutineId(result.id)
+    state.setTakeRoutine(activeTake.takeId, result.id)
+    state.setTakeManuallyRecovered(activeTake.takeId)
+    recording.broadcastFullStateImmediate()
+    sendJson(res, 200, {
+      ok: true,
+      takeId: activeTake.takeId,
+      newRoutineId: result.id,
+      newEntryNumber: result.entryNumber,
+    })
+  } catch (err) {
+    sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+  }
+}
+
 // ── POST /debug/test/extract-keyframes ─────────────────────────────────
 // Body: { mkvPath, outputDir }
 // Runs extractKeyframes against a given source MKV (or MP4 — ffmpeg accepts
@@ -443,6 +504,7 @@ export function handleSnapshot(_req: IncomingMessage, res: ServerResponse): void
     archivedPath: t.archivedPath,
     currentRoutineId: t.currentRoutineId,
     emptyRoutineNumber: t.emptyRoutineNumber,
+    manuallyRecovered: t.manuallyRecovered ?? false,
   }))
   const watermarks = state.listSdWatermarks()
   const queue = jobQueue.getAll().map((j) => ({
@@ -478,6 +540,14 @@ export function handleSnapshot(_req: IncomingMessage, res: ServerResponse): void
       compStateDriftCheck: settings.behavior?.compStateDriftCheck,
       testHooksEnabled: settings.behavior?.testHooksEnabled,
       audioAudit: settings.audioAudit,
+    },
+    // Phase 1.9 (rescoped): expose burned-in overlay counter so tests can
+    // verify it tracks operator overrides (click-to-reassign + empty-routine).
+    overlay: {
+      counterEntryNumber: overlay.getOverlayState().counter.entryNumber,
+      counterCurrent: overlay.getOverlayState().counter.current,
+      counterTotal: overlay.getOverlayState().counter.total,
+      lowerThirdEntryNumber: overlay.getOverlayState().lowerThird.entryNumber,
     },
   })
 }
