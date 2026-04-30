@@ -210,15 +210,13 @@ export default function Controls(): React.ReactElement {
           }}
         >
           {isRecording ? 'SAVE AS EMPTY ROUTINE' : 'START EMPTY ROUTINE'}</button>
+        <button className="ctrl-btn" onClick={handleClockSync}>
+          Clock Sync
+        </button>
         {/* Old SCRATCH path retained for hotkey + legacy invocations.
             Per-row scratch button in RoutineTable still handles in-table use. */}
         <button className="ctrl-btn" onClick={handleScratch} style={{ display: 'none' }}>
           {currentRoutine?.status === 'scratched' ? 'Unscratch' : 'Scratch'}
-        </button>
-      </div>
-      <div className="control-row">
-        <button className="ctrl-btn" onClick={handleClockSync}>
-          Clock Sync
         </button>
       </div>
     </div>

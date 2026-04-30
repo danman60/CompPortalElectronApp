@@ -712,9 +712,6 @@ export default function Header(): React.ReactElement {
             {appVersion && <span className="topband-version">v{appVersion}</span>}
           </div>
           <div className="header-status">
-            <span className="si" style={{ color: obsColor }}>
-              OBS {obsState.connectionStatus === 'connected' ? 'ON' : 'OFF'}
-            </span>
             {competition && <span className="si">{competition.routines.length} routines</span>}
             <ImportPill />
             <UploadBacklogPill />
@@ -750,13 +747,10 @@ export default function Header(): React.ReactElement {
         <div className="topband-current">
           <CurrentRoutine />
         </div>
-        <div className="topband-meters">
-          <div className="section topband-meters-card">
-            <div className="section-title">Audio</div>
+        <div className="topband-controls">
+          <div className="topband-meters-inline">
             <VerticalMeters />
           </div>
-        </div>
-        <div className="topband-controls">
           <Controls />
         </div>
       </div>

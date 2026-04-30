@@ -333,6 +333,28 @@
   max-height: 170px;
 }
 
+/*
+ * UI redesign pass 1 iter-3 (2026-04-30): flatten current-routine into a
+ * horizontal layout so it takes less vertical space. Number badge | title
+ * | dancers | meta | studio inline. Recording timer drops below as before.
+ */
+.topband-current .routine-top {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.topband-current .routine-details {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-width: 0;
+  flex: 1;
+}
+
 .topband-current .routine-title,
 .topband-current .routine-dancers,
 .topband-current .routine-studio {
@@ -341,9 +363,23 @@
   white-space: nowrap;
 }
 
+.topband-current .routine-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.topband-current .routine-dancers {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .topband-current .routine-meta {
+  display: flex;
   flex-wrap: nowrap;
+  gap: 6px;
   overflow: hidden;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .topband-current .routine-meta span {
@@ -352,33 +388,61 @@
   white-space: nowrap;
 }
 
+.topband-current .routine-studio {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
 .topband-meters-card {
   display: flex;
   flex-direction: column;
 }
 
 /*
- * UI redesign pass 1 (2026-04-29): audio meters were 12px wide / 134px tall.
- * Operator works in a live audio environment where the meters are the only
- * visual signal that mics are hot — too small to read across the room.
- * Doubled track width, expanded vertical, larger label font.
+ * UI redesign pass 1 iter-3 (2026-04-30): audio meters now sit INSIDE the
+ * controls cell, immediately to the left of RECORD. Operator's eye stays
+ * in one place during a take. Container is flex row.
  */
-.topband-meters-card .v-meters {
+.topband-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.topband-meters-inline {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 110px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  padding: 8px 8px;
+}
+
+.topband-meters-inline .v-meters {
   min-width: 0;
-  min-height: 180px;
-  padding: 6px 4px 4px;
-  gap: 8px;
+  min-height: 100%;
+  padding: 4px 2px 4px;
+  gap: 6px;
 }
 
-.topband-meters-card .v-meter-track {
-  max-width: 22px;
+.topband-meters-inline .v-meter-track {
+  max-width: 20px;
 }
 
-.topband-meters-card .v-meter-label {
+.topband-meters-inline .v-meter-label {
   font-size: 11px;
   font-weight: 700;
   color: var(--text-secondary);
   letter-spacing: 0.6px;
+}
+
+.topband-controls > .section.controls-section {
+  flex: 1;
+  margin: 0;
 }
 
 .topband-controls .controls-section {
