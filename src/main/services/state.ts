@@ -458,6 +458,13 @@ export function setCompetition(comp: Competition): void {
     let matchedCount = 0
     for (const routine of comp.routines) {
       const persisted = persistedMap.get(routine.id)
+      // Capture the server-side scratch flag from the schedule API BEFORE we
+      // overwrite routine.status from local persisted state. CompPortal sets
+      // status='scratched' when scratched_at != null. We let server-says-
+      // scratched win additively: if server scratched but local didn't know,
+      // mark scratched. Operator un-scratch in CSE always wins (no auto-revert
+      // from server). See feedback_scratch_bidirectional in memory.
+      const serverScratched = routine.status === 'scratched'
       if (persisted) {
         routine.status = persisted.status
         routine.recordingStartedAt = persisted.recordingStartedAt
@@ -468,6 +475,22 @@ export function setCompetition(comp: Competition): void {
         routine.uploadProgress = persisted.uploadProgress
         routine.notes = persisted.notes
         matchedCount++
+      }
+      // Apply server scratch as a one-way merge: only sets, never clears.
+      if (serverScratched && routine.status !== 'scratched') {
+        logger.app.info(
+          `Server scratch merge: routine ${routine.entryNumber} (${routine.id.slice(0, 8)}) ` +
+          `marked scratched from CompPortal payload (was ${routine.status})`,
+        )
+        routine.status = 'scratched'
+        routine.recordingStartedAt = undefined
+        routine.recordingStoppedAt = undefined
+        routine.outputPath = undefined
+        routine.outputDir = undefined
+        routine.encodedFiles = undefined
+        routine.keyframes = undefined
+        routine.uploadProgress = undefined
+        routine.error = undefined
       }
     }
 

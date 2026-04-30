@@ -20,9 +20,8 @@ const EASING_OPTIONS: AnimationEasing[] = [
   'ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'bounce', 'elastic',
 ]
 
-export default function OverlayControls({ compact = false }: { compact?: boolean }): React.ReactElement {
+export default function OverlayControls({ compact = false, noChat = false }: { compact?: boolean; noChat?: boolean }): React.ReactElement {
   const currentRoutine = useStore((s) => s.currentRoutine)
-  const [editorOpen, setEditorOpen] = useState(false)
   // Initial defaults are all FALSE so nothing shows as "active/green" until
   // the server state is actually confirmed via overlayGetState. Previous
   // defaults of counter: true, logo: true caused a UI-vs-overlay mismatch
@@ -121,43 +120,31 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
 
   return (
     <div className="oc-panel">
-      {/* === Action Bar === */}
-      <div className="oc-action-bar">
+      {/* === Row 1: Fire LT + animation options === */}
+      <div className="oc-fire-anim-row">
         <button
-          className="oc-fire-btn"
-          onClick={() => currentRoutine && window.api.overlayFireLT()}
-          disabled={!currentRoutine}
-          title={!currentRoutine ? 'Select a routine first' : 'Fire lower third'}
+          className={`oc-fire-btn${toggles.lowerThird ? ' is-live' : ''}`}
+          onClick={() => {
+            if (toggles.lowerThird) {
+              window.api.overlayHideLT()
+              setToggles({ ...toggles, lowerThird: false })
+            } else if (currentRoutine) {
+              window.api.overlayFireLT()
+              setToggles({ ...toggles, lowerThird: true })
+            }
+          }}
+          disabled={!toggles.lowerThird && !currentRoutine}
+          title={
+            toggles.lowerThird
+              ? 'Lower third is live — click to hide'
+              : !currentRoutine
+                ? 'Select a routine first'
+                : 'Fire lower third'
+          }
         >
-          Fire LT
+          {toggles.lowerThird ? 'Hide LT' : 'Fire LT'}
         </button>
-        <button className="oc-hide-btn" onClick={() => window.api.overlayHideLT()}>
-          Hide
-        </button>
-        <button
-          className={`oc-toggle${toggles.counter ? ' active' : ''}`}
-          onClick={() => handleToggle('counter')}
-        >Cnt</button>
-        <button
-          className={`oc-toggle${toggles.clock ? ' active' : ''}`}
-          onClick={() => handleToggle('clock')}
-        >Clk</button>
-        <button
-          className={`oc-toggle${toggles.logo ? ' active' : ''}`}
-          onClick={() => handleToggle('logo')}
-        >Logo</button>
-        <button
-          className="oc-edit-layout-btn"
-          onClick={() => setEditorOpen(true)}
-          title="Open visual layout editor"
-        >
-          Edit
-        </button>
-      </div>
-
-      {/* === Animation — compact single row === */}
-      <div className="oc-section" style={{ padding: '4px 8px' }}>
-        <div className="oc-anim-config" style={{ marginTop: 0 }}>
+        <div className="oc-anim-config oc-anim-inline">
           <div className="oc-anim-config-item">
             <div className="oc-config-label">Anim</div>
             <select
@@ -210,8 +197,97 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
       </div>
 
       {/* === Inline Chat Strip — latest 3, click-to-pin, scrollable history === */}
-      <InlineChatStrip />
+      {!noChat && <InlineChatStrip />}
+    </div>
+  )
+}
 
+/**
+ * Layer toggles + visual-layout Edit button as its own module-style row.
+ * Renders alongside Ticker / Starting Soon so the Edit column lines up
+ * across all three rows (shared grid in .oc-module-header).
+ */
+export function OverlayLayerToggles(): React.ReactElement {
+  const [counter, setCounter] = useState(false)
+  const [clock, setClock] = useState(false)
+  const [logo, setLogo] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    async function sync(): Promise<void> {
+      try {
+        const state = await window.api.overlayGetState() as any
+        if (cancelled || !state) return
+        setCounter(!!state.counter?.visible)
+        setClock(!!state.clock?.visible)
+        setLogo(!!state.logo?.visible)
+      } catch { /* ignore */ }
+    }
+    sync()
+    const poll = setInterval(sync, 2000)
+    return () => { cancelled = true; clearInterval(poll) }
+  }, [])
+
+  async function toggle(element: 'counter' | 'clock' | 'logo'): Promise<void> {
+    const result = await window.api.overlayToggle(element) as any
+    if (result) {
+      setCounter(!!result.counter?.visible)
+      setClock(!!result.clock?.visible)
+      setLogo(!!result.logo?.visible)
+    }
+  }
+
+  async function allOff(): Promise<void> {
+    const targets: Array<'counter' | 'clock' | 'logo'> = []
+    if (counter) targets.push('counter')
+    if (clock) targets.push('clock')
+    if (logo) targets.push('logo')
+    if (targets.length === 0) return
+    let last: any = null
+    for (const t of targets) {
+      last = await window.api.overlayToggle(t)
+    }
+    if (last) {
+      setCounter(!!last.counter?.visible)
+      setClock(!!last.clock?.visible)
+      setLogo(!!last.logo?.visible)
+    }
+  }
+
+  const allInactive = !counter && !clock && !logo
+
+  return (
+    <div className="oc-module">
+      <div className="oc-module-header">
+        <div className="oc-layer-toggles">
+          <button
+            className={`oc-toggle${counter ? ' active' : ''}`}
+            onClick={() => toggle('counter')}
+          >Entry Counter</button>
+          <button
+            className={`oc-toggle${clock ? ' active' : ''}`}
+            onClick={() => toggle('clock')}
+          >Clock</button>
+          <button
+            className={`oc-toggle${logo ? ' active' : ''}`}
+            onClick={() => toggle('logo')}
+          >Logo</button>
+        </div>
+        <button
+          className="oc-edit-layout-btn"
+          onClick={() => setEditorOpen(true)}
+          title="Open visual layout editor"
+        >
+          Edit
+        </button>
+        <button
+          className="oc-live-badge off oc-all-off-badge"
+          onClick={allOff}
+          disabled={allInactive}
+          title={allInactive ? 'All layers already off' : 'Turn off Entry Counter, Clock, and Logo'}
+        >Off</button>
+      </div>
       {editorOpen && <VisualEditor onClose={() => setEditorOpen(false)} />}
     </div>
   )
@@ -219,7 +295,7 @@ export default function OverlayControls({ compact = false }: { compact?: boolean
 
 const ADMIN_NAME_KEY = 'cse:chatAdminName'
 
-function InlineChatStrip(): React.ReactElement {
+export function InlineChatStrip(): React.ReactElement {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -445,11 +521,18 @@ export function OverlayModules(): React.ReactElement {
     <>
       {/* === Ticker — collapsible === */}
       <div className="oc-module">
-        <div className="oc-module-header" onClick={() => setTickerExpanded(!tickerExpanded)} style={{ cursor: 'pointer', marginBottom: tickerExpanded ? 6 : 0 }}>
+        <div className="oc-module-header" style={{ marginBottom: tickerExpanded ? 6 : 0 }}>
           <span className="oc-module-title">Ticker</span>
           <button
+            className="oc-edit-layout-btn"
+            onClick={() => setTickerExpanded(!tickerExpanded)}
+            title="Edit ticker text and speed"
+          >
+            Edit
+          </button>
+          <button
             className={`oc-live-badge${tickerVisible ? ' on' : ' off'}`}
-            onClick={(e) => { e.stopPropagation(); handleTickerToggle() }}
+            onClick={handleTickerToggle}
           >
             {tickerVisible ? 'ON' : 'OFF'}
           </button>
@@ -491,9 +574,8 @@ export function OverlayModules(): React.ReactElement {
             className="oc-edit-layout-btn"
             onClick={() => setSsEditorOpen(true)}
             title="Open scene editor"
-            style={{ marginRight: 4 }}
           >
-            Edit Scene
+            Edit
           </button>
           <button
             className={`oc-live-badge${ssVisible ? ' accent-on' : ' off'}`}

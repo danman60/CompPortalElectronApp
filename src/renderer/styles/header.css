@@ -32,7 +32,13 @@
   flex-wrap: nowrap;
   column-gap: 14px;
   row-gap: 0;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.topband-brand .header-status {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .app-logo {
@@ -94,17 +100,18 @@
 
 .meter-label {
   color: var(--text-muted);
-  min-width: 24px;
+  min-width: 22px;
   text-align: right;
 }
 
 .meter-track {
-  width: 38px;
+  width: 28px;
   height: 6px;
   background: var(--bg-tertiary);
   border-radius: 3px;
   overflow: hidden;
   border: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .meter-fill {
@@ -144,8 +151,9 @@
 
 .meter-value {
   color: var(--text-secondary);
-  min-width: 28px;
+  min-width: 26px;
   text-align: left;
+  white-space: nowrap;
 }
 
 .settings-btn {
@@ -209,16 +217,18 @@
 .topband-actions {
   margin-left: auto;
   flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
-.topband-actions .action-bar {
+.topband-actions .action-bar,
+.topband-actions .compact-toggle-btn,
+.topband-actions .settings-btn {
   flex-shrink: 0;
 }
 
 .topband-stats,
 .topband-current,
-.topband-meters,
-.topband-controls {
+.topband-meters {
   min-width: 0;
   display: flex;
   flex: 1;
@@ -226,6 +236,15 @@
 
 .topband-meters {
   flex: 0 0 96px;
+}
+
+/* RECORD section in the topband — width-locked to match the right rail
+ * (ShowControlRail = 360px) so the left edge of RECORD lines up with the
+ * left edge of the GRAPHICS card directly below it. */
+.topband-controls {
+  min-width: 0;
+  display: flex;
+  flex: 0 0 360px;
 }
 
 .topband-stats .section,
@@ -279,13 +298,13 @@
 }
 
 .topband-meta-stats {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
   border-left: 1px solid rgba(255,255,255,0.08);
   border-right: 1px solid rgba(255,255,255,0.08);
   margin: 0 6px;
   padding: 0 12px;
-  overflow: visible;
+  overflow: hidden;
 }
 
 /* The whole row's spare width goes BEFORE the action area so meta-stats
@@ -298,9 +317,13 @@
   background: rgba(255,255,255,0.025);
 }
 
-/* SystemMonitor at content width — don't compete with stats for flex space. */
+/* SystemMonitor — shrinkable + clipping (no scrollbar). When OBS stats spawn
+ * and content exceeds the row, rightmost stats clip silently rather than
+ * pushing the right-side action cluster off screen. */
 .topband-meta > .header-status.topband-system {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .topband-stats-strip .health-strip,
@@ -332,8 +355,12 @@
 .topband-stats-strip .health-tile + .health-tile,
 .topband-meta-stats .health-tile + .health-tile {
   border-left: 1px solid rgba(255,255,255,0.08);
-  padding-left: 10px;
+  padding-left: 8px;
   margin-left: 0;
+}
+
+.topband-meta-stats {
+  gap: 8px !important;
 }
 
 .topband-stats-strip .health-label,

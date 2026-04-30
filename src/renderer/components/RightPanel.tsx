@@ -132,32 +132,8 @@ export function HealthStrip(): React.ReactElement {
 }
 
 export default function RightPanel(): React.ReactElement {
-  const searchQuery = useStore((s) => s.searchQuery)
-  const setSearchQuery = useStore.getState().setSearchQuery
-
   return (
     <div className="right-panel">
-      <div className="right-header schedule-header">
-        <input
-          type="text"
-          className="search-input"
-          placeholder="Search # / name / studio..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          style={{
-            flex: '0 1 240px',
-            padding: '4px 10px',
-            fontSize: '11px',
-            border: '1px solid var(--border)',
-            borderRadius: '3px',
-            background: 'var(--bg-primary)',
-            color: 'var(--text-primary)',
-          }}
-        />
-        <div className="section-title" style={{ marginBottom: 0, marginLeft: 'auto' }}>
-          Schedule
-        </div>
-      </div>
       <RoutineTable />
     </div>
   )

@@ -354,3 +354,32 @@
   font-style: italic;
   color: rgba(255, 220, 160, 0.75);
 }
+
+/* Inline search box in the Routine column header */
+.th-routine-search {
+  padding: 2px 6px;
+}
+
+.th-search-input {
+  width: 100%;
+  max-width: 220px;
+  padding: 3px 8px;
+  font-size: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-primary);
+  outline: none;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.th-search-input:focus {
+  border-color: var(--accent);
+}
+
+.th-search-input::placeholder {
+  color: var(--text-muted);
+  text-transform: none;
+}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, Menu, dialog, shell, powerSaveBlocker } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -84,6 +84,8 @@ function isElevated(): boolean {
 // Fix 5: elevation gate moved into app.whenReady below — calling dialog
 // before whenReady on Windows doesn't render because no message pump exists,
 // so the gate would fire app.exit(1) without showing the reason to the user.
+
+Menu.setApplicationMenu(null)
 
 function createWindow(): void {
   logger.app.info('Creating main window')

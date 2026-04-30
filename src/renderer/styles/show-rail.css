@@ -16,6 +16,7 @@
   padding: 12px;
   min-height: 0;
   overflow: hidden;
+  flex: 1 1 auto;
 }
 
 .show-rail-section {
@@ -50,4 +51,53 @@
 
 .show-rail .job-queue-list {
   max-height: 160px;
+}
+
+/* === Unified GRAPHICS card === */
+.graphics-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.graphics-card-title {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.graphics-sub {
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+.graphics-sub:first-of-type {
+  border-top: none;
+}
+
+.graphics-sub-title {
+  padding: 6px 10px 2px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.78;
+}
+
+/* Chat sub-surface fills remaining card space so the empty area below
+ * CHAT AS ADMIN gets absorbed by the chat feed. */
+.graphics-sub-chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.graphics-sub-chat .ic-strip-wrap {
+  background: transparent;
+  padding-top: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }

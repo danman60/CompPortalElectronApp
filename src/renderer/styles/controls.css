@@ -7,11 +7,13 @@
 .control-row {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 .ctrl-btn {
-  flex: 1;
-  padding: 7px 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-tertiary);

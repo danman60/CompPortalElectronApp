@@ -274,26 +274,30 @@ function ActionBar(): React.ReactElement {
         <span className="ab-label">Tablet</span>
       </button>
 
-      <div className="ab-pause-bar">
-        <button
-          className={`ab-pause-btn${encodingPaused ? ' paused' : ''}`}
-          onClick={toggleEncodePause}
-          disabled={encodingCount === 0 && !encodingPaused}
-          title={encodingPaused ? 'Resume encoding' : 'Pause encoding (finishes current)'}
-        >
-          {encodingPaused ? '\u25B6' : '\u23F8'} Encode
-          {encodingCount > 0 && <span className="ab-count">{encodingCount}</span>}
-        </button>
-        <button
-          className={`ab-pause-btn${uploadsPaused ? ' paused' : ''}`}
-          onClick={toggleUploadPause}
-          disabled={uploadingCount === 0 && !uploadsPaused}
-          title={uploadsPaused ? 'Resume uploads' : 'Pause uploads (aborts current)'}
-        >
-          {uploadsPaused ? '\u25B6' : '\u23F8'} Upload
-          {uploadingCount > 0 && <span className="ab-count">{uploadingCount}</span>}
-        </button>
-      </div>
+      {(encodingCount > 0 || uploadingCount > 0 || encodingPaused || uploadsPaused) && (
+        <div className="ab-pause-bar">
+          {(encodingCount > 0 || encodingPaused) && (
+            <button
+              className={`ab-pause-btn${encodingPaused ? ' paused' : ''}`}
+              onClick={toggleEncodePause}
+              title={encodingPaused ? 'Resume encoding' : 'Pause encoding (finishes current)'}
+            >
+              {encodingPaused ? '\u25B6' : '\u23F8'} Encode
+              {encodingCount > 0 && <span className="ab-count">{encodingCount}</span>}
+            </button>
+          )}
+          {(uploadingCount > 0 || uploadsPaused) && (
+            <button
+              className={`ab-pause-btn${uploadsPaused ? ' paused' : ''}`}
+              onClick={toggleUploadPause}
+              title={uploadsPaused ? 'Resume uploads' : 'Pause uploads (aborts current)'}
+            >
+              {uploadsPaused ? '\u25B6' : '\u23F8'} Upload
+              {uploadingCount > 0 && <span className="ab-count">{uploadingCount}</span>}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

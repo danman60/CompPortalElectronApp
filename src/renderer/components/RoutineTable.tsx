@@ -563,6 +563,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   const settings = useStore((s) => s.settings)
   const dayFilter = useStore((s) => s.dayFilter)
   const searchQuery = useStore((s) => s.searchQuery)
+  const setSearchQuery = useStore.getState().setSearchQuery
   const compactMode = useStore((s) => s.compactMode)
   const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
@@ -780,7 +781,15 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
           <tr>
             <th className="th-num" style={{ paddingLeft: '10px' }}>#</th>
             <th className="th-time">Time</th>
-            <th>Routine</th>
+            <th className="th-routine-search">
+              <input
+                type="text"
+                className="th-search-input"
+                placeholder="Search # / name / studio..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </th>
             {!compactMode && <th className="th-pipeline">REC</th>}
             {!compactMode && <th className="th-pipeline">SPLIT</th>}
             {!compactMode && <th className="th-pipeline">PHOTO</th>}

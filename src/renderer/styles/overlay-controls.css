@@ -63,6 +63,15 @@
   box-shadow: none;
 }
 
+.oc-fire-btn.is-live {
+  background: linear-gradient(135deg, #d97706, #b91c1c);
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.35);
+}
+
+.oc-fire-btn.is-live:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(217, 119, 6, 0.55);
+}
+
 .oc-hide-btn {
   padding: 6px 10px;
   background: var(--bg-tertiary);
@@ -527,8 +536,9 @@
 }
 
 .oc-module-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
   align-items: center;
   margin-bottom: 6px;
 }
@@ -783,4 +793,106 @@
   opacity: 1;
   border-color: #667eea;
   color: #667eea;
+}
+
+
+/* === Row 1: Fire LT + animation options inline === */
+.oc-fire-anim-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.oc-fire-anim-row .oc-fire-btn {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  align-self: stretch;
+}
+
+.oc-anim-inline {
+  flex: 1 1 auto;
+  margin-top: 0 !important;
+  gap: 4px;
+  min-width: 0;
+}
+
+.oc-anim-inline .oc-anim-config-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.oc-anim-inline .oc-anim-config-item.narrow {
+  flex: 0 0 38px;
+}
+
+.oc-anim-inline .oc-config-label {
+  font-size: 8px;
+  margin-bottom: 1px;
+  letter-spacing: 0.2px;
+}
+
+.oc-anim-inline .oc-select,
+.oc-anim-inline .oc-input {
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+/* === Row 2: Overlay toggles + manage buttons === */
+.oc-overlay-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+
+/* All-off button — distinguishes from individual toggles */
+.oc-toggle.oc-all-off {
+  margin-left: auto;
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+.oc-toggle.oc-all-off:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--danger);
+  color: #fff;
+}
+.oc-toggle.oc-all-off:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Layer toggles row — sits in column 1 of .oc-module-header grid */
+.oc-layer-toggles {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.oc-layer-toggles .oc-toggle {
+  padding: 3px 8px;
+  font-size: 9px;
+}
+
+/* Off-action badge — looks like the live-badge "off" but acts on click */
+.oc-live-badge.oc-all-off-badge {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+.oc-live-badge.oc-all-off-badge:not(:disabled):hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--danger);
+  color: #fff;
+}
+.oc-live-badge.oc-all-off-badge:disabled {
+  opacity: 0.35;
+  cursor: default;
+  animation: none;
 }
