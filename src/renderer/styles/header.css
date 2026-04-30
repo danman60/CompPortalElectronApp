@@ -260,8 +260,23 @@
   background: transparent;
 }
 
+/*
+ * UI redesign pass 1 (2026-04-29): stats tiles had 16px numbers, too small
+ * for arm's-length glance. Bumped to 22px + bolder label, kept tile width
+ * the same (no layout shift).
+ */
 .topband-stats-card .health-tile {
-  padding: 8px 9px;
+  padding: 10px 9px;
+}
+
+.topband-stats-card .health-tile strong {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.topband-stats-card .health-label {
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .topband-stats-card .health-export {
@@ -300,15 +315,28 @@
   flex-direction: column;
 }
 
+/*
+ * UI redesign pass 1 (2026-04-29): audio meters were 12px wide / 134px tall.
+ * Operator works in a live audio environment where the meters are the only
+ * visual signal that mics are hot — too small to read across the room.
+ * Doubled track width, expanded vertical, larger label font.
+ */
 .topband-meters-card .v-meters {
   min-width: 0;
-  min-height: 134px;
-  padding: 4px 2px 0;
-  gap: 4px;
+  min-height: 180px;
+  padding: 6px 4px 4px;
+  gap: 8px;
 }
 
 .topband-meters-card .v-meter-track {
-  max-width: 12px;
+  max-width: 22px;
+}
+
+.topband-meters-card .v-meter-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.6px;
 }
 
 .topband-controls .controls-section {
