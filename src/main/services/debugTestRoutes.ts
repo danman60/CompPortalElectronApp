@@ -22,6 +22,7 @@
  */
 
 import { IncomingMessage, ServerResponse } from 'http'
+import { BrowserWindow } from 'electron'
 import crypto from 'crypto'
 import path from 'path'
 import fs from 'fs'
@@ -445,6 +446,46 @@ export async function handleTestReassignRecording(req: IncomingMessage, res: Ser
       takeId: activeTake.takeId,
       newRoutineId: result.id,
       newEntryNumber: result.entryNumber,
+    })
+  } catch (err) {
+    sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+  }
+}
+
+// ── POST /debug/test/capture-renderer ──────────────────────────────────
+// Body: { outputPath, windowIndex? }
+// Captures the renderer process window via webContents.capturePage() and
+// writes a PNG to outputPath on the host filesystem. windowIndex defaults
+// to 0 (the main app window). Returns { path, sizeBytes }. Used by the
+// UI redesign loop to capture before/after screenshots.
+export async function handleTestCaptureRenderer(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!gateEnabled(res)) return
+  const body = await readBody(req).catch(() => ({}))
+  const outputPath = body.outputPath as string | undefined
+  const windowIndex = (body.windowIndex as number | undefined) ?? 0
+  if (!outputPath) {
+    sendJson(res, 400, { error: 'outputPath required' })
+    return
+  }
+  try {
+    const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed())
+    if (wins.length === 0) {
+      sendJson(res, 500, { error: 'no live BrowserWindows' })
+      return
+    }
+    const target = wins[Math.min(windowIndex, wins.length - 1)]
+    const image = await target.webContents.capturePage()
+    const png = image.toPNG()
+    const dir = path.dirname(outputPath)
+    try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+    fs.writeFileSync(outputPath, png)
+    const size = fs.statSync(outputPath).size
+    sendJson(res, 200, {
+      ok: true,
+      path: outputPath,
+      sizeBytes: size,
+      windowsAvailable: wins.length,
+      capturedWindow: windowIndex,
     })
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })

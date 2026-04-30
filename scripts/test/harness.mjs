@@ -70,6 +70,7 @@ function makeApi(host) {
     setTakeRoutine: (body) => call('POST', '/debug/test/set-take-routine', body),
     extractKeyframes: (body) => call('POST', '/debug/test/extract-keyframes', body),
     reassignRecording: (body) => call('POST', '/debug/test/recording/reassign', body),
+    captureRenderer: (body) => call('POST', '/debug/test/capture-renderer', body),
 
     // Assertion helpers
     assert: (cond, msg) => { if (!cond) throw new Error('assert failed: ' + msg) },

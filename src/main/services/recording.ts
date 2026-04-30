@@ -941,6 +941,10 @@ export async function handleRecordingStopped(
           `Skipping auto-encode for routine ${routine.entryNumber} — current take is not the longest. ` +
           `Preserving prior upload. current=${newPath}, longer=${encodeInput}`,
         )
+        // Surface to the UI so the operator gets a visible signal instead
+        // of a routine sitting at "Recorded — awaiting encode" forever.
+        // Renderer reads encodeSkipReason from the routine row.
+        state.updateRoutineStatus(routine.id, 'recorded', { encodeSkipReason: 'shorter-than-archived' })
         // Leave status at 'recorded'. Next app restart's reconcile pass
         // will pull CompPortal's authoritative state back into local (so
         // status flips back to 'uploaded' if the portal still has the
@@ -948,7 +952,9 @@ export async function handleRecordingStopped(
         broadcastFullState()
       } else {
         const queueBusy = ffmpegService.getQueueLength() > 0
-        state.updateRoutineStatus(routine.id, queueBusy ? 'queued' : 'encoding')
+        // Clear any prior shorter-than-archived skip reason — we're encoding
+        // now, so the surface should disappear.
+        state.updateRoutineStatus(routine.id, queueBusy ? 'queued' : 'encoding', { encodeSkipReason: undefined })
         broadcastFullState()
         ffmpegService.enqueueJob({
           routineId: routine.id,

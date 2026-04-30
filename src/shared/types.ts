@@ -70,6 +70,16 @@ export interface Routine {
   // fills in title/dancer/category) and for clear filename identification
   // in the recording output dir.
   lateInsert?: boolean
+  /**
+   * Surface for silent auto-encode skip (recording.ts pickLongestMkv path).
+   * Set when a re-record produced a shorter take than the archived prior
+   * upload — the system preserves the longer prior upload and skips encode.
+   * Without this surface the routine sits at status='recorded' and the
+   * STATUS column reads "Recorded — awaiting encode" forever, with the
+   * operator getting no signal why nothing's progressing. Renderer reads
+   * this to display "Auto-encode skipped — prior take was longer" inline.
+   */
+  encodeSkipReason?: 'shorter-than-archived'
 }
 
 export interface EncodedFile {

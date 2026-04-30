@@ -236,6 +236,9 @@ function statusToLabel(routine: Routine, judgeCount: number): { text: string; cl
     case 'recording':
       return { text: 'RECORDING', className: 'recording' }
     case 'recorded':
+      if (routine.encodeSkipReason === 'shorter-than-archived') {
+        return { text: 'Auto-encode skipped — prior take was longer', className: 'failed' }
+      }
       return { text: 'Recorded — awaiting encode', className: 'processing' }
     case 'queued':
       return { text: 'Queued for encoding', className: 'waiting' }

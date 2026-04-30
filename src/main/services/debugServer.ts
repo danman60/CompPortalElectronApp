@@ -44,6 +44,7 @@ import {
   handleTestSetTakeRoutine,
   handleTestExtractKeyframes,
   handleTestReassignRecording,
+  handleTestCaptureRenderer,
   handleSnapshot,
 } from './debugTestRoutes'
 
@@ -167,6 +168,7 @@ function handleRoutines(_req: IncomingMessage, res: ServerResponse): void {
     recordingStartedAt: r.recordingStartedAt || null,
     recordingStoppedAt: r.recordingStoppedAt || null,
     uploadRunId: r.uploadRunId || null,
+    encodeSkipReason: r.encodeSkipReason || null,
   }))
   sendJson(res, 200, { count: summary.length, routines: summary })
 }
@@ -310,6 +312,7 @@ const POST_ROUTES: Record<string, Handler> = {
   '/debug/test/set-take-routine': handleTestSetTakeRoutine,
   '/debug/test/extract-keyframes': handleTestExtractKeyframes,
   '/debug/test/recording/reassign': handleTestReassignRecording,
+  '/debug/test/capture-renderer': handleTestCaptureRenderer,
 }
 
 export function startDebugServer(): void {
