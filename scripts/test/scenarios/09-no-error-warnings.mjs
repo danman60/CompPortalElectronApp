@@ -36,6 +36,11 @@ const WHITELIST_PATTERNS = [
   // Test-harness creates synth routines with bogus paths → encode tries to
   // run → fails with code 1. Real production routines don't hit this.
   /Encoding failed for routine .*FFmpeg exited with code 1/,
+  // Scenario 06 intentionally calls setTakeStopped twice to verify the
+  // second call is rejected. The reject path logs a warn (working as
+  // designed). Whitelist for that scenario.
+  /setTakeStopped: take .* already stopped at .* — ignoring/,
+  /setTakeStopped: take .* already stopped at .* -- ignoring/,
 ]
 
 export const name2 = 'no-error-warnings'
