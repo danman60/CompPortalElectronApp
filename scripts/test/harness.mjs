@@ -68,6 +68,7 @@ function makeApi(host) {
     setWatermark: (body) => call('POST', '/debug/test/set-watermark', body),
     clearWatermarks: () => call('POST', '/debug/test/clear-watermarks'),
     setTakeRoutine: (body) => call('POST', '/debug/test/set-take-routine', body),
+    extractKeyframes: (body) => call('POST', '/debug/test/extract-keyframes', body),
 
     // Assertion helpers
     assert: (cond, msg) => { if (!cond) throw new Error('assert failed: ' + msg) },

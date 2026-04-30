@@ -390,6 +390,34 @@ export async function handleTestSetTakeRoutine(req: IncomingMessage, res: Server
   })
 }
 
+// ── POST /debug/test/extract-keyframes ─────────────────────────────────
+// Body: { mkvPath, outputDir }
+// Runs extractKeyframes against a given source MKV (or MP4 — ffmpeg accepts
+// either). Returns the resulting keyframe paths and per-file byte sizes so
+// the harness can assert Phase 1.12's ~50KB+ target.
+export async function handleTestExtractKeyframes(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!gateEnabled(res)) return
+  const body = await readBody(req).catch(() => ({}))
+  const mkvPath = body.mkvPath as string | undefined
+  const outputDir = body.outputDir as string | undefined
+  if (!mkvPath || !outputDir) {
+    sendJson(res, 400, { error: 'mkvPath + outputDir required' })
+    return
+  }
+  try {
+    const ffmpeg = await import('./ffmpeg')
+    const keyframePaths = await ffmpeg.extractKeyframes(mkvPath, outputDir)
+    const keyframes = keyframePaths.map((p) => {
+      let sizeBytes = 0
+      try { sizeBytes = fs.statSync(p).size } catch {}
+      return { path: p, sizeBytes }
+    })
+    sendJson(res, 200, { ok: true, count: keyframes.length, keyframes })
+  } catch (err) {
+    sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+  }
+}
+
 // ── GET /debug/snapshot ────────────────────────────────────────────────
 // Full deterministic state dump for golden-file regression testing.
 // Excludes timestamps that change between runs (snapshot.takenAt is the

@@ -208,9 +208,13 @@ function probeDurationSeconds(ffmpegPath: string, inputPath: string): Promise<nu
 
 /**
  * Extract 3 keyframes at 20%, 50%, 80% of the video for CompPortal's
- * Gemini spot-check validator. 400x400 WebP, quality 80 (tradeoff: large
- * enough for Gemini to identify dancers, small enough to keep upload
- * cost low). Failure is warn+skip — never blocks the encode/upload flow.
+ * Gemini spot-check validator. Phase 1.12 (2026-04-29): native-resolution
+ * WebP capped at 1920px wide, quality 82. Earlier 400x400 q=5 builds (~1.6 KB)
+ * pixelated to the point Gemini false-positived photos as wrong_performer;
+ * R130 native-res rebuild dropped the false-positive rate to ~zero. Target
+ * file size ~50–100 KB per keyframe.
+ *
+ * Failure is warn+skip — never blocks the encode/upload flow.
  *
  * Returns absolute paths of successfully-written keyframe files. Empty
  * array on failure or if the source is too short (<3s).
@@ -248,8 +252,9 @@ export async function extractKeyframes(
       '-ss', String(seekSec.toFixed(3)),
       '-i', mkvPath,
       '-frames:v', '1',
-      '-vf', 'scale=400:400:force_original_aspect_ratio=increase,crop=400:400',
-      '-q:v', '5',
+      '-vf', "scale='min(1920,iw)':-2",
+      '-c:v', 'libwebp',
+      '-quality', '82',
       '-f', 'webp',
       '-y',
       outPath,
