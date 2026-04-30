@@ -742,13 +742,11 @@ export default function Header(): React.ReactElement {
         </div>
       </div>
 
+      <div className="topband-row topband-stats-strip">
+        <HealthStrip />
+      </div>
+
       <div className="topband-row topband-live">
-        <div className="topband-stats">
-          <div className="section topband-stats-card">
-            <div className="section-title">Stats</div>
-            <HealthStrip />
-          </div>
-        </div>
         <div className="topband-current">
           <CurrentRoutine />
         </div>

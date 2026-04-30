@@ -252,29 +252,71 @@
   gap: 6px;
 }
 
-.topband-stats-card .health-strip {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+/*
+ * UI redesign pass 1 (2026-04-30): stats are now a single horizontal strip
+ * above the live row, not a 6-tile card. Reclaims ~120px of vertical so
+ * the schedule can show ~3 more rows. Each metric: "LABEL value" inline
+ * with subtle separators. Export Report sits right-aligned.
+ */
+.topband-stats-strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.025);
+}
+
+.topband-stats-strip .health-strip {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 18px;
   padding: 0;
   border-bottom: none;
   background: transparent;
 }
 
-/*
- * UI redesign pass 1 (2026-04-29): stats tiles had 16px numbers, too small
- * for arm's-length glance. Bumped to 22px + bolder label, kept tile width
- * the same (no layout shift).
- */
-.topband-stats-card .health-tile {
-  padding: 10px 9px;
+.topband-stats-strip .health-tile {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  min-width: 0;
 }
 
-.topband-stats-card .health-tile strong {
-  font-size: 22px;
+.topband-stats-strip .health-tile + .health-tile {
+  border-left: 1px solid rgba(255,255,255,0.08);
+  padding-left: 18px;
+  margin-left: 0;
+}
+
+.topband-stats-strip .health-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.topband-stats-strip .health-tile strong {
+  font-size: 13px;
   font-weight: 700;
+  color: #fff;
 }
 
-.topband-stats-card .health-label {
+.topband-stats-strip .health-export {
+  margin-left: auto;
+  align-self: center;
+  justify-self: end;
+  padding: 4px 10px;
   font-size: 10px;
   font-weight: 600;
 }
