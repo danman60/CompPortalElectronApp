@@ -41,6 +41,7 @@ import {
   handleTestTriggerAudioAudit,
   handleTestSetWatermark,
   handleTestClearWatermarks,
+  handleTestSetTakeRoutine,
   handleSnapshot,
 } from './debugTestRoutes'
 
@@ -304,6 +305,7 @@ const POST_ROUTES: Record<string, Handler> = {
   '/debug/test/trigger-audio-audit': handleTestTriggerAudioAudit,
   '/debug/test/set-watermark': handleTestSetWatermark,
   '/debug/test/clear-watermarks': handleTestClearWatermarks,
+  '/debug/test/set-take-routine': handleTestSetTakeRoutine,
 }
 
 export function startDebugServer(): void {

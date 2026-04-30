@@ -345,6 +345,34 @@ export async function handleTestClearWatermarks(_req: IncomingMessage, res: Serv
   sendJson(res, 200, { ok: true, cleared: before })
 }
 
+// ── POST /debug/test/set-take-routine ─────────────────────────────────
+// Body: { takeId, routineId, emptyRoutineNumber? }
+// Mutates the take's currentRoutineId. Models the post-stop modal's
+// "Specify Routine" + Item 17 click-to-reassign flow at the data layer.
+export async function handleTestSetTakeRoutine(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!gateEnabled(res)) return
+  const body = await readBody(req).catch(() => ({}))
+  const takeId = body.takeId as string | undefined
+  if (!takeId) {
+    sendJson(res, 400, { error: 'takeId required' })
+    return
+  }
+  const before = state.getTake(takeId)
+  if (!before) {
+    sendJson(res, 404, { error: 'take not found' })
+    return
+  }
+  const newRoutineId = (body.routineId as string | null) ?? null
+  const emptyNumber = body.emptyRoutineNumber as string | undefined
+  const after = state.setTakeRoutine(takeId, newRoutineId, emptyNumber)
+  sendJson(res, 200, {
+    ok: true,
+    before: { currentRoutineId: before.currentRoutineId, emptyRoutineNumber: before.emptyRoutineNumber },
+    after: { currentRoutineId: after?.currentRoutineId, emptyRoutineNumber: after?.emptyRoutineNumber },
+    windowImmutable: before.startedAt === after?.startedAt && before.stoppedAt === after?.stoppedAt,
+  })
+}
+
 // ── GET /debug/snapshot ────────────────────────────────────────────────
 // Full deterministic state dump for golden-file regression testing.
 // Excludes timestamps that change between runs (snapshot.takenAt is the

@@ -67,6 +67,7 @@ function makeApi(host) {
     triggerAudioAudit: (body) => call('POST', '/debug/test/trigger-audio-audit', body),
     setWatermark: (body) => call('POST', '/debug/test/set-watermark', body),
     clearWatermarks: () => call('POST', '/debug/test/clear-watermarks'),
+    setTakeRoutine: (body) => call('POST', '/debug/test/set-take-routine', body),
 
     // Assertion helpers
     assert: (cond, msg) => { if (!cond) throw new Error('assert failed: ' + msg) },
