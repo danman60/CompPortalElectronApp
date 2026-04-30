@@ -226,10 +226,18 @@ export async function handleTestClearState(req: IncomingMessage, res: ServerResp
   const body = await readBody(req).catch(() => ({}))
   const clearRoutines = !!body.clearRoutineRecordings
 
-  // Clear takes by directly mutating (no public API for full clear)
+  // Clear takes by directly mutating (no public API for full clear).
+  // Detach + finalize any in-flight takes so getActiveTake() returns null
+  // on the next scenario — state leak fix for harness scenario 14.
   const all = state.getTakes()
+  const nowIso = new Date().toISOString()
+  let inFlightFinalized = 0
   for (const t of all) {
-    state.setTakeRoutine(t.takeId, null) // detach so matcher won't pick them up
+    if (t.stoppedAt === null) {
+      state.setTakeStopped(t.takeId, nowIso, null)
+      inFlightFinalized++
+    }
+    state.setTakeRoutine(t.takeId, null)
   }
   state.clearSdWatermarks()
 
@@ -250,7 +258,7 @@ export async function handleTestClearState(req: IncomingMessage, res: ServerResp
       }
     }
   }
-  sendJson(res, 200, { ok: true, takesDetached: all.length, watermarksCleared: true, routineRecordingsCleared: clearRoutines })
+  sendJson(res, 200, { ok: true, takesDetached: all.length, inFlightFinalized, watermarksCleared: true, routineRecordingsCleared: clearRoutines })
 }
 
 // ── POST /debug/test/dispatch-decision ──────────────────────────────────
