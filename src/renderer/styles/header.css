@@ -65,10 +65,14 @@
   align-items: center;
 }
 
-/* System monitor variant — keep all 5 meters inline; allow wrap as last resort */
+/* System monitor variant — strict no-wrap so a pop-in (e.g. Drop counter
+ * going non-zero) never shifts the row down a line and reflows the rest
+ * of the header. Operator wants stable layout — items appear in fixed
+ * slots, never push the layout. */
 .header-status.topband-system {
-  flex-wrap: wrap;
-  row-gap: 2px;
+  flex-wrap: nowrap;
+  row-gap: 0;
+  white-space: nowrap;
 }
 
 .header-status .si {
