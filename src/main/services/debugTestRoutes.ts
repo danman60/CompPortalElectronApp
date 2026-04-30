@@ -453,16 +453,19 @@ export async function handleTestReassignRecording(req: IncomingMessage, res: Ser
 }
 
 // ── POST /debug/test/capture-renderer ──────────────────────────────────
-// Body: { outputPath, windowIndex? }
+// Body: { outputPath, windowIndex?, dismissModals? }
 // Captures the renderer process window via webContents.capturePage() and
 // writes a PNG to outputPath on the host filesystem. windowIndex defaults
-// to 0 (the main app window). Returns { path, sizeBytes }. Used by the
-// UI redesign loop to capture before/after screenshots.
+// to 0 (the main app window). When dismissModals=true, runs JS in the
+// renderer to click any visible Acknowledge / OK / Close button before
+// capture (lets the screenshot loop see the underlying UI on a fresh boot
+// when start-of-day modals are blocking the view).
 export async function handleTestCaptureRenderer(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!gateEnabled(res)) return
   const body = await readBody(req).catch(() => ({}))
   const outputPath = body.outputPath as string | undefined
   const windowIndex = (body.windowIndex as number | undefined) ?? 0
+  const dismissModals = body.dismissModals === true
   if (!outputPath) {
     sendJson(res, 400, { error: 'outputPath required' })
     return
@@ -474,6 +477,28 @@ export async function handleTestCaptureRenderer(req: IncomingMessage, res: Serve
       return
     }
     const target = wins[Math.min(windowIndex, wins.length - 1)]
+    let dismissed: string[] = []
+    if (dismissModals) {
+      try {
+        const result = await target.webContents.executeJavaScript(`
+          (function(){
+            const labels = ['acknowledg', 'all cameras match', 'got it', 'dismiss', 'close', 'ok', 'continue'];
+            const clicked = [];
+            const buttons = Array.from(document.querySelectorAll('button'));
+            for (const btn of buttons) {
+              const text = (btn.textContent || '').toLowerCase().trim();
+              if (!text) continue;
+              if (labels.some(l => text.includes(l))) {
+                if (btn.offsetParent !== null) { btn.click(); clicked.push(text); }
+              }
+            }
+            return clicked;
+          })();
+        `)
+        dismissed = Array.isArray(result) ? result : []
+      } catch {}
+      await new Promise((r) => setTimeout(r, 300))
+    }
     const image = await target.webContents.capturePage()
     const png = image.toPNG()
     const dir = path.dirname(outputPath)
@@ -486,6 +511,7 @@ export async function handleTestCaptureRenderer(req: IncomingMessage, res: Serve
       sizeBytes: size,
       windowsAvailable: wins.length,
       capturedWindow: windowIndex,
+      dismissed,
     })
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
