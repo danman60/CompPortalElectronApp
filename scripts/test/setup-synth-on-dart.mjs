@@ -46,3 +46,41 @@ execSync(`scp -q ${localSrc}/*.JPG dart:/Users/User/AppData/Local/Temp/synth-sd-
 
 console.log(`[setup-synth] OK — synth SD ready at ${REMOTE_OUT}`)
 console.log(`[setup-synth] Scenarios can POST { folderPath: "${REMOTE_OUT}" } to /debug/test/import-photos`)
+
+// Phase 2.1 scenarios — also stage yesterday + multi-day folders (B3 + B4).
+const yesterdayDate = execSync(`TZ='America/New_York' date -d 'yesterday 14:00' +'%Y-%m-%dT%H:%M:00'`, { encoding: 'utf-8' }).trim()
+const Y_LOCAL = '/tmp/synth-sd-yesterday'
+const Y_REMOTE = 'C:\\Users\\User\\AppData\\Local\\Temp\\synth-sd-yesterday'
+console.log(`\n[setup-synth] Yesterday folder for B4 wrong-day scenario`)
+execSync(`rm -rf ${Y_LOCAL}`)
+// Use a different bodyKey so watermarks don't conflict with synth-sd-harness
+execSync(
+  `node scripts/test/synth-sd-card.mjs --out ${Y_LOCAL} --count 5 --bodyKey P10 --baseDate ${yesterdayDate} --intervalSec 30`,
+  { stdio: 'inherit' },
+)
+const yDcim = execSync(`ls ${Y_LOCAL}/DCIM`, { encoding: 'utf-8' }).trim().split('\n')[0]
+execSync(
+  `ssh dart "powershell -NoProfile -Command \\"Remove-Item '${Y_REMOTE}' -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path '${Y_REMOTE}\\DCIM\\${yDcim}' -Force | Out-Null\\""`,
+  { stdio: 'inherit' },
+)
+execSync(`scp -q ${Y_LOCAL}/DCIM/${yDcim}/*.JPG dart:/Users/User/AppData/Local/Temp/synth-sd-yesterday/DCIM/${yDcim}/`, { stdio: 'inherit' })
+
+// Multi-day folder = today + yesterday combined (B3)
+const M_LOCAL = '/tmp/synth-sd-multiday'
+const M_REMOTE = 'C:\\Users\\User\\AppData\\Local\\Temp\\synth-sd-multiday'
+console.log(`\n[setup-synth] Multi-day folder for B3 multi-day scenario`)
+execSync(`rm -rf ${M_LOCAL}`)
+execSync(`mkdir -p ${M_LOCAL}/DCIM/${dcimFolder} ${M_LOCAL}/DCIM/${yDcim}`)
+execSync(`cp ${LOCAL_OUT}/DCIM/${dcimFolder}/*.JPG ${M_LOCAL}/DCIM/${dcimFolder}/`)
+execSync(`cp ${Y_LOCAL}/DCIM/${yDcim}/*.JPG ${M_LOCAL}/DCIM/${yDcim}/`)
+execSync(
+  `ssh dart "powershell -NoProfile -Command \\"Remove-Item '${M_REMOTE}' -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path '${M_REMOTE}\\DCIM\\${dcimFolder}' -Force | Out-Null; New-Item -ItemType Directory -Path '${M_REMOTE}\\DCIM\\${yDcim}' -Force | Out-Null\\""`,
+  { stdio: 'inherit' },
+)
+execSync(`scp -q ${M_LOCAL}/DCIM/${dcimFolder}/*.JPG dart:/Users/User/AppData/Local/Temp/synth-sd-multiday/DCIM/${dcimFolder}/`, { stdio: 'inherit' })
+execSync(`scp -q ${M_LOCAL}/DCIM/${yDcim}/*.JPG dart:/Users/User/AppData/Local/Temp/synth-sd-multiday/DCIM/${yDcim}/`, { stdio: 'inherit' })
+
+console.log(`\n[setup-synth] All synth assets staged on DART:`)
+console.log(`  ${REMOTE_OUT} (today, ${args.count} photos, body=${args.bodyKey})`)
+console.log(`  ${Y_REMOTE} (yesterday, 5 photos, body=P10)`)
+console.log(`  ${M_REMOTE} (today + yesterday combined)`)
