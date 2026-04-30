@@ -227,18 +227,28 @@ For each scenario above:
 
 | Scenario | Test exists? | Pass? | Notes |
 |---|---|---|---|
-| A1 sequential recording | partial | — | scenario 02 covers single take |
-| A2 re-record post-stop modal | NO | — | needs dispatch-decision wiring |
-| A3 sub-5s discard | YES | ✅ |  |
-| A4 mid-record reassign | YES (11) | ❌ | scenario 11 has a bug — investigating |
-| B1 card insertion auto-import | partial (17) | ✅ guards only | needs synth-sd path on DART |
-| B2 re-insertion watermark dedup | YES (05) | ✅ |  |
-| B3 multi-day card | NO | — | needs synth-sd with mixed dates |
-| B4 wrong-day card | NO | — | same |
-| C1-3 audio audit | NO | — | needs trigger-audio-audit + synth-mkv |
-| D1 60-min stall | NO | — | needs fake-timers approach |
-| D2 drift detection | NO | — | needs portal mock |
-| E1 stale take recovery | NO | — | needs file pre-write + relaunch |
-| E2 boot migration | YES (logs) | ✅ | verified manually |
+| A1 sequential recording | YES (18) | ✅ | 5 takes on 5 routines, distinct |
+| A2 re-record post-stop modal | YES (21) | ✅ | dispatchDecision IPC accepts 3 kinds |
+| A3 sub-5s discard | YES (03) | ✅ |  |
+| A4 mid-record reassign | YES (04, 11) | ✅ | snapshot fixes both bugs caught |
+| B1 card insertion auto-import | YES (17, 34) | ✅ | real synth photos end-to-end |
+| B2 re-insertion watermark dedup | YES (05, 35) | ✅ | gate logic + real-import rerun |
+| B3 multi-day card | YES (40) | ✅ | only today imports, yesterday filtered |
+| B4 wrong-day card | YES (41) | ✅ | all-yesterday silent skip |
+| C1 audio Tier-1 bitrate | YES (39) | ✅ | end-to-end with synth-broken.mp4 |
+| C2 audio Tier-2 silencedetect | covered by 39 | ✅ | fires alongside Tier-1 |
+| C3 cross-channel hash A53 | YES (42) | ✅ | judge1=judge2 same-file → match |
+| D1 60-min stall | NO | — | deferred (needs fake-timers) |
+| D2 drift detection | NO | — | deferred (needs portal mock) |
+| E1 stale take recovery | YES (stale-take-recovery.mjs) | ✅ | end-to-end across kill+relaunch |
+| E2 boot migration | YES (logs) | ✅ | verified earlier in machine_logs |
 
-**Target: 17/17 → ~25/25 by end of session.**
+**Result: 13/15 fully covered, 2/15 deferred for portal-side / fake-timers approach.**
+
+## Final test fleet inventory (after autonomous loop)
+
+- 42 in-process scenarios via `harness.mjs` (all green)
+- 4 restart-loop persistence checks via `restart-loop.mjs`
+- 2 stale-take recovery checks via `stale-take-recovery.mjs`
+- Stability runner `stability.mjs` cycles harness + restart-loop together (164/164 over 2 cycles)
+- 7 real bugs caught + fixed during the loop (`pickLongestMkv`, `schedule`, `dayChecklist`, `jobQueue.list`, before-by-ref, state leak, legacy-watermark same-second)
