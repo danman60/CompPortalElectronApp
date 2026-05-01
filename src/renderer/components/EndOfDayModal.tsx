@@ -12,44 +12,24 @@ import '../styles/day-checklist.css'
  * the day transitions to 'recorded' (see dayChecklist.maybeFireEndOfDay in
  * main). Also re-openable from Settings.
  *
- * Matches ClockSyncReminder visuals (amber, big, dismissable). Grouped into
- * "App actions" and "Physical / hotel". The "SD card in Reader" item has a
- * hard deadline of 10:15pm; past that time, if not checked, the row shows
- * bold red with a pulse to escalate.
+ * Burlington UDC 2026-05-01 rewrite: CompSync stays OPEN overnight to finish
+ * uploading — no "Close CompSync" step. Single flat ordered list (no sections),
+ * no SD-in-Reader deadline escalation.
  */
 
 interface ChecklistItem {
   id: string
   label: string
-  deadline?: string // informational — displayed under label
+  detail?: string // optional sub-line displayed under label
 }
 
-interface ChecklistSection {
-  title: string
-  items: ChecklistItem[]
-}
-
-const SECTIONS: ChecklistSection[] = [
-  {
-    title: 'App actions',
-    items: [
-      { id: 'close-compsync', label: 'Close CompSync' },
-      { id: 'stop-stream', label: 'Stop stream' },
-      { id: 'turn-off-counter', label: 'Turn off counter' },
-    ],
-  },
-  {
-    title: 'Physical / hotel',
-    items: [
-      { id: 'mevos-charging', label: 'Mevos / banks charging (charge banks with banks charging Mevos — use tablet charger cable, etc.)' },
-      { id: 'cameras-off', label: 'Cameras off, charging deadest batteries overnight' },
-      { id: 'tvs-off', label: 'Stream off / TVs off (hold bottom power button)' },
-      { id: 'sd-in-reader', label: 'Each Photo SD card in each Reader', deadline: 'MUST BE IN BY 10:15 PM' },
-    ],
-  },
+const ITEMS: ChecklistItem[] = [
+  { id: 'awards-done', label: 'Wait for awards to finish' },
+  { id: 'stream-off', label: 'Turn off stream' },
+  { id: 'cameras-off', label: 'Turn off cameras' },
+  { id: 'mevos-charging', label: 'Charge Mevos & power banks', detail: 'Verify blinking lights on BOTH power banks and Mevos' },
+  { id: 'mevos-off', label: 'Turn off Mevos', detail: 'Press and hold back button until you hear the power-off sound' },
 ]
-
-const SD_ITEM_ID = 'sd-in-reader'
 
 type RenderAPI = {
   dayChecklistGet: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
@@ -63,21 +43,11 @@ function getApi(): RenderAPI | null {
   return w.api ?? null
 }
 
-/** Return true if local clock is past 10:15pm. */
-function isPastSdDeadline(now: Date): boolean {
-  const h = now.getHours()
-  const m = now.getMinutes()
-  if (h > 22) return true
-  if (h === 22 && m >= 15) return true
-  return false
-}
-
 export default function EndOfDayModal(): React.ReactElement | null {
   const [visible, setVisible] = useState(false)
   const [date, setDate] = useState<string>('')
   const [scheduledDay, setScheduledDay] = useState<string | null>(null)
   const [itemStates, setItemStates] = useState<Record<string, DayChecklistItemState>>({})
-  const [now, setNow] = useState<Date>(new Date())
 
   // Listen for SHOW broadcasts.
   useEffect(() => {
@@ -95,13 +65,6 @@ export default function EndOfDayModal(): React.ReactElement | null {
     })
     return () => { try { off() } catch {} }
   }, [])
-
-  // Tick clock once per minute — drives the SD deadline escalation.
-  useEffect(() => {
-    if (!visible) return
-    const id = setInterval(() => setNow(new Date()), 30_000)
-    return () => clearInterval(id)
-  }, [visible])
 
   const setExplicit = useCallback((itemId: string, v: DayChecklistItemState): void => {
     const api = getApi()
@@ -135,15 +98,10 @@ export default function EndOfDayModal(): React.ReactElement | null {
 
   if (!visible) return null
 
-  const pastDeadline = isPastSdDeadline(now)
-  const sdState = itemStates[SD_ITEM_ID] || 'open'
-  const sdEscalated = pastDeadline && sdState !== 'checked'
-
-  const allItems = SECTIONS.flatMap((s) => s.items)
-  const totalItems = allItems.length
-  const checkedCount = allItems.filter((i) => itemStates[i.id] === 'checked').length
-  const skippedCount = allItems.filter((i) => itemStates[i.id] === 'skipped').length
-  const naCount = allItems.filter((i) => itemStates[i.id] === 'na').length
+  const totalItems = ITEMS.length
+  const checkedCount = ITEMS.filter((i) => itemStates[i.id] === 'checked').length
+  const skippedCount = ITEMS.filter((i) => itemStates[i.id] === 'skipped').length
+  const naCount = ITEMS.filter((i) => itemStates[i.id] === 'na').length
   const openCount = totalItems - checkedCount - skippedCount - naCount
 
   return (
@@ -154,62 +112,50 @@ export default function EndOfDayModal(): React.ReactElement | null {
           <div className="daychk-title">End-of-Day Checklist</div>
         </div>
         <div className="daychk-subtitle">
-          Last routine of {scheduledDay || 'the day'} is done. Wrap-up steps below — dismiss anytime, state is saved.
+          Last routine of {scheduledDay || 'the day'} is done. Run through these in order — CompSync stays open overnight to finish uploading. Dismiss anytime, state is saved.
         </div>
 
-        {SECTIONS.map((section) => (
-          <div key={section.title}>
-            <div className="daychk-section-title">{section.title}</div>
-            <div className="daychk-list">
-              {section.items.map((item) => {
-                const s = itemStates[item.id] || 'open'
-                const isSdRow = item.id === SD_ITEM_ID
-                const classes = [
-                  'daychk-item',
-                  s === 'checked' ? 'checked' : s === 'skipped' ? 'skipped' : s === 'na' ? 'na' : '',
-                  isSdRow && sdEscalated ? 'deadline-late' : '',
-                ].filter(Boolean).join(' ')
-                return (
-                  <div key={item.id} className={classes}>
-                    <div>
-                      <div className="daychk-item-label" onClick={() => cycleState(item.id)} style={{ cursor: 'pointer' }}>
-                        {item.label}
-                      </div>
-                      {item.deadline && (
-                        <div className="daychk-item-deadline">
-                          {isSdRow && sdEscalated ? `OVERDUE — ${item.deadline}` : item.deadline}
-                        </div>
-                      )}
-                    </div>
-                    <div className="daychk-state-btns">
-                      <button
-                        className={`daychk-state-btn ${s === 'checked' ? 'active checked' : ''}`}
-                        onClick={() => setExplicit(item.id, 'checked')}
-                        title="Mark done"
-                      >
-                        {'\u2713'} Done
-                      </button>
-                      <button
-                        className={`daychk-state-btn ${s === 'skipped' ? 'active skipped' : ''}`}
-                        onClick={() => setExplicit(item.id, 'skipped')}
-                        title="Skip"
-                      >
-                        Skip
-                      </button>
-                      <button
-                        className={`daychk-state-btn ${s === 'na' ? 'active na' : ''}`}
-                        onClick={() => setExplicit(item.id, 'na')}
-                        title="Not applicable"
-                      >
-                        N/A
-                      </button>
-                    </div>
+        <div className="daychk-list">
+          {ITEMS.map((item) => {
+            const s = itemStates[item.id] || 'open'
+            const klass = `daychk-item ${s === 'checked' ? 'checked' : s === 'skipped' ? 'skipped' : s === 'na' ? 'na' : ''}`
+            return (
+              <div key={item.id} className={klass}>
+                <div>
+                  <div className="daychk-item-label" onClick={() => cycleState(item.id)} style={{ cursor: 'pointer' }}>
+                    {item.label}
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        ))}
+                  {item.detail && (
+                    <div className="daychk-item-deadline">{item.detail}</div>
+                  )}
+                </div>
+                <div className="daychk-state-btns">
+                  <button
+                    className={`daychk-state-btn ${s === 'checked' ? 'active checked' : ''}`}
+                    onClick={() => setExplicit(item.id, 'checked')}
+                    title="Mark done"
+                  >
+                    {'✓'} Done
+                  </button>
+                  <button
+                    className={`daychk-state-btn ${s === 'skipped' ? 'active skipped' : ''}`}
+                    onClick={() => setExplicit(item.id, 'skipped')}
+                    title="Skip"
+                  >
+                    Skip
+                  </button>
+                  <button
+                    className={`daychk-state-btn ${s === 'na' ? 'active na' : ''}`}
+                    onClick={() => setExplicit(item.id, 'na')}
+                    title="Not applicable"
+                  >
+                    N/A
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
 
         <div className="daychk-progress">
           <span><strong>{checkedCount}</strong> done</span>

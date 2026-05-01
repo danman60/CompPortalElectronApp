@@ -24,7 +24,7 @@ interface ChecklistItem {
 
 const ITEMS: ChecklistItem[] = [
   { id: 'stream-live', label: 'Start the live stream (OBS) ~half hour to show' },
-  { id: 'tvs-on', label: 'TVs on and pointed to pages' },
+  { id: 'tvs-on', label: 'TVs on → app bookmark 5 (stream must be live first)' },
   { id: 'cameras', label: 'Set up cameras' },
   { id: 'streamdeck', label: 'Stream Deck app running' },
   { id: 'judge-backup', label: 'Judge backup audio recording' },
