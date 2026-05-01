@@ -605,8 +605,11 @@ export async function handleRecordingStopped(
     const earlyDurationSec = takeStartedAtForDiscard
       ? Math.round((stopTimeForDiscard.getTime() - takeStartedAtForDiscard.getTime()) / 1000)
       : Infinity
-    const SUB_DISCARD_THRESHOLD_SEC = 5
-    if (earlyDurationSec < SUB_DISCARD_THRESHOLD_SEC) {
+    const SUB_DISCARD_THRESHOLD_SEC = 10
+    // 2026-05-01 Burlington UDC: operator-locked rule — "10s or under is not
+    // a real routine, silently archive." Comparison is <= (was <) so a take
+    // of EXACTLY 10s also auto-discards.
+    if (earlyDurationSec <= SUB_DISCARD_THRESHOLD_SEC) {
       try {
         const outputDirRoot = settings.fileNaming?.outputDirectory
         if (outputDirRoot) {
@@ -749,29 +752,48 @@ export async function handleRecordingStopped(
       //                        number; new take's currentRoutineId points
       //                        at it. Prior take stays for original routine.
       let rerecDecision: RerecDecision = { kind: 'archive' }
-      let rerecAdvancedToRoutine: Routine | null = null
+      const rerecAdvancedToRoutine: Routine | null = null
       try {
         const NEW_DURATION_THRESHOLD_SEC = 30
         if (durationSec >= NEW_DURATION_THRESHOLD_SEC) {
           const priorEncoded = preArchiveFiles.some((f) => /\.(mp4|webm|mov)$/i.test(f.name))
           if (priorEncoded) {
             const priorMkv = preArchiveFiles.find((f) => /\.mkv$/i.test(f.name))
+            // Burlington UDC 2026-05-01 critical incident: the previous flow
+            // AWAITED a center-screen modal for the operator's decision. That
+            // modal BLOCKED next-routine start — operator missed the start of
+            // R138 and accidentally clicked save-as-extra (137.5) trying to
+            // dismiss it.
+            //
+            // New rule: NEVER block mid-routine with a modal. Apply default
+            // 'archive' (legacy behavior) IMMEDIATELY so post-stop processing
+            // continues with no operator gating. Send the same picker IPC
+            // so the renderer can render a small bottom-right NON-BLOCKING
+            // toast showing what was auto-archived + buttons to override
+            // (override path is post-hoc reassign — not yet wired; operator
+            // can use existing manual reassign tools for the override case).
             logger.app.warn(
               `Re-record SUSPECT: routine ${routine.entryNumber} had encoded output AND new take is ${durationSec}s. ` +
-              `Awaiting operator decision (archive | specify-routine | save-as-extra).`,
+              `Auto-archiving prior (non-blocking; operator review via bottom-right toast).`,
             )
-            rerecDecision = await requestRerecDecision({
-              currentRoutineId: routine.id,
-              currentEntryNumber: routine.entryNumber,
-              nextEntryNumber: state.getNextRoutine()?.entryNumber ?? null,
-              priorMkvName: priorMkv?.name ?? null,
-              priorEncodedFiles: preArchiveFiles
-                .filter((f) => /\.(mp4|webm|mov)$/i.test(f.name))
-                .map((f) => f.name),
-              newMkvPath: outputPath,
-              newDurationSec: durationSec,
-            })
-            logger.app.info(`Re-record decision for routine ${routine.entryNumber}: ${rerecDecision.kind}`)
+            rerecDecision = { kind: 'archive' }
+            try {
+              const proposalId = `rerec-${Date.now()}-${++rerecProposalCounter}`
+              sendToRenderer(IPC_CHANNELS.RECORDING_REREC_DECISION_REQUESTED, {
+                proposalId,
+                detectedAt: new Date().toISOString(),
+                currentRoutineId: routine.id,
+                currentEntryNumber: routine.entryNumber,
+                nextEntryNumber: state.getNextRoutine()?.entryNumber ?? null,
+                priorMkvName: priorMkv?.name ?? null,
+                priorEncodedFiles: preArchiveFiles
+                  .filter((f) => /\.(mp4|webm|mov)$/i.test(f.name))
+                  .map((f) => f.name),
+                newMkvPath: outputPath,
+                newDurationSec: durationSec,
+                autoArchived: true,
+              })
+            } catch {}
           }
         }
       } catch (err) {

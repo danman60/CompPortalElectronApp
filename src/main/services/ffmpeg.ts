@@ -320,6 +320,12 @@ export async function generatePhotoThumbnail(
   return new Promise<boolean>((resolve) => {
     try {
       const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      // Burlington UDC 2026-05-01: thumb-gen ffmpeg was hammering CPU during
+      // post-SD-import bursts (344 photos × ~200ms ffmpeg spawn each). Mirror
+      // the encode-side priority logic so the thumb process yields to OBS,
+      // wifi-display, and operator-foreground work. Settings.ffmpeg.cpuPriority
+      // controls the level (default 'below-normal' on Windows).
+      if (proc.pid) setPriority(proc.pid)
       let stderr = ''
       proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
       const timer = setTimeout(() => {

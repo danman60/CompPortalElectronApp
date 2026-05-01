@@ -340,8 +340,9 @@ type GroupedItem =
 
 // Operator-spec 2026-04-25: SD cards fill before the end of a long session and
 // the operators routinely forget to swap mid-session. Show a visible heads-up
-// row just before the halfway point of any session with enough routines that
-// the SD risks filling. Pure visual marker — no logic, no IPC.
+// row at the 40% point of any session with enough routines that the SD risks
+// filling. Pure visual marker — no logic, no IPC. Threshold tightened from
+// 50% (halfway) to 40% on 2026-05-01 to give more lead time.
 const SD_SWAP_MIN_ROUTINES = 6
 
 function parseHHMMToMinutes(hhmm: string): number {
@@ -413,13 +414,11 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
     }
   }
 
-  // Post-process: insert SD-swap heads-up row just before the halfway point
-  // of each session with enough routines to risk filling the card.
+  // Post-process: insert SD-swap heads-up row at the 40% point of each
+  // session with enough routines to risk filling the card.
   // A44 fix 2026-04-28: previously suppressed for the session containing the
-  // currently-selected routine — defeated the purpose. Operator selects the
-  // first routine of a session well before halfway and needs a forward
-  // reminder, not a retroactive one. Now always visible at ~40-45% through
-  // any session with >= SD_SWAP_MIN_ROUTINES.
+  // currently-selected routine — defeated the purpose. Now always visible.
+  // 2026-05-01: threshold moved from 50% to 40% for more lead time.
   const out: GroupedItem[] = []
   let sessionStart = 0
   let currentSessionNumber = 1
@@ -431,12 +430,16 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
       out.push(...sessionItems)
       return
     }
-    // Halfway mark — insert before the routine at floor(count/2) so the row
-    // appears at the true midpoint of the session.
-    // Prior formula `floor(count/2) - 1` placed the row at ~33-48% (well before
-    // halfway for short sessions, e.g. count=6 → 33%) but the label says
-    // "halfway through Session N". Operator caught the mismatch 2026-04-29.
-    const targetRoutineOrdinal = Math.max(0, Math.floor(count / 2))
+    // 40% mark — insert before the routine at floor(count*0.4) so the row
+    // appears earlier than halfway. Operator request Burlington UDC 2026-05-01:
+    // by the halfway point, the SD card has already had ~50% of the session
+    // shot to it; bumping the heads-up to 40% gives more lead time to swap
+    // before the card actually fills. Edge: count=6 → ordinal 2 (3rd routine
+    // = 33%), count=10 → ordinal 4 (5th routine = 40%), count=20 → ordinal 8
+    // (9th routine = 40%).
+    // Prior formula was floor(count/2) (50%, "halfway"). Label updated to
+    // match.
+    const targetRoutineOrdinal = Math.max(0, Math.floor(count * 0.4))
     const targetIdx = routineIdxs[targetRoutineOrdinal]
     for (let i = 0; i < sessionItems.length; i++) {
       if (i === targetIdx) {
@@ -848,7 +851,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                         <span className="sd-swap-icon" aria-hidden="true">💾</span>
                         <span className="sd-swap-label">SWAP SD CARDS</span>
                         <span className="sd-swap-detail">
-                          · halfway through Session {item.sessionNumber} · {item.routinesRemaining} of {item.totalInSession} routines remaining
+                          · 40% through Session {item.sessionNumber} · {item.routinesRemaining} of {item.totalInSession} routines remaining
                         </span>
                       </div>
                     </td>

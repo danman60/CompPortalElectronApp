@@ -260,6 +260,13 @@
 }
 
 .topband-stats .section-title,
+/* Competition name prefix on the Current Routine section title — added
+   2026-05-01 per operator request to surface comp context in the card. */
+.topband-current .section-title-comp {
+  color: var(--text-secondary, #b8b8d0);
+  font-weight: 500;
+}
+
 .topband-current .section-title,
 .topband-meters .section-title,
 .topband-controls .section-title {
@@ -298,13 +305,13 @@
 }
 
 .topband-meta-stats {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   border-left: 1px solid rgba(255,255,255,0.08);
   border-right: 1px solid rgba(255,255,255,0.08);
   margin: 0 6px;
   padding: 0 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* The whole row's spare width goes BEFORE the action area so meta-stats
@@ -317,22 +324,26 @@
   background: rgba(255,255,255,0.025);
 }
 
-/* SystemMonitor — shrinkable + clipping (no scrollbar). When OBS stats spawn
- * and content exceeds the row, rightmost stats clip silently rather than
- * pushing the right-side action cluster off screen. */
+/* SystemMonitor — shrinkable + wrap (no clip). When OBS stats spawn and
+ * content exceeds the row width, items wrap to a second line rather than
+ * silently clipping. iter-9's clip-on-overflow strategy hid OBS FPS / Drop /
+ * Cong stats — operator at Burlington UDC 2026-05-01 reported "OBS 30/30"
+ * frame rate confirmation getting cut off. Now wrap visibly. */
 .topband-meta > .header-status.topband-system {
   flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .topband-stats-strip .health-strip,
 .topband-meta-stats .health-strip {
   display: flex;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 0;
   border-bottom: none;
   background: transparent;
@@ -377,6 +388,20 @@
   font-size: 13px;
   font-weight: 700;
   color: #fff;
+}
+
+/* Rec stat denominator (e.g. "/619") rendered smaller so the whole "Rec N/M"
+   tile fits within the meta-stats strip when M is 3 digits. Operator at
+   Burlington UDC 2026-05-01 reported "REC 26/" still being clipped after
+   iter-9 compaction — the 619 was being cut off. Subscript-style denominator
+   saves ~10-12px while keeping the total visible. */
+.topband-stats-strip .health-tile .health-denom,
+.topband-meta-stats .health-tile .health-denom {
+  font-size: 0.72em;
+  font-weight: 600;
+  opacity: 0.65;
+  margin-left: 1px;
+  vertical-align: baseline;
 }
 
 .topband-stats-card .health-export {
@@ -433,16 +458,14 @@
 
 .topband-current .routine-meta {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  overflow: hidden;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   font-size: 11px;
   color: var(--text-muted);
+  min-width: 0;
 }
 
 .topband-current .routine-meta span {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

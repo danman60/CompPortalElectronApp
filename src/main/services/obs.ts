@@ -691,21 +691,31 @@ function registerOBSEvents(): void {
         logger.obs.warn(`onTransitionChanged callback threw: ${err instanceof Error ? err.message : err}`)
       }
     }],
-    // Auto-revert to Cut after a stinger plays. Operator workflow: they pick
-    // Stinger for an entrance, fire it, then routinely forget to switch back
-    // to Cut for the next program-change. We do it for them here.
-    // 500ms safety delay after the END event so the very last frame is fully
-    // settled before we change OBS's active transition.
+    // Auto-revert to Cut after ANY transition fires. Operator workflow: they
+    // pick a non-Cut transition (Stinger, Fade, Wipe) for an entrance, fire
+    // it, then routinely forget to switch back to Cut. The previous version
+    // restricted this to kind==='stinger_transition' but Burlington UDC
+    // 2026-05-01 showed it silently failing — OBS reported "UDC Stinger"
+    // with a kind that didn't match the literal, so auto-revert never
+    // fired and stinger was still armed for the next program change
+    // (ruined 2 routines). Operator decided 2026-05-01 to broaden to ANY
+    // transition: every fire snaps back to Cut after a 500ms settle. Cost:
+    // operator can't fire two Fades in a row without re-cycling between
+    // them. Benefit: no transition is ever armed when the operator doesn't
+    // expect it. Diagnostic log on every event so we can see exactly what
+    // OBS reported.
     ['SceneTransitionEnded', (event: any) => {
       const endedName = (event?.transitionName as string) ?? null
       if (!endedName) return
-      const kind = transitionKindByName.get(endedName)
-      if (kind !== 'stinger_transition') return
+      const kind = transitionKindByName.get(endedName) ?? '(unknown)'
       const cutName = findFirstTransitionByKind('cut_transition')
+      const willRevert = !!cutName && endedName !== cutName
+      logger.obs.info(`SceneTransitionEnded: name="${endedName}" kind=${kind} willRevert=${willRevert}`)
       if (!cutName) {
-        logger.obs.warn(`Stinger "${endedName}" ended but no cut_transition found in list — leaving as-is`)
+        logger.obs.warn(`Transition "${endedName}" ended but no cut_transition found in list — leaving as-is`)
         return
       }
+      if (endedName === cutName) return // already Cut, no-op
       setTimeout(() => {
         setCurrentTransitionByName(cutName)
           .then(() => logger.obs.info(`Auto-reverted transition: ${endedName} → ${cutName} (after 500ms settle)`))

@@ -531,20 +531,24 @@ function RerecordDecisionModal(): React.ReactElement | null {
   const dropdownEnd = anchorIdx >= 0 ? Math.min(allRoutines.length, anchorIdx + 11) : allRoutines.length
   const visibleSlice = anchorIdx >= 0 ? allRoutines.slice(dropdownStart, dropdownEnd) : allRoutines
 
+  // 2026-05-01 Burlington UDC: this card is RENDERED BOTTOM-RIGHT and is
+  // NON-BLOCKING. Default 'archive' was already applied server-side at
+  // recording-stop time (see recording.ts comment "auto-archiving prior").
+  // The card surfaces what happened + lets operator OVERRIDE if archive
+  // wasn't right. Operator can also dismiss (X) to accept the default and
+  // get back to running the show.
   return (
     <div
       style={{
         position: 'fixed',
-        inset: 0,
+        right: 16,
+        bottom: 16,
         zIndex: 10000,
-        background: 'rgba(0,0,0,0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
+        width: 360,
+        maxHeight: 'calc(100vh - 32px)',
+        overflowY: 'auto',
       }}
       role="dialog"
-      aria-modal="true"
       aria-labelledby="rerec-modal-title"
     >
       <div
@@ -552,34 +556,44 @@ function RerecordDecisionModal(): React.ReactElement | null {
           background: '#1a1f2e',
           border: '2px solid #c17f00',
           borderRadius: 10,
-          padding: 24,
-          maxWidth: 560,
-          width: '100%',
+          padding: 14,
           color: '#fff',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
-          fontSize: 14,
-          lineHeight: 1.5,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+          fontSize: 12,
+          lineHeight: 1.4,
+          position: 'relative',
         }}
       >
+        <button
+          aria-label="Dismiss"
+          onClick={() => decide(r.proposalId, { kind: 'archive' })}
+          style={{
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            background: 'transparent',
+            color: '#d4d4d4',
+            border: 'none',
+            fontSize: 18,
+            cursor: 'pointer',
+            padding: '0 6px',
+            lineHeight: 1,
+          }}
+        >×</button>
         <div
           id="rerec-modal-title"
           style={{
-            fontSize: 18,
+            fontSize: 13,
             fontWeight: 700,
-            marginBottom: 12,
+            marginBottom: 6,
             color: '#ffca55',
+            paddingRight: 24,
           }}
         >
-          Where does this take belong?
+          R{r.currentEntryNumber} re-record — auto-archived prior. Override?
         </div>
-        <div style={{ marginBottom: 16, color: '#d4d4d4' }}>
-          R<strong>{r.currentEntryNumber}</strong> already has an encoded recording
-          {r.priorEncodedFiles.length > 0 && (
-            <> ({r.priorEncodedFiles.slice(0, 2).join(', ')}
-            {r.priorEncodedFiles.length > 2 ? `, +${r.priorEncodedFiles.length - 2} more` : ''})</>
-          )}.
-          The new take you just stopped is <strong>{durStr}</strong> long. Nothing has
-          been overwritten {'—'} pick where this new take belongs:
+        <div style={{ marginBottom: 10, color: '#d4d4d4', fontSize: 11 }}>
+          New take ({durStr}) kept as canonical for R<strong>{r.currentEntryNumber}</strong>; prior MKV moved to _archive/v{'{N}'}/. Pick a different action below if needed.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button

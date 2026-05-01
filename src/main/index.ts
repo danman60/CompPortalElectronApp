@@ -395,6 +395,16 @@ app.whenReady().then(async () => {
   })
   chatBridge.setOnPinChange(() => {
     mainWindow?.webContents.send(IPC_CHANNELS.CHAT_PINNED_CHANGED, chatBridge.getPinnedMessages())
+    // Also rebroadcast to WS clients (OBS overlay, tablet, Stream Deck) so the
+    // overlay updates pinned chat bubbles instantly on pin/unpin. Previously
+    // only the renderer got pin updates because wsHub.start() registers its
+    // own setOnPinChange callback at init, then this line below overwrites
+    // it (single-slot setter). Found 2026-05-01 during Burlington UDC when
+    // operator reported unpinned chat bubbles lingering on the broadcast
+    // overlay until the next unrelated state-change broadcast.
+    try { wsHub.broadcastState() } catch (err) {
+      logger.app.warn(`wsHub broadcast on pin-change failed: ${err instanceof Error ? err.message : err}`)
+    }
   })
   // Commit 6: when a new chat message is pinned, fire it as an LT-style overlay broadcast
   chatBridge.setOnMessagePinned((msg) => {

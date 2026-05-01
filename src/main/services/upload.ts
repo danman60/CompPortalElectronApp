@@ -950,13 +950,35 @@ async function processLoop(): Promise<void> {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       logger.upload.error(`Upload failed for ${payload.objectName}:`, errMsg)
+      // Burlington UDC 2026-05-01: late-insert-resolve 404 means CompPortal
+      // doesn't have an entry for this routine's lateInsert (endpoint was
+      // missing pre-deploy). Treat as non-retryable AND quarantine ALL
+      // pending+failed jobs for the same routine so they stop cycling
+      // through the queue and clogging it. Operator can manually retry
+      // after CompPortal endpoint deploys (jobs go pending again via
+      // existing retry tools).
+      const isLateInsertMissing = errMsg.includes('late-insert-resolve failed')
       const nonRetryable =
         errMsg.includes('File not found:') ||
         errMsg.includes('File too large for single upload') ||
         errMsg.includes('Missing uploadRunId') ||
-        errMsg.includes('Missing routine ')
+        errMsg.includes('Missing routine ') ||
+        isLateInsertMissing
       if (nonRetryable) {
         jobQueue.quarantine(job.id, errMsg)
+        if (isLateInsertMissing) {
+          // Sweep all sibling jobs for this routine to quarantine. Stops the
+          // queue from wasting cycles re-attempting them.
+          const siblings = jobQueue.getByRoutine(payload.routineId).filter(
+            (j) => j.type === 'upload' && (j.status === 'pending' || j.status === 'failed') && j.id !== job.id,
+          )
+          for (const sib of siblings) {
+            jobQueue.quarantine(sib.id, `Sibling of ${job.id}: late-insert-resolve missing for routine`)
+          }
+          logger.upload.warn(
+            `late-insert-resolve unavailable: quarantined ${siblings.length + 1} upload job(s) for routine ${payload.routineId}. Retry via "Kick All Stages" once CompPortal endpoint deploys.`,
+          )
+        }
       } else {
         jobQueue.updateStatus(job.id, 'failed', { error: errMsg })
       }
@@ -969,11 +991,12 @@ async function processLoop(): Promise<void> {
         error: errMsg,
       })
 
-      // Backoff before next attempt: 5s, 10s, 20s, 40s, 60s max
-      const attempts = job.attempts || 1
-      const backoffMs = Math.min(5000 * Math.pow(2, attempts - 1), 60000)
-      logger.upload.info(`Upload backoff: waiting ${backoffMs / 1000}s before next job`)
-      await new Promise(resolve => setTimeout(resolve, backoffMs))
+      // 2026-05-01 Burlington UDC: removed global `await sleep(backoffMs)`
+      // that previously blocked the WHOLE upload loop after any single job
+      // failure (5s-60s blocking). Per-job backoff in jobQueue.getNext()
+      // already prevents the failing job from being immediately retried.
+      // The loop should pick the next eligible job from ANY routine
+      // immediately so a single broken routine never starves the queue.
     } finally {
       // ALWAYS clean up abort controller
       currentAbortController = null

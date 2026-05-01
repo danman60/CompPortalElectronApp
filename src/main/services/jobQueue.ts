@@ -240,25 +240,50 @@ export function getNext(type: JobType): JobRecord | null {
   if (eligible.length === 0) return null
   if (type !== 'upload') return eligible[0]
 
-  // Live-show drain rule: latest-routine-first, with round-robin interleave
-  // across routines. For each getNext call, pick the routine that has been
-  // served LEAST (fewest done+running photo jobs), tie-broken by highest
+  // ── Burlington UDC 2026-05-01 priority rule ──
+  // Operator-locked: VIDEO uploads ALWAYS drain before any photo upload.
+  // Latest videos go first (highest entry_number wins). Photos lag behind
+  // because photo backlogs (~344 per SD card) flood the queue and starve
+  // newly-encoded videos otherwise.
+  //
+  // Order of preference:
+  //   1. Pending VIDEO uploads — newest entry_number first.
+  //   2. Pending PHOTO uploads — round-robin newest-routine-first (existing
+  //      logic preserved below).
+  //   3. Other (keyframes, thumb-repairs) — FIFO via eligible[0] fallback.
+  const comp = state.getCompetition()
+  const entryByRoutineId = new Map<string, number>()
+  if (comp) {
+    for (const r of comp.routines) {
+      const en = parseInt(r.entryNumber, 10)
+      entryByRoutineId.set(r.id, Number.isFinite(en) ? en : 0)
+    }
+  }
+
+  const videoJobs = eligible.filter((job) => {
+    const payload = job.payload as Record<string, unknown>
+    return payload.type === 'videos'
+  })
+  if (videoJobs.length > 0) {
+    videoJobs.sort((a, b) => {
+      const aRid = (a.payload as Record<string, unknown>).routineId as string
+      const bRid = (b.payload as Record<string, unknown>).routineId as string
+      const aEn = entryByRoutineId.get(aRid) ?? 0
+      const bEn = entryByRoutineId.get(bRid) ?? 0
+      return bEn - aEn // newest entry_number first
+    })
+    return videoJobs[0]
+  }
+
+  // Photo drain: latest-routine-first, with round-robin interleave across
+  // routines. For each getNext call, pick the routine that has been served
+  // LEAST (fewest done+running photo jobs), tie-broken by highest
   // entry_number. Within that routine, return the newest pending photo.
   //
-  // Effect:
-  //  - A fresh SD re-import enqueues R160-R169 each with 50 photos. R116
-  //    already shipped 20. Next call picks R160 (served=0, highest entry),
-  //    then R145 (served=0, next highest), ..., cycles through newest
-  //    routines first. R116-R145 resume draining after newer routines
-  //    catch up to their served count.
-  //  - A single-routine enqueue degenerates to "newest photo in that
-  //    routine" (same as prior behavior).
-  //  - Strict FIFO is dropped for photos because it caused R160+ jobs to
-  //    sit 15+ min behind R116-R145 at UDC Toronto 2026-04-24.
+  // Strict FIFO is dropped for photos because it caused R160+ jobs to sit
+  // 15+ min behind R116-R145 at UDC Toronto 2026-04-24.
   //
-  // Non-photo uploads (videos, keyframes) stay FIFO — small in count,
-  // finish fast. The eligible[0] fallback below handles them when no
-  // photo jobs are pending.
+  // Other uploads (keyframes, thumb repairs) fall through to eligible[0].
   const priority = getSettings().upload?.photoPriority ?? 'newest-first'
   const photoJobs = eligible.filter((job) => {
     const payload = job.payload as Record<string, unknown>
@@ -278,15 +303,7 @@ export function getNext(type: JobType): JobRecord | null {
       servedByRoutine.set(rid, (servedByRoutine.get(rid) ?? 0) + 1)
     }
 
-    const comp = state.getCompetition()
-    const entryByRoutineId = new Map<string, number>()
-    if (comp) {
-      for (const r of comp.routines) {
-        const en = parseInt(r.entryNumber, 10)
-        entryByRoutineId.set(r.id, Number.isFinite(en) ? en : 0)
-      }
-    }
-
+    // entryByRoutineId reuses the map built above for the video-priority pass.
     photoJobs.sort((a, b) => {
       const aRid = (a.payload as Record<string, unknown>).routineId as string
       const bRid = (b.payload as Record<string, unknown>).routineId as string

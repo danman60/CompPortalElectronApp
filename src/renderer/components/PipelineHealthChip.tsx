@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { IPC_CHANNELS } from '../../shared/types'
 import type { PipelineHealthSnapshot } from '../../shared/types'
 
@@ -43,7 +44,9 @@ export default function PipelineHealthChip(): React.ReactElement | null {
   const [open, setOpen] = useState(false)
   const [kicking, setKicking] = useState(false)
   const [kickedAt, setKickedAt] = useState<number>(0)
+  const [popoverRect, setPopoverRect] = useState<{ top: number; right: number } | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   async function handleKick(): Promise<void> {
     if (kicking) return
@@ -66,14 +69,39 @@ export default function PipelineHealthChip(): React.ReactElement | null {
     return () => { try { off() } catch {} }
   }, [])
 
-  // Click-outside to close.
+  // Click-outside to close. Popover is rendered via portal at document.body
+  // so the wrapRef check needs to also consider popover-internal clicks.
   useEffect(() => {
     if (!open) return
     function onClickOutside(e: MouseEvent): void {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      const insideButton = wrapRef.current?.contains(target)
+      const insidePopover = (target as Element)?.closest?.('[data-pipe-popover="1"]')
+      if (!insideButton && !insidePopover) setOpen(false)
     }
     window.addEventListener('mousedown', onClickOutside)
     return () => window.removeEventListener('mousedown', onClickOutside)
+  }, [open])
+
+  // Recompute popover position on open + on window resize/scroll. We use
+  // position:fixed coords derived from the button's bounding rect because
+  // the chip lives inside a topband stacking context that traps absolute
+  // children (Burlington UDC 2026-05-01: operator reported popover wouldn't
+  // draw over CurrentRoutine). Portal + fixed-position fully escapes parent
+  // overflow:hidden + stacking context.
+  useEffect(() => {
+    if (!open) return
+    function reposition(): void {
+      const r = buttonRef.current?.getBoundingClientRect()
+      if (r) setPopoverRect({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    }
+    reposition()
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    return () => {
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+    }
   }, [open])
 
   if (!snap) return null
@@ -83,6 +111,7 @@ export default function PipelineHealthChip(): React.ReactElement | null {
   return (
     <div ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
       <button
+        ref={buttonRef}
         type="button"
         title={`Pipeline health: ${snap.worst}`}
         aria-label="Pipeline health"
@@ -110,13 +139,14 @@ export default function PipelineHealthChip(): React.ReactElement | null {
         />
         <span style={{ fontWeight: 600, letterSpacing: 0.3 }}>PIPE</span>
       </button>
-      {open && (
+      {open && popoverRect && createPortal(
         <div
+          data-pipe-popover="1"
           style={{
-            position: 'absolute',
-            top: '110%',
-            right: 0,
-            zIndex: 9999,
+            position: 'fixed',
+            top: popoverRect.top,
+            right: popoverRect.right,
+            zIndex: 99999,
             minWidth: 280,
             background: 'var(--bg-secondary, #252536)',
             border: '1px solid var(--border, #3a3a52)',
@@ -197,7 +227,8 @@ export default function PipelineHealthChip(): React.ReactElement | null {
               </span>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

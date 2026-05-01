@@ -17,7 +17,12 @@ export default function CurrentRoutine(): React.ReactElement {
   if (!current) {
     return (
       <div className="section">
-        <div className="section-title">Current Routine</div>
+        <div className="section-title">
+          {competition?.name && (
+            <span className="section-title-comp">{competition.name} · </span>
+          )}
+          Current Routine
+        </div>
         <div className="routine-card">
           <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', padding: '20px' }}>
             {competition

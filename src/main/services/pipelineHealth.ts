@@ -33,15 +33,18 @@ const stages: Record<PipelineStageId, PipelineStageState> = {
   videoUpload:  { id: 'videoUpload',  lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
 }
 
-// Photo-import staleness thresholds (operator-locked 2026-04-29 13:09 EDT).
-// Tightened from the original 90/180min defaults. Burlington context: a 9-hour
-// silent stall at UDC Toronto was the headline failure; chip + banner together
-// catch any repeat within the first hour.
-const PHOTO_IMPORT_YELLOW_MS = 10 * 60_000   // chip → yellow
-const PHOTO_IMPORT_RED_MS    = 30 * 60_000   // chip → red
+// Photo-import staleness thresholds (operator-locked 2026-05-01 EDT — relaxed).
+// Burlington UDC 2026-05-01: prior 10/30 min yellow/red was too tight — photos
+// are normally imported every ~60 min (between SD swaps), so 10 min idle is
+// the expected steady state, not a stall. Operator wants the chip to reflect
+// "no GENERAL activity across encode/upload" rather than tight per-stage
+// timers. As an interim fix, raise photo-import thresholds to ~75/120 min so
+// the yellow fires only when an SD swap is overdue — not between normal swaps.
+const PHOTO_IMPORT_YELLOW_MS = 75 * 60_000   // chip → yellow
+const PHOTO_IMPORT_RED_MS    = 120 * 60_000  // chip → red
 // Sticky HardeningBanner fires once per session when crossed (visual only —
 // no audio anywhere in the app, ever).
-const PHOTO_IMPORT_BANNER_MS = 60 * 60_000
+const PHOTO_IMPORT_BANNER_MS = 150 * 60_000
 
 const UPLOAD_YELLOW_MS = 5 * 60_000
 const UPLOAD_RED_MS    = 10 * 60_000

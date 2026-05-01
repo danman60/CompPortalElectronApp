@@ -78,18 +78,8 @@ export function JobQueuePanel(): React.ReactElement | null {
 
 export function HealthStrip(): React.ReactElement {
   const competition = useStore((s) => s.competition)
-  const encodingCount = useStore((s) => s.encodingCount)
-  const uploadingCount = useStore((s) => s.uploadingCount)
   const completeCount = useStore((s) => s.completeCount)
   const photosPendingCount = useStore((s) => s.photosPendingCount)
-  const jobQueue = useStore((s) => s.jobQueue)
-
-  const activeUploadRoutineCount = new Set(
-    jobQueue
-      .filter((j) => j.type === 'upload' && (j.status === 'pending' || j.status === 'running'))
-      .map((j) => j.routineId),
-  ).size
-  const visibleUploadingCount = Math.max(uploadingCount, activeUploadRoutineCount)
 
   const total = competition?.routines.length ?? 0
   const recorded = competition?.routines.filter(
@@ -101,16 +91,14 @@ export function HealthStrip(): React.ReactElement {
     await window.api.exportReport()
   }
 
+  // Proc + Up tiles removed 2026-05-01 per operator at Burlington UDC — they
+  // sit at 0 most of the time (queues drain faster than the operator can
+  // glance at them) and the space they occupy was load-bearing for the rest
+  // of the strip not clipping. PipelineHealthChip already surfaces queue
+  // pressure when something IS stuck, which is the only time those tiles
+  // actually mattered.
   return (
     <div className="health-strip">
-      <div className="health-tile" title="Processing (encode queue)">
-        <span className="health-label">Proc</span>
-        <strong>{encodingCount}</strong>
-      </div>
-      <div className="health-tile" title="Uploading">
-        <span className="health-label">Up</span>
-        <strong>{visibleUploadingCount}</strong>
-      </div>
       <div className="health-tile" title="Complete">
         <span className="health-label">Done</span>
         <strong>{completeCount}</strong>
@@ -119,9 +107,9 @@ export function HealthStrip(): React.ReactElement {
         <span className="health-label">Pix</span>
         <strong>{photosPendingCount}</strong>
       </div>
-      <div className="health-tile" title="Recorded routines">
+      <div className="health-tile" title={`Recorded routines (${recorded}/${total})`}>
         <span className="health-label">Rec</span>
-        <strong>{recorded}/{total}</strong>
+        <strong>{recorded}<span className="health-denom">/{total}</span></strong>
       </div>
       <div className="health-tile" title="Remaining routines">
         <span className="health-label">Rem</span>
