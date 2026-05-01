@@ -346,11 +346,11 @@ type GroupedItem =
   | { type: 'routine'; routine: Routine }
   | { type: 'day-header'; dayLabel: string; dayKey: string }
   | { type: 'session-divider'; sessionNumber: number; gapMinutes: number; idleStartTime: string; idleEndTime: string }
-  | { type: 'sd-swap-heads-up'; sessionNumber: number; routinesRemaining: number; totalInSession: number }
+  | { type: 'sd-swap-heads-up'; sessionNumber: number; routinesRemaining: number; totalInSession: number; percentage: number }
 
 // Operator-spec 2026-04-25: SD cards fill before the end of a long session and
-// the operators routinely forget to swap mid-session. Show a visible heads-up
-// row at the 40% point of any session with enough routines that the SD risks
+// the operators routinely forget to swap mid-session. Show visible heads-up
+// rows at 33% and 55% of any session with enough routines that the SD risks
 // filling. Pure visual marker — no logic, no IPC. Threshold tightened from
 // 50% (halfway) to 40% on 2026-05-01 to give more lead time.
 const SD_SWAP_MIN_ROUTINES = 6
@@ -424,14 +424,16 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
     }
   }
 
-  // Post-process: insert SD-swap heads-up row at the 40% point of each
+  // Post-process: insert SD-swap heads-up rows at 33% and 55% of each
   // session with enough routines to risk filling the card.
   // A44 fix 2026-04-28: previously suppressed for the session containing the
   // currently-selected routine — defeated the purpose. Now always visible.
-  // 2026-05-01: threshold moved from 50% to 40% for more lead time.
+  // 2026-05-01: split single 40% trigger into 33% + 55% (operator request
+  // Burlington UDC) so a missed first heads-up still has a real second chance.
   const out: GroupedItem[] = []
   let sessionStart = 0
   let currentSessionNumber = 1
+  const SD_SWAP_PERCENTAGES = [33, 55] as const
   function flushSessionWithHeadsUp(sessionItems: GroupedItem[], sessionNumber: number): void {
     const routineIdxs: number[] = []
     sessionItems.forEach((it, i) => { if (it.type === 'routine') routineIdxs.push(i) })
@@ -440,24 +442,27 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
       out.push(...sessionItems)
       return
     }
-    // 40% mark — insert before the routine at floor(count*0.4) so the row
-    // appears earlier than halfway. Operator request Burlington UDC 2026-05-01:
-    // by the halfway point, the SD card has already had ~50% of the session
-    // shot to it; bumping the heads-up to 40% gives more lead time to swap
-    // before the card actually fills. Edge: count=6 → ordinal 2 (3rd routine
-    // = 33%), count=10 → ordinal 4 (5th routine = 40%), count=20 → ordinal 8
-    // (9th routine = 40%).
-    // Prior formula was floor(count/2) (50%, "halfway"). Label updated to
-    // match.
-    const targetRoutineOrdinal = Math.max(0, Math.floor(count * 0.4))
-    const targetIdx = routineIdxs[targetRoutineOrdinal]
+    // Build map of targetIdx → percentage for each threshold. If two thresholds
+    // resolve to the same routine ordinal (very short sessions), keep only the
+    // earlier one to avoid stacked rows.
+    const insertions = new Map<number, number>()
+    for (const pct of SD_SWAP_PERCENTAGES) {
+      const ordinal = Math.max(0, Math.floor(count * pct / 100))
+      const idx = routineIdxs[ordinal]
+      if (!insertions.has(idx)) {
+        insertions.set(idx, pct)
+      }
+    }
     for (let i = 0; i < sessionItems.length; i++) {
-      if (i === targetIdx) {
+      const pct = insertions.get(i)
+      if (pct !== undefined) {
+        const ordinal = Math.max(0, Math.floor(count * pct / 100))
         out.push({
           type: 'sd-swap-heads-up',
           sessionNumber,
-          routinesRemaining: count - targetRoutineOrdinal,
+          routinesRemaining: count - ordinal,
           totalInSession: count,
+          percentage: pct,
         })
       }
       out.push(sessionItems[i])
@@ -861,7 +866,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                         <span className="sd-swap-icon" aria-hidden="true">💾</span>
                         <span className="sd-swap-label">SWAP SD CARDS</span>
                         <span className="sd-swap-detail">
-                          · 40% through Session {item.sessionNumber} · {item.routinesRemaining} of {item.totalInSession} routines remaining
+                          · {item.percentage}% through Session {item.sessionNumber} · {item.routinesRemaining} of {item.totalInSession} routines remaining
                         </span>
                       </div>
                     </td>
