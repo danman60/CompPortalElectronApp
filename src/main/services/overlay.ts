@@ -1595,6 +1595,10 @@ function buildOverlayHTML(): string {
   function applyState(state) {
     const o = state.overlay;
     if (state.overlayLayout) {
+      // Cache layout for the clock-slide logic that needs to reapply on
+      // every state change (counter visibility toggles don't include the
+      // overlayLayout in the state push).
+      window._cachedOverlayLayout = state.overlayLayout;
       var L = state.overlayLayout;
       var ce = document.getElementById('counter');
       ce.style.left = L.counter.x + '%'; ce.style.top = L.counter.y + '%'; ce.style.right = 'auto';
@@ -1602,17 +1606,22 @@ function buildOverlayHTML(): string {
       le.style.left = L.logo.x + '%'; le.style.top = L.logo.y + '%';
       if (typeof L.logo.width === 'number') le.style.width = L.logo.width + '%';
       if (typeof L.logo.height === 'number') le.style.height = L.logo.height + '%';
-      var ke = document.getElementById('clock');
-      // Burlington UDC 2026-05-01: when counter is hidden (typical during
-      // awards sessions), clock slides up to occupy counter's position.
-      // When counter is visible again, clock slides back to its operator-
-      // configured spot. CSS transition on left/top handles the animation.
-      var clockTakesCounterSlot = !o.counter.visible && o.clock.visible;
-      var clockX = clockTakesCounterSlot ? L.counter.x : L.clock.x;
-      var clockY = clockTakesCounterSlot ? L.counter.y : L.clock.y;
-      ke.style.left = clockX + '%'; ke.style.top = clockY + '%'; ke.style.right = 'auto';
       var te = document.getElementById('lt');
       te.style.left = L.lowerThird.x + '%'; te.style.top = L.lowerThird.y + '%'; te.style.bottom = 'auto';
+    }
+    // Burlington UDC 2026-05-01: clock-slide. Runs on EVERY state update
+    // (not just layout updates) because counter visibility toggles don't
+    // re-emit overlayLayout. When counter is hidden but clock is visible,
+    // clock takes the counter's slot. CSS transition smooths the move.
+    var Lcached = window._cachedOverlayLayout;
+    if (Lcached) {
+      var ke = document.getElementById('clock');
+      if (ke) {
+        var clockTakesCounterSlot = !o.counter.visible && o.clock.visible;
+        var clockX = clockTakesCounterSlot ? Lcached.counter.x : Lcached.clock.x;
+        var clockY = clockTakesCounterSlot ? Lcached.counter.y : Lcached.clock.y;
+        ke.style.left = clockX + '%'; ke.style.top = clockY + '%'; ke.style.right = 'auto';
+      }
     }
     const counterEl = document.getElementById('counter');
     const counterNum = document.getElementById('counterNumber');
