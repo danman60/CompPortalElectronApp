@@ -117,22 +117,27 @@ function evaluate(): void {
     stages.recording.reason = undefined
   }
 
-  // Photo import: stale if no activity for 10+ min during active comp.
-  // Idle outside active comp = green.
-  if (compActive) {
+  // Photo import: PENDING-AWARE rule (Burlington UDC 2026-05-01 redesign).
+  // Old rule was time-based: yellow at 10 min, red at 30 min since last
+  // activity. That false-flagged the natural quiet between SD swaps as a
+  // stall (operator carries the SD with them; "30 min idle" is the
+  // expected steady state). New rule: only flag stale if there's PENDING
+  // photo-import work (a job in the queue) that hasn't progressed.
+  // Otherwise green. Banner threshold raised so it never fires during
+  // normal between-swap windows.
+  const photoImportHasPending = stages.photoImport.pendingCount > 0
+  if (compActive && photoImportHasPending) {
     stages.photoImport.health = classifyStaleness(
       stages.photoImport.lastActivityMs, PHOTO_IMPORT_YELLOW_MS, PHOTO_IMPORT_RED_MS,
     )
     if (stages.photoImport.health !== 'green') {
       const ageMin = Math.round((Date.now() - stages.photoImport.lastActivityMs) / 60_000)
-      stages.photoImport.reason = `No new photos imported in ${ageMin} min`
+      stages.photoImport.reason = `${stages.photoImport.pendingCount} import job(s) pending — no progress in ${ageMin} min`
     } else {
       stages.photoImport.reason = undefined
     }
-    // 60-min sticky banner — fires ONCE per stall episode. bumpActivity()
-    // resets stallBannerFiredAt so a recovered-then-stalled-again pipeline
-    // re-fires. Skipped for fresh-boot (lastActivityMs===0) so the banner
-    // doesn't appear in idle competitions that haven't ingested yet today.
+    // Banner only fires on REAL stall (pending work + no progress for the
+    // long threshold). Skipped for fresh-boot (lastActivityMs===0).
     if (
       stages.photoImport.lastActivityMs > 0 &&
       stallBannerFiredAt === 0 &&
@@ -144,9 +149,11 @@ function evaluate(): void {
         ageMin,
         lastActivityMs: stages.photoImport.lastActivityMs,
       })
-      logger.app.warn(`Pipeline health: photo-import stall ≥ 60 min — banner fired (${ageMin} min since last activity)`)
+      logger.app.warn(`Pipeline health: photo-import stall (pending=${stages.photoImport.pendingCount}) ≥ ${PHOTO_IMPORT_BANNER_MS / 60_000} min — banner fired (${ageMin} min since last activity)`)
     }
   } else {
+    // No pending photo work OR comp idle = green. Quiet between-swap is
+    // the expected normal state; never flag it.
     stages.photoImport.health = 'green'
     stages.photoImport.reason = undefined
   }
