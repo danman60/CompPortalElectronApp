@@ -39,6 +39,11 @@ type MinimizedImportState = {
   matchableCount?: number
   copyFailureCount?: number
   copyFailureDetails?: CopyFailureDetail[]
+  // Burlington UDC 2026-05-01: timestamp when stage flipped to 'done' /
+  // canRemoveCard=true. Surfaced next to "Safe to remove" label so the
+  // operator sees how recently the import finished — useful when the pill
+  // sits on screen across breaks.
+  completedAt?: string | null
 }
 let minimizedState: MinimizedImportState = {
   active: false, stage: 'idle', current: 0, total: 0, message: '', driveKey: null, canRemoveCard: false,
@@ -195,6 +200,12 @@ export default function DriveAlert(): React.ReactElement | null {
         ...(p.matchableCount !== undefined ? { matchableCount: p.matchableCount } : {}),
         ...(p.copyFailureCount !== undefined ? { copyFailureCount: p.copyFailureCount } : {}),
         ...(p.copyFailureDetails !== undefined ? { copyFailureDetails: p.copyFailureDetails } : {}),
+        // Burlington UDC 2026-05-01: stamp completion time when stage flips
+        // to 'done' or canRemoveCard=true, so the header pill can show
+        // "245 photos · Done 1:25 PM" instead of bare "Safe to remove".
+        ...(p.stage === 'done' || p.canRemoveCard === true
+          ? { completedAt: new Date().toISOString() }
+          : {}),
       })
     })
 

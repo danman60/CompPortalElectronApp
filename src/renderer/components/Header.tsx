@@ -503,7 +503,25 @@ function ImportPill(): React.ReactElement | null {
                 ? `Copied ${s.current}/${s.matchableCount ?? s.total} — ${s.copyFailureCount} ${s.copyFailureCount === 1 ? 'error' : 'errors'}. Click for details.`
                 : s.noNewFiles
                   ? `No new photos in folder${s.skippedDedup ? ` — ${s.skippedDedup} already imported` : ''}`
-                  : 'Safe to remove'}
+                  : (() => {
+                      // Burlington UDC 2026-05-01: include photo count + 12h
+                      // completion timestamp so the operator can tell at a
+                      // glance how recently the import finished.
+                      const count = s.matchableCount ?? s.current ?? s.total
+                      const ts = s.completedAt
+                        ? (() => {
+                            const d = new Date(s.completedAt as string)
+                            const hh12 = ((d.getHours() + 11) % 12) + 1
+                            const mm = String(d.getMinutes()).padStart(2, '0')
+                            const ampm = d.getHours() >= 12 ? 'PM' : 'AM'
+                            return `${hh12}:${mm} ${ampm}`
+                          })()
+                        : null
+                      const parts = ['Safe to remove']
+                      if (count > 0) parts.push(`${count} photo${count === 1 ? '' : 's'}`)
+                      if (ts) parts.push(`done ${ts}`)
+                      return parts.join(' · ')
+                    })()}
             </span>
           </>
         ) : (
