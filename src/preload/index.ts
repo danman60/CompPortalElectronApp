@@ -222,6 +222,9 @@ const api = {
   chatFireTest: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_FIRE_TEST),
   chatPostMessage: (payload: { text: string; name: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_POST_MESSAGE, payload),
+  chatHideMessage: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_HIDE_MESSAGE, id),
+  chatBanAuthor: (payload: { fingerprint?: string | null; authorName?: string | null; reason?: string; hideExisting?: boolean }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_BAN_AUTHOR, payload),
   recordingStartEmpty: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_START_EMPTY),
   recordingReassignTarget: (payload: { routineId?: string | null; emptyRoutineNumber?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_REASSIGN_TARGET, payload),

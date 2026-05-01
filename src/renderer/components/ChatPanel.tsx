@@ -48,9 +48,37 @@ export default function ChatPanel(): React.ReactElement | null {
     } catch {}
   }
   async function handleUnpin(id: string): Promise<void> {
+    // Burlington UDC 2026-05-01: optimistic update — remove from local pinned
+    // list IMMEDIATELY so the UI reflects the unpin without waiting for the
+    // IPC roundtrip + CHAT_PINNED_CHANGED broadcast (operator complained the
+    // unpin felt laggy). Server-side broadcast still fires; the next state
+    // sync converges.
+    const optimistic = chat.pinned.filter((p) => p.id !== id)
+    setChatPinned(optimistic)
     const api = window.api as any
     try { await api?.chatUnpin?.(id) } catch {}
   }
+  async function handleHide(id: string, name: string): Promise<void> {
+    if (!window.confirm(`Hide message from "${name}"? Already-broadcast viewers won't see it removed, but reloads will be clean.`)) return
+    const api = window.api as any
+    try { await api?.chatHideMessage?.(id) } catch {}
+  }
+  async function handleBan(name: string, fingerprint: string | undefined): Promise<void> {
+    if (!window.confirm(`Ban "${name}"? All future messages from this author will be silently rejected, and existing messages from them will be hidden.`)) return
+    const api = window.api as any
+    try {
+      await api?.chatBanAuthor?.({
+        authorName: name,
+        fingerprint: fingerprint ?? null,
+        hideExisting: true,
+      })
+    } catch {}
+  }
+
+  // Burlington UDC 2026-05-01: routine link map — `routineIdAtPost` (entry
+  // uuid) → entry_number for display as `R{n}` badge per chat row.
+  const routineEntryById = new Map<string, string>()
+  for (const r of (competition?.routines ?? [])) routineEntryById.set(r.id, r.entryNumber)
 
   const pinnedIds = new Set(chat.pinned.map((p) => p.id))
 
@@ -161,25 +189,60 @@ export default function ChatPanel(): React.ReactElement | null {
                   }}
                 >{initial(msg.name)}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
                     <strong style={{ fontSize: 11 }}>{msg.name || 'anon'}</strong>
                     <span style={{ fontSize: 10, opacity: 0.55 }}>{relTime(msg.timestamp)}</span>
+                    {msg.routineIdAtPost && routineEntryById.has(msg.routineIdAtPost) && (
+                      <span
+                        title="Routine that was active when this message was posted"
+                        style={{
+                          fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                          background: 'rgba(99, 102, 241, 0.18)', color: 'var(--accent, #a5b4fc)',
+                          letterSpacing: 0.4,
+                        }}
+                      >R{routineEntryById.get(msg.routineIdAtPost)}</span>
+                    )}
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.text}</div>
                 </div>
-                {!pinnedIds.has(msg.id) && (
+                {/* Action buttons — stopPropagation to avoid triggering row click-to-pin */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+                  {!pinnedIds.has(msg.id) && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handlePin(msg.id) }}
+                      title="Pin"
+                      style={{
+                        background: 'transparent', color: 'inherit',
+                        border: '1px solid var(--border, #333)',
+                        borderRadius: 4, cursor: 'pointer',
+                        padding: '0 6px', fontSize: 11,
+                      }}
+                    >★</button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => handlePin(msg.id)}
-                    title="Pin"
+                    onClick={(e) => { e.stopPropagation(); handleHide(msg.id, msg.name || 'anon') }}
+                    title="Hide message (soft delete)"
                     style={{
-                      background: 'transparent', color: 'inherit',
-                      border: '1px solid var(--border, #333)',
+                      background: 'transparent', color: '#f87171',
+                      border: '1px solid rgba(248, 113, 113, 0.4)',
                       borderRadius: 4, cursor: 'pointer',
-                      padding: '0 6px', fontSize: 11, flexShrink: 0,
+                      padding: '0 6px', fontSize: 11,
                     }}
-                  >★</button>
-                )}
+                  >🗑</button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleBan(msg.name || 'anon', msg.fingerprint) }}
+                    title="Ban author (hide all + block future)"
+                    style={{
+                      background: 'transparent', color: '#ef4444',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      borderRadius: 4, cursor: 'pointer',
+                      padding: '0 6px', fontSize: 11,
+                    }}
+                  >🚫</button>
+                </div>
               </div>
             ))}
           </div>

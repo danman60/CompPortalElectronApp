@@ -259,12 +259,23 @@
   padding: 10px 12px;
 }
 
-.topband-stats .section-title,
-/* Competition name prefix on the Current Routine section title — added
-   2026-05-01 per operator request to surface comp context in the card. */
-.topband-current .section-title-comp {
+.topband-stats .section-title {
   color: var(--text-secondary, #b8b8d0);
   font-weight: 500;
+}
+
+/* Competition name prefix on the Current Routine section title — added
+   2026-05-01 per operator request to surface comp context in the card.
+   Overrides the parent .section-title's small/muted/uppercase so the comp
+   name actually stands out instead of looking like a second "Current
+   Routine" label. */
+.topband-current .section-title .section-title-comp {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #fff !important;
+  text-transform: none !important;
+  letter-spacing: 0.02em !important;
+  margin-right: 6px;
 }
 
 .topband-current .section-title,

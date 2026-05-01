@@ -1001,6 +1001,25 @@ export function registerAllHandlers(): void {
     return chatBridge.postChatMessage(text, name)
   })
 
+  // Burlington UDC 2026-05-01 — operator chat moderation. Plugin-token-authed
+  // CompPortal endpoints (/api/plugin/chat/[id]/hide and /api/plugin/chat/ban)
+  // do the actual work; CSE just relays operator clicks.
+  safeHandle(IPC_CHANNELS.CHAT_HIDE_MESSAGE, async (id: unknown) => {
+    const msgId = typeof id === 'string' ? id : ''
+    logIPC(IPC_CHANNELS.CHAT_HIDE_MESSAGE, { id: msgId })
+    if (!msgId) return { ok: false, error: 'id required' }
+    return chatBridge.hideChatMessage(msgId)
+  })
+  safeHandle(IPC_CHANNELS.CHAT_BAN_AUTHOR, async (payload: unknown) => {
+    const p = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>
+    const fingerprint = typeof p.fingerprint === 'string' ? p.fingerprint : null
+    const authorName = typeof p.authorName === 'string' ? p.authorName : null
+    const reason = typeof p.reason === 'string' ? p.reason : undefined
+    const hideExisting = p.hideExisting !== false
+    logIPC(IPC_CHANNELS.CHAT_BAN_AUTHOR, { fingerprint, authorName, reason, hideExisting })
+    return chatBridge.banChatAuthor({ fingerprint, authorName, reason, hideExisting })
+  })
+
   // Synthetic chat-fire trigger — used by the Visual Editor to test the
   // pinned-chat overlay path without needing a real pinned message.
   safeHandle(IPC_CHANNELS.CHAT_FIRE_TEST, () => {

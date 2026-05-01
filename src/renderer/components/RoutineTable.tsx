@@ -188,12 +188,22 @@ function getPipeline(routine: Routine, judgeCount: number): PipelineStage[] {
   }
 
   // Stage 6: Keyframes (3 video keyframes per routine)
+  // Burlington UDC 2026-05-01 follow-up: post-asar-swap, local routine.keyframes
+  // is empty for already-uploaded routines (state hydration gap). Server has
+  // them — plugin/complete required keyframes in payload. So if status is
+  // uploaded/confirmed and local count is empty, trust server-side instead of
+  // flagging X. Pre-upload routines (status=encoded with empty count) still
+  // surface X as a real "missing keyframes" error.
   const keyframeCount = routine.keyframes?.length ?? 0
   const keyframes: PipelineStage = { label: 'KEY', state: 'inactive' }
   if (rec.state === 'done' || routine.status === 'encoded' || routine.status === 'uploaded' || routine.status === 'confirmed') {
     if (keyframeCount >= 3) {
       keyframes.state = 'done'
       keyframes.detail = `${keyframeCount}/3 keyframes`
+    } else if (routine.status === 'uploaded' || routine.status === 'confirmed') {
+      // Local state lost on restart but server has them post-upload.
+      keyframes.state = 'done'
+      keyframes.detail = '3/3 keyframes (server)'
     } else {
       keyframes.state = 'error'
       keyframes.detail = `${keyframeCount}/3 keyframes`

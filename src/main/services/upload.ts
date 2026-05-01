@@ -1349,6 +1349,28 @@ async function callPluginComplete(info: {
     .filter((t) => t.currentRoutineId === info.routineId)
     .some((t) => t.manuallyRecovered)
 
+  // Burlington UDC 2026-05-01: send performance + per-judge video durations
+  // so CompPortal writes them into media_packages instead of leaving the
+  // *_duration_seconds columns null. CompPortal endpoint accepts them as
+  // optional camelCase root fields (see /api/plugin/complete contract).
+  // All 4 judge files are derived from the same source MKV → identical
+  // duration as performance. Compute from routine recording window.
+  let perfDurationSec: number | undefined
+  let judgeDurations: { judge1?: number; judge2?: number; judge3?: number; judge4?: number } | undefined
+  if (routine?.recordingStartedAt && routine?.recordingStoppedAt) {
+    const start = Date.parse(routine.recordingStartedAt)
+    const stop = Date.parse(routine.recordingStoppedAt)
+    if (Number.isFinite(start) && Number.isFinite(stop) && stop > start) {
+      perfDurationSec = (stop - start) / 1000
+      judgeDurations = {
+        judge1: perfDurationSec,
+        judge2: perfDurationSec,
+        judge3: perfDurationSec,
+        judge4: perfDurationSec,
+      }
+    }
+  }
+
   const body = {
     entryId: info.entryId,
     competitionId: info.competitionId,
@@ -1356,6 +1378,8 @@ async function callPluginComplete(info: {
     video_start_timestamp: routine?.recordingStartedAt || undefined,
     video_end_timestamp: routine?.recordingStoppedAt || undefined,
     manually_recovered: manuallyRecovered || undefined,
+    performanceDurationSec: perfDurationSec,
+    judgeDurationsSec: judgeDurations,
     files: {
       performance: info.storagePaths['performance'] || undefined,
       judge1: info.storagePaths['judge1'] || undefined,

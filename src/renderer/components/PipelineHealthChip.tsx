@@ -93,7 +93,20 @@ export default function PipelineHealthChip(): React.ReactElement | null {
     if (!open) return
     function reposition(): void {
       const r = buttonRef.current?.getBoundingClientRect()
-      if (r) setPopoverRect({ top: r.bottom + 4, right: window.innerWidth - r.right })
+      if (!r) return
+      // Burlington UDC 2026-05-01 follow-up: prior fix anchored to right edge,
+      // which on narrower viewports pushed the popover's LEFT edge past the
+      // viewport's left edge (clipping the labels). Clamp so the popover's
+      // left edge stays inside the viewport with an 8px margin.
+      const POPOVER_W = 296 // minWidth 280 + 16 padding
+      const MARGIN = 8
+      let rightOffset = window.innerWidth - r.right
+      // If anchoring right would push left edge off-screen, anchor with margin
+      // from the left of the viewport instead.
+      if (window.innerWidth - rightOffset - POPOVER_W < MARGIN) {
+        rightOffset = Math.max(MARGIN, window.innerWidth - POPOVER_W - MARGIN)
+      }
+      setPopoverRect({ top: r.bottom + 4, right: rightOffset })
     }
     reposition()
     window.addEventListener('resize', reposition)

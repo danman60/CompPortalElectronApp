@@ -4,7 +4,17 @@
 
 // --- Chat (Livestream Pinned Comments) ---
 
-export interface ChatMessage { id: string; name: string; text: string; timestamp: number }
+export interface ChatMessage {
+  id: string
+  name: string
+  text: string
+  timestamp: number
+  /** Author fingerprint (browser/IP-derived) — used for ban targeting. Optional for back-compat. */
+  fingerprint?: string
+  /** Routine entry_id active when message was posted — populated by CompPortal /api/livestream/chat
+   *  (Burlington UDC 2026-05-01). Renderer displays it as "during R<entry>" alongside the message. */
+  routineIdAtPost?: string
+}
 export interface PinnedChatMessage { id: string; name: string; text: string; pinnedAt: number }
 export interface PinnedChatConfig { enabled: boolean; maxVisible: number; rotateIntervalSec: number; showTimestamps: boolean }
 
@@ -857,6 +867,8 @@ export const IPC_CHANNELS = {
   CHAT_CLEAR_PINNED: 'chat:clear-pinned',
   CHAT_FIRE_TEST: 'chat:fire-test',
   CHAT_POST_MESSAGE: 'chat:post-message',
+  CHAT_HIDE_MESSAGE: 'chat:hide-message',
+  CHAT_BAN_AUTHOR: 'chat:ban-author',
 
   // Late-insert / empty-routine recording (operator-spec 2026-04-25):
   // creates a new ad-hoc routine row right after the current one, marks it

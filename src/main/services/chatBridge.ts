@@ -290,3 +290,89 @@ export async function postChatMessage(
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
+
+/**
+ * Burlington UDC 2026-05-01: hide a chat message via plugin-token-authed
+ * CompPortal endpoint. CompPortal flips is_hidden=true, persisted across
+ * backfill. Already-broadcast messages on viewers' screens stay (can't
+ * unsend); future page loads + late joiners get the cleaned set.
+ */
+export async function hideChatMessage(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const conn = getResolvedConnection()
+  if (!conn) return { ok: false, error: 'No resolved connection' }
+  try {
+    const response = await fetch(`${conn.apiBase}/api/plugin/chat/${encodeURIComponent(id)}/hide`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${conn.apiKey}` },
+    })
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      return { ok: false, error: `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}` }
+    }
+    // Mirror locally so the renderer drops the message immediately.
+    messages = messages.filter((m) => m.id !== id)
+    pinnedMessages = pinnedMessages.filter((m) => m.id !== id)
+    if (onPinChange) onPinChange()
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Ban a chat author via plugin-token-authed CompPortal endpoint. Future
+ * messages from matching fingerprint and/or author_name are silently
+ * rejected. If hideExisting is true, prior matching messages also get
+ * hidden in the same call.
+ */
+export async function banChatAuthor(payload: {
+  fingerprint?: string | null
+  authorName?: string | null
+  reason?: string
+  hideExisting?: boolean
+}): Promise<{ ok: true; hiddenCount: number } | { ok: false; error: string }> {
+  const conn = getResolvedConnection()
+  if (!conn) return { ok: false, error: 'No resolved connection' }
+  if (!payload.fingerprint && !payload.authorName) {
+    return { ok: false, error: 'fingerprint or authorName required' }
+  }
+  try {
+    const response = await fetch(`${conn.apiBase}/api/plugin/chat/ban`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${conn.apiKey}`,
+      },
+      body: JSON.stringify({
+        competitionId: conn.competitionId,
+        fingerprint: payload.fingerprint ?? undefined,
+        authorName: payload.authorName ?? undefined,
+        reason: payload.reason,
+        hideExisting: payload.hideExisting ?? true,
+      }),
+    })
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      return { ok: false, error: `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}` }
+    }
+    const result = await response.json() as { hiddenCount?: number }
+    // Local mirror: drop matching messages so renderer reflects ban immediately.
+    const matchedIds = new Set<string>()
+    messages = messages.filter((m) => {
+      const fpMatch = payload.fingerprint && m.fingerprint === payload.fingerprint
+      const nameMatch = payload.authorName && m.name === payload.authorName
+      if (fpMatch || nameMatch) {
+        matchedIds.add(m.id)
+        return false
+      }
+      return true
+    })
+    pinnedMessages = pinnedMessages.filter((p) => !matchedIds.has(p.id))
+    if (onPinChange) onPinChange()
+    return { ok: true, hiddenCount: result.hiddenCount ?? 0 }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
