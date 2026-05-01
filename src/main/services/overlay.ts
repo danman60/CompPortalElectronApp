@@ -892,7 +892,11 @@ function buildOverlayHTML(): string {
   }
   .clock {
     position: absolute; left: ${overlayLayout.clock.x}%; top: ${overlayLayout.clock.y}%;
-    opacity: 0; transition: opacity 0.4s ease;
+    opacity: 0;
+    /* Burlington UDC 2026-05-01: smooth transition on left/top so clock
+       slides up into counter's slot when counter is hidden during awards
+       and slides back down when counter reappears. */
+    transition: opacity 0.4s ease, left 0.5s cubic-bezier(0.22,1,0.36,1), top 0.5s cubic-bezier(0.22,1,0.36,1);
   }
   .clock.visible { opacity: 1; }
   .clock-box {
@@ -1599,7 +1603,14 @@ function buildOverlayHTML(): string {
       if (typeof L.logo.width === 'number') le.style.width = L.logo.width + '%';
       if (typeof L.logo.height === 'number') le.style.height = L.logo.height + '%';
       var ke = document.getElementById('clock');
-      ke.style.left = L.clock.x + '%'; ke.style.top = L.clock.y + '%'; ke.style.right = 'auto';
+      // Burlington UDC 2026-05-01: when counter is hidden (typical during
+      // awards sessions), clock slides up to occupy counter's position.
+      // When counter is visible again, clock slides back to its operator-
+      // configured spot. CSS transition on left/top handles the animation.
+      var clockTakesCounterSlot = !o.counter.visible && o.clock.visible;
+      var clockX = clockTakesCounterSlot ? L.counter.x : L.clock.x;
+      var clockY = clockTakesCounterSlot ? L.counter.y : L.clock.y;
+      ke.style.left = clockX + '%'; ke.style.top = clockY + '%'; ke.style.right = 'auto';
       var te = document.getElementById('lt');
       te.style.left = L.lowerThird.x + '%'; te.style.top = L.lowerThird.y + '%'; te.style.bottom = 'auto';
     }
