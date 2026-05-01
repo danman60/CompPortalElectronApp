@@ -499,6 +499,11 @@ export interface AppSettings {
     useHardwareEncoding: boolean // NVENC (NVIDIA GPU)
     cpuPriority: 'normal' | 'below-normal' | 'idle'
     threadCount: number // 0 = auto; otherwise injected as -threads N on encode spawn
+    // Burlington UDC 2026-05-01: 3-preset slider that bundles the above
+    // tuning knobs into a single operator-friendly choice. When set, drives
+    // cpuPriority + threadCount + NVENC preset selection; raw fields above
+    // remain for advanced overrides. 'custom' = use raw fields verbatim.
+    encodeIntensity?: 'aggressive' | 'balanced' | 'quiet' | 'custom'
   }
   upload: {
     bandwidthCapBytesPerSec: number // 0 = unlimited
@@ -1221,6 +1226,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     useHardwareEncoding: false,
     cpuPriority: 'below-normal',
     threadCount: 0,
+    encodeIntensity: 'balanced',
   },
   upload: {
     bandwidthCapBytesPerSec: 0,

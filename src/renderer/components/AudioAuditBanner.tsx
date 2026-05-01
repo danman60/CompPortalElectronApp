@@ -156,12 +156,49 @@ export default function AudioAuditBanner(): React.ReactElement | null {
     setExpandedRoutineId(null)
   }
 
-  const findings = Array.from(byRoutine.values()).sort((a, b) => {
-    const an = parseFloat(a.entryNumber)
-    const bn = parseFloat(b.entryNumber)
-    if (!isNaN(an) && !isNaN(bn)) return an - bn
-    return a.entryNumber.localeCompare(b.entryNumber)
-  })
+  // Burlington UDC 2026-05-01: "Hide until next session" — for recurring
+  // expected alerts (e.g., judge3 loudness when judge3 isn't seated yet).
+  // Persists in localStorage with end-of-day (local midnight) expiry, so
+  // the dismissal survives renderer remounts but auto-clears at the next
+  // show day. The findings-filter at hydration / new-finding time consults
+  // this list and skips matching routine IDs.
+  function dismissUntilSession(id: string): void {
+    try {
+      const expiryMs = (() => {
+        const d = new Date()
+        d.setHours(23, 59, 59, 999)
+        return d.getTime()
+      })()
+      const raw = localStorage.getItem('audioAuditDismissedUntilEod') || '{}'
+      const map = JSON.parse(raw) as Record<string, number>
+      map[id] = expiryMs
+      localStorage.setItem('audioAuditDismissedUntilEod', JSON.stringify(map))
+    } catch {}
+    dismissOne(id)
+  }
+  function isDismissedThisSession(id: string): boolean {
+    try {
+      const raw = localStorage.getItem('audioAuditDismissedUntilEod') || '{}'
+      const map = JSON.parse(raw) as Record<string, number>
+      const exp = map[id]
+      if (!exp) return false
+      if (Date.now() > exp) {
+        delete map[id]
+        localStorage.setItem('audioAuditDismissedUntilEod', JSON.stringify(map))
+        return false
+      }
+      return true
+    } catch { return false }
+  }
+
+  const findings = Array.from(byRoutine.values())
+    .filter((f) => !isDismissedThisSession(f.routineId))
+    .sort((a, b) => {
+      const an = parseFloat(a.entryNumber)
+      const bn = parseFloat(b.entryNumber)
+      if (!isNaN(an) && !isNaN(bn)) return an - bn
+      return a.entryNumber.localeCompare(b.entryNumber)
+    })
 
   if (findings.length === 0 && !pass) return null
 
@@ -253,6 +290,21 @@ export default function AudioAuditBanner(): React.ReactElement | null {
                       fontWeight: 600,
                     }}
                   >{expanded ? 'Hide' : 'Details'}</button>
+                  <button
+                    type="button"
+                    onClick={() => dismissUntilSession(f.routineId)}
+                    title="Hide until next session (resets at midnight). Use for recurring expected alerts."
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.6)',
+                      color: '#fff',
+                      padding: '2px 8px',
+                      borderRadius: 3,
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                  >Hide today</button>
                   <button
                     type="button"
                     onClick={() => dismissOne(f.routineId)}

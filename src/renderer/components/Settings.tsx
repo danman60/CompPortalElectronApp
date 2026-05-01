@@ -362,7 +362,20 @@ export default function Settings(): React.ReactElement {
               </div>
             </div>
             <div className="field">
-              <label>FFmpeg thread count</label>
+              <label>Encode Intensity</label>
+              <select
+                value={draft.ffmpeg.encodeIntensity ?? 'balanced'}
+                onChange={(e) => update('ffmpeg', { encodeIntensity: e.target.value as 'aggressive' | 'balanced' | 'quiet' | 'custom' })}
+              >
+                <option value="aggressive">Aggressive — fastest encode, may hit OBS/wifi-display</option>
+                <option value="balanced">Balanced — recommended (70% cores, below-normal priority)</option>
+                <option value="quiet">Quiet — slow but lets OBS/wifi-display breathe (30% cores, idle priority)</option>
+                <option value="custom">Custom — use raw fields below</option>
+              </select>
+              <span className="hint">Burlington UDC 2026-05-01: single slider replaces fiddly thread+priority knobs. Switch to "Quiet" if tablet/preview gets choppy during encode bursts.</span>
+            </div>
+            <div className="field">
+              <label>FFmpeg thread count (advanced)</label>
               <input
                 type="range"
                 min={0}
@@ -371,25 +384,27 @@ export default function Settings(): React.ReactElement {
                 value={draft.ffmpeg.threadCount ?? 0}
                 onChange={(e) => update('ffmpeg', { threadCount: parseInt(e.target.value, 10) || 0 })}
                 style={{ width: '100%' }}
+                disabled={(draft.ffmpeg.encodeIntensity ?? 'balanced') !== 'custom'}
               />
               <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
                 {(draft.ffmpeg.threadCount ?? 0) === 0
-                  ? 'Auto (FFmpeg default)'
+                  ? 'Auto (driven by Encode Intensity)'
                   : `${draft.ffmpeg.threadCount} ${draft.ffmpeg.threadCount === 1 ? 'core' : 'cores'} of ${cpuCount}`}
               </div>
-              <span className="hint">Lower = more headroom for OBS (applies to next encode).</span>
+              <span className="hint">Only applies when Encode Intensity is "Custom". Otherwise driven by the preset.</span>
             </div>
             <div className="field">
-              <label>CPU Priority</label>
+              <label>CPU Priority (advanced)</label>
               <select
                 value={draft.ffmpeg.cpuPriority}
                 onChange={(e) => update('ffmpeg', { cpuPriority: e.target.value as 'normal' | 'below-normal' | 'idle' })}
+                disabled={(draft.ffmpeg.encodeIntensity ?? 'balanced') !== 'custom'}
               >
                 <option value="normal">Normal (full speed)</option>
-                <option value="below-normal">Below Normal (recommended — OBS gets priority)</option>
-                <option value="idle">Idle (slowest — minimal impact on OBS)</option>
+                <option value="below-normal">Below Normal</option>
+                <option value="idle">Idle (slowest)</option>
               </select>
-              <span className="hint">Lower priority prevents FFmpeg from affecting OBS/streaming performance.</span>
+              <span className="hint">Only applies when Encode Intensity is "Custom".</span>
             </div>
           </div>
         </div>

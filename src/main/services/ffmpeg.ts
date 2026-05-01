@@ -642,14 +642,19 @@ async function runAudioAudit(
 }
 
 function setPriority(pid: number): void {
-  const settings = getSettings()
-  if (process.platform !== 'win32' || settings.ffmpeg.cpuPriority === 'normal') return
+  if (process.platform !== 'win32') return
+  // Burlington UDC 2026-05-01: prefer the encodeIntensity preset's priority
+  // when it's set; fall back to the legacy cpuPriority field for 'custom'
+  // mode or older settings shapes.
+  const intensity = resolveEncodeIntensity()
+  const effectivePriority = intensity.priority
+  if (effectivePriority === 'normal') return
 
   const priorityMap: Record<string, string> = {
     'below-normal': 'belownormal',
     'idle': 'idle',
   }
-  const level = priorityMap[settings.ffmpeg.cpuPriority]
+  const level = priorityMap[effectivePriority]
   if (!level) return
 
   try {
@@ -950,26 +955,48 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
   }
 }
 
+/**
+ * Burlington UDC 2026-05-01: encode-intensity preset → tuning knob map.
+ * Single operator-friendly slider that bundles cpuPriority + thread cap.
+ * 'custom' falls through to the raw fields for advanced overrides.
+ */
+function resolveEncodeIntensity(): { threadFraction: number; priority: 'normal' | 'below-normal' | 'idle' } {
+  const intensity = getSettings().ffmpeg.encodeIntensity ?? 'balanced'
+  switch (intensity) {
+    case 'aggressive':
+      return { threadFraction: 0.85, priority: 'normal' }
+    case 'quiet':
+      return { threadFraction: 0.30, priority: 'idle' }
+    case 'custom':
+      // Use raw fields verbatim — caller falls through.
+      return { threadFraction: 0.70, priority: getSettings().ffmpeg.cpuPriority }
+    case 'balanced':
+    default:
+      return { threadFraction: 0.70, priority: 'below-normal' }
+  }
+}
+
 /** Spawn FFmpeg with a timeout. Kills process on timeout. */
 function spawnFFmpegWithTimeout(ffmpegPath: string, args: string[], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     // Inject -threads to keep FFmpeg from monopolising the box.
     // - settings.ffmpeg.threadCount > 0 → explicit operator override (used as-is)
-    // - settings.ffmpeg.threadCount = 0 / unset → auto-cap at 70% of cores so
-    //   OBS / wifi-display / queue have headroom (operator request 2026-04-25
-    //   Day 2: ffmpeg was using 100% of cores and clogging encode pipeline).
+    // - settings.ffmpeg.threadCount = 0 / unset → use encodeIntensity preset's
+    //   threadFraction (default 'balanced' = 70% cores). Operator can switch
+    //   to 'quiet' (30%) when other apps need CPU breathing room.
     let finalArgs = args
     try {
       const threads = getSettings().ffmpeg.threadCount
+      const intensity = resolveEncodeIntensity()
       let effective: number | null = null
       if (typeof threads === 'number' && threads > 0) {
         effective = threads
       } else {
         const cores = os.cpus().length
-        effective = Math.max(1, Math.floor(cores * 0.7))
+        effective = Math.max(1, Math.floor(cores * intensity.threadFraction))
       }
       finalArgs = ['-threads', String(effective), ...args]
-      logger.ffmpeg.info(`FFmpeg thread cap: ${effective} (auto: ${!(typeof threads === 'number' && threads > 0)}, cores: ${os.cpus().length})`)
+      logger.ffmpeg.info(`FFmpeg thread cap: ${effective} (preset: ${getSettings().ffmpeg.encodeIntensity ?? 'balanced'}, fraction: ${intensity.threadFraction}, cores: ${os.cpus().length})`)
     } catch {
       // settings unavailable — fall back to no cap
     }
