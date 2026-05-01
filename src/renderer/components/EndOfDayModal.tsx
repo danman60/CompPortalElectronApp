@@ -23,7 +23,11 @@ interface ChecklistItem {
   detail?: string // optional sub-line displayed under label
 }
 
-const ITEMS: ChecklistItem[] = [
+/**
+ * Hardcoded fallback for first-launch / IPC failure paths. Mirrors the
+ * defaults in src/main/services/dayChecklistItems.ts — keep both in sync.
+ */
+const DEFAULT_ITEMS: ChecklistItem[] = [
   { id: 'awards-done', label: 'Wait for awards to finish' },
   { id: 'stream-off', label: 'Turn off stream' },
   { id: 'cameras-off', label: 'Turn off cameras' },
@@ -35,6 +39,7 @@ type RenderAPI = {
   dayChecklistGet: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
   dayChecklistSetItem: (date: string, kind: 'start' | 'end', itemId: string, value: DayChecklistItemState) => Promise<DayChecklistDayState>
   dayChecklistDismiss: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
+  dayChecklistItemsGet?: () => Promise<{ start: ChecklistItem[]; end: ChecklistItem[] } | null>
   on: (channel: string, cb: (...args: unknown[]) => void) => () => void
 }
 
@@ -48,6 +53,7 @@ export default function EndOfDayModal(): React.ReactElement | null {
   const [date, setDate] = useState<string>('')
   const [scheduledDay, setScheduledDay] = useState<string | null>(null)
   const [itemStates, setItemStates] = useState<Record<string, DayChecklistItemState>>({})
+  const [items, setItems] = useState<ChecklistItem[]>(DEFAULT_ITEMS)
 
   // Listen for SHOW broadcasts.
   useEffect(() => {
@@ -58,6 +64,16 @@ export default function EndOfDayModal(): React.ReactElement | null {
       if (!ev || ev.kind !== 'end') return
       setDate(ev.date)
       setScheduledDay(ev.scheduledDay)
+      // Re-fetch items each SHOW so CompPortal edits take effect on next reopen.
+      if (api.dayChecklistItemsGet) {
+        api.dayChecklistItemsGet().then((res) => {
+          if (res && Array.isArray(res.end) && res.end.length > 0) {
+            setItems(res.end)
+          } else {
+            setItems(DEFAULT_ITEMS)
+          }
+        }).catch(() => setItems(DEFAULT_ITEMS))
+      }
       api.dayChecklistGet(ev.date, 'end').then((d) => {
         setItemStates(d.items || {})
       }).catch(() => {})
@@ -98,10 +114,10 @@ export default function EndOfDayModal(): React.ReactElement | null {
 
   if (!visible) return null
 
-  const totalItems = ITEMS.length
-  const checkedCount = ITEMS.filter((i) => itemStates[i.id] === 'checked').length
-  const skippedCount = ITEMS.filter((i) => itemStates[i.id] === 'skipped').length
-  const naCount = ITEMS.filter((i) => itemStates[i.id] === 'na').length
+  const totalItems = items.length
+  const checkedCount = items.filter((i) => itemStates[i.id] === 'checked').length
+  const skippedCount = items.filter((i) => itemStates[i.id] === 'skipped').length
+  const naCount = items.filter((i) => itemStates[i.id] === 'na').length
   const openCount = totalItems - checkedCount - skippedCount - naCount
 
   return (
@@ -116,7 +132,7 @@ export default function EndOfDayModal(): React.ReactElement | null {
         </div>
 
         <div className="daychk-list">
-          {ITEMS.map((item) => {
+          {items.map((item) => {
             const s = itemStates[item.id] || 'open'
             const klass = `daychk-item ${s === 'checked' ? 'checked' : s === 'skipped' ? 'skipped' : s === 'na' ? 'na' : ''}`
             return (

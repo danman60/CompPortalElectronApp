@@ -913,6 +913,7 @@ export const IPC_CHANNELS = {
   DAY_CHECKLIST_DISMISS: 'day-checklist:dismiss',
   DAY_CHECKLIST_REOPEN: 'day-checklist:reopen',
   DAY_CHECKLIST_SHOW: 'day-checklist:show',
+  DAY_CHECKLIST_ITEMS_GET: 'day-checklist:items:get',
 } as const
 
 // --- Day Checklist (Start-of-Day / End-of-Day) ---

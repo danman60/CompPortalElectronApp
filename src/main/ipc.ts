@@ -23,6 +23,7 @@ import * as wifiDisplay from './services/wifiDisplay'
 import * as chatBridge from './services/chatBridge'
 import * as brandScraper from './services/brandScraper'
 import * as dayChecklist from './services/dayChecklist'
+import * as dayChecklistItems from './services/dayChecklistItems'
 import { checkAndRecover } from './services/crashRecovery'
 import * as recovery from './services/recovery'
 import * as backup from './services/backup'
@@ -1498,6 +1499,10 @@ export function registerAllHandlers(): void {
 
   safeHandle(IPC_CHANNELS.DAY_CHECKLIST_REOPEN, (kind: unknown) => {
     return dayChecklist.manualReopen(kind as 'start' | 'end')
+  })
+
+  safeHandle(IPC_CHANNELS.DAY_CHECKLIST_ITEMS_GET, () => {
+    return dayChecklistItems.getItems()
   })
 
   // Start system monitor

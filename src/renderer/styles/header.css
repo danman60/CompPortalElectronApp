@@ -181,6 +181,38 @@
   background: rgba(59, 130, 246, 0.24);
 }
 
+/* Day-checklist header pills (☀️ Start-of-Day / 🌙 End-of-Day re-open).
+   Inline with Overlay/Settings — compact, dim background, hover lift. */
+.daychk-header-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+  line-height: 1.2;
+}
+
+.daychk-header-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.daychk-header-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.daychk-header-label {
+  font-size: 11px;
+}
+
 .settings-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);

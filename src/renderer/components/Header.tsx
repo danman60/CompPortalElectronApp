@@ -736,6 +736,30 @@ export default function Header(): React.ReactElement {
               wanted unified entry-point for stalled-pipe nudge. Now also
               kicks photo-import in addition to encode + upload. */}
           <button
+            className="daychk-header-btn"
+            onClick={() => {
+              (window.api as unknown as { dayChecklistReopen?: (kind: 'start' | 'end') => Promise<unknown> })
+                .dayChecklistReopen?.('start')
+                .catch(() => {})
+            }}
+            title="Re-open Start-of-Day checklist"
+          >
+            <span className="daychk-header-icon">{'☀️'}</span>
+            <span className="daychk-header-label">SoD</span>
+          </button>
+          <button
+            className="daychk-header-btn"
+            onClick={() => {
+              (window.api as unknown as { dayChecklistReopen?: (kind: 'start' | 'end') => Promise<unknown> })
+                .dayChecklistReopen?.('end')
+                .catch(() => {})
+            }}
+            title="Re-open End-of-Day checklist"
+          >
+            <span className="daychk-header-icon">{'\u{1F319}'}</span>
+            <span className="daychk-header-label">EoD</span>
+          </button>
+          <button
             className="compact-toggle-btn"
             onClick={handleOverlayMode}
             title="Hide main window and show floating always-on-top panels over OBS"

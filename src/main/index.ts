@@ -26,6 +26,7 @@ import * as tether from './services/tether'
 import * as wifiDisplay from './services/wifiDisplay'
 import * as chatBridge from './services/chatBridge'
 import * as dayChecklist from './services/dayChecklist'
+import * as dayChecklistItems from './services/dayChecklistItems'
 import * as controlRoomBridge from './services/controlRoomBridge'
 import { checkAndRecover } from './services/crashRecovery'
 // Static imports so electron-vite bundles the service into the main chunk.
@@ -601,6 +602,14 @@ app.whenReady().then(async () => {
             logger.app.warn(`dayChecklist start-of-day fire failed: ${err instanceof Error ? err.message : err}`)
           }
         }, 3000)
+
+        // Boot the config-driven checklist-items poller now that the share
+        // code is resolved (so the first fetch has Bearer credentials).
+        try {
+          dayChecklistItems.startPolling()
+        } catch (err) {
+          logger.app.warn(`dayChecklistItems.startPolling failed: ${err instanceof Error ? err.message : err}`)
+        }
       })
       .catch((err) => {
         logger.app.warn(`Share code resolve failed: ${err instanceof Error ? err.message : err}`)
@@ -613,6 +622,14 @@ app.whenReady().then(async () => {
         logger.app.warn(`dayChecklist start-of-day fire failed: ${err instanceof Error ? err.message : err}`)
       }
     }, 4000)
+    // Even with no share code, start the items poller so it hydrates cache /
+    // defaults. It'll skip the actual fetch silently until a connection
+    // resolves.
+    try {
+      dayChecklistItems.startPolling()
+    } catch (err) {
+      logger.app.warn(`dayChecklistItems.startPolling failed: ${err instanceof Error ? err.message : err}`)
+    }
   }
 
   // Run startup validation (after window is ready so we can send report to renderer)

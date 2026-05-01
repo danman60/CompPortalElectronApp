@@ -260,6 +260,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_DISMISS, date, kind),
   dayChecklistReopen: (kind: 'start' | 'end') =>
     ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_REOPEN, kind),
+  dayChecklistItemsGet: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.DAY_CHECKLIST_ITEMS_GET),
 
   // Event listeners (main → renderer)
   on: (channel: string, callback: (...args: unknown[]) => void) => {

@@ -20,9 +20,14 @@ import '../styles/day-checklist.css'
 interface ChecklistItem {
   id: string
   label: string
+  detail?: string
 }
 
-const ITEMS: ChecklistItem[] = [
+/**
+ * Hardcoded fallback for first-launch / IPC failure paths. Mirrors the
+ * defaults in src/main/services/dayChecklistItems.ts — keep both in sync.
+ */
+const DEFAULT_ITEMS: ChecklistItem[] = [
   { id: 'stream-live', label: 'Start the live stream (OBS) ~half hour to show' },
   { id: 'tvs-on', label: 'TVs on → app bookmark 5 (stream must be live first)' },
   { id: 'cameras', label: 'Set up cameras' },
@@ -41,6 +46,7 @@ type RenderAPI = {
   dayChecklistGet: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
   dayChecklistSetItem: (date: string, kind: 'start' | 'end', itemId: string, value: DayChecklistItemState) => Promise<DayChecklistDayState>
   dayChecklistDismiss: (date: string, kind: 'start' | 'end') => Promise<DayChecklistDayState>
+  dayChecklistItemsGet?: () => Promise<{ start: ChecklistItem[]; end: ChecklistItem[] } | null>
   listCameraOffsets?: () => Promise<Record<string, CameraOffsetEntry>>
   clearCameraOffsets?: () => Promise<{ ok: boolean }>
   on: (channel: string, cb: (...args: unknown[]) => void) => () => void
@@ -64,6 +70,7 @@ export default function StartOfDayModal(): React.ReactElement | null {
   const [date, setDate] = useState<string>('')
   const [scheduledDay, setScheduledDay] = useState<string | null>(null)
   const [itemStates, setItemStates] = useState<Record<string, DayChecklistItemState>>({})
+  const [items, setItems] = useState<ChecklistItem[]>(DEFAULT_ITEMS)
   const [staleOffsets, setStaleOffsets] = useState<Record<string, CameraOffsetEntry>>({})
   const [offsetsCleared, setOffsetsCleared] = useState<boolean>(false)
 
@@ -77,6 +84,16 @@ export default function StartOfDayModal(): React.ReactElement | null {
       setDate(ev.date)
       setScheduledDay(ev.scheduledDay)
       setOffsetsCleared(false)
+      // Re-fetch items each SHOW so CompPortal edits take effect on next reopen.
+      if (api.dayChecklistItemsGet) {
+        api.dayChecklistItemsGet().then((res) => {
+          if (res && Array.isArray(res.start) && res.start.length > 0) {
+            setItems(res.start)
+          } else {
+            setItems(DEFAULT_ITEMS)
+          }
+        }).catch(() => setItems(DEFAULT_ITEMS))
+      }
       api.dayChecklistGet(ev.date, 'start').then((d) => {
         setItemStates(d.items || {})
       }).catch(() => {})
@@ -137,10 +154,10 @@ export default function StartOfDayModal(): React.ReactElement | null {
 
   if (!visible) return null
 
-  const totalItems = ITEMS.length
-  const checkedCount = ITEMS.filter((i) => itemStates[i.id] === 'checked').length
-  const skippedCount = ITEMS.filter((i) => itemStates[i.id] === 'skipped').length
-  const naCount = ITEMS.filter((i) => itemStates[i.id] === 'na').length
+  const totalItems = items.length
+  const checkedCount = items.filter((i) => itemStates[i.id] === 'checked').length
+  const skippedCount = items.filter((i) => itemStates[i.id] === 'skipped').length
+  const naCount = items.filter((i) => itemStates[i.id] === 'na').length
   const openCount = totalItems - checkedCount - skippedCount - naCount
 
   return (
@@ -200,7 +217,7 @@ export default function StartOfDayModal(): React.ReactElement | null {
         )}
 
         <div className="daychk-list">
-          {ITEMS.map((item) => {
+          {items.map((item) => {
             const s = itemStates[item.id] || 'open'
             const klass = `daychk-item ${s === 'checked' ? 'checked' : s === 'skipped' ? 'skipped' : s === 'na' ? 'na' : ''}`
             return (
@@ -209,6 +226,9 @@ export default function StartOfDayModal(): React.ReactElement | null {
                   <div className="daychk-item-label" onClick={() => cycleState(item.id)} style={{ cursor: 'pointer' }}>
                     {item.label}
                   </div>
+                  {item.detail && (
+                    <div className="daychk-item-deadline">{item.detail}</div>
+                  )}
                 </div>
                 <div className="daychk-state-btns">
                   <button
