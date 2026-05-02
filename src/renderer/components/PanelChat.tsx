@@ -51,7 +51,23 @@ export default function PanelChat(): React.ReactElement {
     try { await (window.api as any)?.chatPin?.(id) } catch { /* ignore */ }
   }
   async function handleUnpin(id: string): Promise<void> {
+    const optimistic = chat.pinned.filter((p) => p.id !== id)
+    setChatPinned(optimistic)
     try { await (window.api as any)?.chatUnpin?.(id) } catch { /* ignore */ }
+  }
+  async function handleHide(id: string, name: string): Promise<void> {
+    if (!window.confirm(`Hide message from "${name}"? Already-broadcast viewers won't see it removed, but reloads will be clean.`)) return
+    try { await (window.api as any)?.chatHideMessage?.(id) } catch { /* ignore */ }
+  }
+  async function handleBan(name: string, fingerprint: string | undefined): Promise<void> {
+    if (!window.confirm(`Ban "${name}"? All future messages from this author will be silently rejected, and existing messages from them will be hidden.`)) return
+    try {
+      await (window.api as any)?.chatBanAuthor?.({
+        authorName: name,
+        fingerprint: fingerprint ?? null,
+        hideExisting: true,
+      })
+    } catch { /* ignore */ }
   }
 
   const pinnedIds = new Set(chat.pinned.map((p) => p.id))
@@ -108,13 +124,29 @@ export default function PanelChat(): React.ReactElement {
                 </div>
                 <div className="panel-chat-text">{msg.text}</div>
               </div>
-              <button
-                className="panel-chat-pin-btn"
-                onClick={() => (pinned ? handleUnpin(msg.id) : handlePin(msg.id))}
-                title={pinned ? 'Unpin' : 'Pin'}
-              >
-                {pinned ? '\u2605' : '\u2606'}
-              </button>
+              <div className="panel-chat-actions">
+                <button
+                  className="panel-chat-pin-btn"
+                  onClick={() => (pinned ? handleUnpin(msg.id) : handlePin(msg.id))}
+                  title={pinned ? 'Unpin' : 'Pin'}
+                >
+                  {pinned ? '\u2605' : '\u2606'}
+                </button>
+                <button
+                  className="panel-chat-hide-btn"
+                  onClick={() => handleHide(msg.id, msg.name || 'anon')}
+                  title="Hide message (soft delete)"
+                >
+                  {'\u{1F5D1}'}
+                </button>
+                <button
+                  className="panel-chat-ban-btn"
+                  onClick={() => handleBan(msg.name || 'anon', (msg as any).fingerprint)}
+                  title="Ban author (hide all + block future)"
+                >
+                  {'\u{1F6AB}'}
+                </button>
+              </div>
             </div>
           )
         })}
