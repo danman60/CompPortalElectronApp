@@ -98,6 +98,51 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* ── Graphics section — Feature Card buttons (2026-05-04) ── */
+.oc-graphics-section {
+  padding: 8px 8px 10px;
+}
+.oc-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.oc-graphics-row {
+  display: flex;
+  gap: 8px;
+}
+.oc-graphics-btn {
+  flex: 1;
+  padding: 10px 12px;
+  background: rgba(99, 102, 234, 0.08);
+  color: var(--text-primary);
+  border: 1px solid rgba(99, 102, 234, 0.4);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.oc-graphics-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 234, 0.18);
+  border-color: rgba(99, 102, 234, 0.7);
+}
+.oc-graphics-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.oc-graphics-btn.is-live {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: #fbbf24;
+  color: #fde68a;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.35);
+}
+
 /* ── Inline Chat Strip — sits under anim params row ── */
 .ic-strip-wrap {
   padding: 6px 8px;
@@ -217,6 +262,58 @@
   letter-spacing: 0.5px;
   color: var(--accent);
   flex-shrink: 0;
+}
+
+.ic-strip-entry {
+  font-size: 9px;
+  font-weight: 700;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+.ic-strip-entry.estimated {
+  color: #d4d4aa;
+  border-color: rgba(212, 212, 170, 0.3);
+  background: rgba(212, 212, 170, 0.06);
+  font-style: italic;
+}
+
+.ic-strip-time {
+  font-size: 9px;
+  color: var(--text-muted, #888);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ic-strip-hide-btn,
+.ic-strip-ban-btn {
+  background: transparent;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 4px;
+  color: #f87171;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.ic-strip-ban-btn {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.ic-strip-hide-btn:hover {
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.ic-strip-ban-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
 }
 
 .ic-strip-empty {

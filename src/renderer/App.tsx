@@ -15,6 +15,7 @@ import StartOfDayModal from './components/StartOfDayModal'
 import EndOfDayModal from './components/EndOfDayModal'
 import AudioAuditBanner from './components/AudioAuditBanner'
 import ReassignPopover from './components/ReassignPopover'
+import MoveAfterPopover from './components/MoveAfterPopover'
 import './styles/app.css'
 
 function HardeningBanners(): React.ReactElement | null {
@@ -1169,14 +1170,14 @@ export default function App(): React.ReactElement {
       <DriveAlert />
       <OrphanReview />
       <RecordingOverrunWarning />
-      <AutoToggleToast />
+      {/* Build #9 item #4: AutoToggleToast / ReconcileToast / StartupToast /
+          ImportSummaryToast retired into EventLogPanel per operator decision
+          2026-05-05. Kept (interactive / modal-class): OffsetConfirmToast,
+          MissingPhotosToast, AudioAuditBanner (warn/error), DriveAlert. */}
       <ImportBusyBanner />
       <OffsetConfirmToast />
       <RerecordDecisionModal />
       <MissingPhotosToast />
-      <ReconcileToast />
-      <StartupToast />
-      <ImportSummaryToast />
       <HardeningBanners />
       <FirstRunSetup />
       <ClockSyncReminder />
@@ -1184,6 +1185,7 @@ export default function App(): React.ReactElement {
       <EndOfDayModal />
       <AudioAuditBanner />
       <ReassignPopover />
+      <MoveAfterPopover />
     </div>
   )
 }

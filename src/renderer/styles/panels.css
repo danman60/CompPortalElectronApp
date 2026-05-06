@@ -413,17 +413,35 @@ html, body {
 
 .panel-chat-pin-btn {
   background: transparent;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
   color: var(--text-muted, #9ca3af);
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 4px;
+  font-size: 13px;
+  padding: 1px 5px;
   flex-shrink: 0;
+  opacity: 0.55;
+  transition: opacity 120ms, border-color 120ms, background 120ms;
 }
-
-.panel-chat-pin-btn:hover {
-  color: var(--stream-purple);
+.panel-chat-pin-btn:hover { opacity: 1; }
+/* build9o (Item #11) — destination-coloured active states */
+.panel-chat-pin-btn.pin-video.active {
+  opacity: 1;
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(167, 139, 250, 0.18);
 }
+.panel-chat-pin-btn.pin-stream.active {
+  opacity: 1;
+  border-color: rgba(110, 231, 183, 0.55);
+  background: rgba(110, 231, 183, 0.18);
+}
+.panel-chat-pin-badge {
+  font-size: 11px;
+  margin-left: 4px;
+  opacity: 0.85;
+}
+.panel-chat-pin-badge.pin-video { filter: drop-shadow(0 0 4px rgba(167,139,250,0.55)); }
+.panel-chat-pin-badge.pin-stream { filter: drop-shadow(0 0 4px rgba(110,231,183,0.55)); }
 
 .panel-chat-actions {
   display: flex;

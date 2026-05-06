@@ -13,6 +13,7 @@ import * as ffmpegService from './services/ffmpeg'
 import * as uploadService from './services/upload'
 import * as photoService from './services/photos'
 import * as overlay from './services/overlay'
+import * as featureCard from './services/featureCard'
 import * as wsHub from './services/wsHub'
 import * as systemMonitor from './services/systemMonitor'
 import * as jobQueue from './services/jobQueue'
@@ -30,6 +31,7 @@ import * as backup from './services/backup'
 import * as streamDeckPlugin from './services/streamDeckPlugin'
 import * as overlayPanels from './services/overlayPanels'
 import * as mediaReconciler from './services/mediaReconciler'
+import * as events from './services/events'
 import { sendToRenderer } from './ipcUtil'
 import { logger } from './logger'
 
@@ -825,6 +827,17 @@ export function registerAllHandlers(): void {
     overlay.hideLowerThird()
   })
 
+  safeHandle(IPC_CHANNELS.OVERLAY_FIRE_FEATURE_CARD, async (mode: unknown) => {
+    const m = (mode === 'thatWas' ? 'thatWas' : 'upNext') as import('../shared/types').OverlayFeatureCardMode
+    logIPC(IPC_CHANNELS.OVERLAY_FIRE_FEATURE_CARD, { mode: m })
+    await featureCard.fire(m)
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_HIDE_FEATURE_CARD, async () => {
+    logIPC(IPC_CHANNELS.OVERLAY_HIDE_FEATURE_CARD)
+    await featureCard.hide()
+  })
+
   safeHandle(IPC_CHANNELS.OVERLAY_GET_STATE, () => {
     return { ...overlay.getOverlayState(), layout: overlay.getLayout(), autoFireEnabled: overlay.getAutoFirePersisted() }
   })
@@ -846,6 +859,12 @@ export function registerAllHandlers(): void {
     return overlay.getOverlayState().ticker
   })
 
+  safeHandle(IPC_CHANNELS.OVERLAY_SET_LOWER_THIRD, (updates: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_SET_LOWER_THIRD)
+    overlay.setLowerThirdState(updates as Partial<import('../shared/types').OverlayLowerThirdState>)
+    return overlay.getOverlayState().lowerThird
+  })
+
   safeHandle(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON, (updates: unknown) => {
     logIPC(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON)
     overlay.setStartingSoon(updates as Partial<import('../shared/types').StartingSoonState>)
@@ -856,6 +875,35 @@ export function registerAllHandlers(): void {
     logIPC(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG)
     overlay.setAnimationConfig(updates as Partial<import('../shared/types').AnimationConfig>)
     return overlay.getOverlayState().animConfig
+  })
+
+  // 2026-05-04 unified depth — per-element style + named preset operations.
+  safeHandle(IPC_CHANNELS.OVERLAY_SET_ELEMENT_STYLE, (payload: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_SET_ELEMENT_STYLE)
+    const p = payload as { elementKey: any; partial: any }
+    overlay.setElementStyle(p.elementKey, p.partial || {})
+    return overlay.getOverlayState()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_SAVE_PRESET, (payload: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_SAVE_PRESET)
+    const p = payload as { elementKey: any; name: string }
+    overlay.saveElementPreset(p.elementKey, String(p.name || ''))
+    return overlay.getOverlayState()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_LOAD_PRESET, (payload: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_LOAD_PRESET)
+    const p = payload as { elementKey: any; name: string }
+    overlay.loadElementPreset(p.elementKey, String(p.name || ''))
+    return overlay.getOverlayState()
+  })
+
+  safeHandle(IPC_CHANNELS.OVERLAY_DELETE_PRESET, (payload: unknown) => {
+    logIPC(IPC_CHANNELS.OVERLAY_DELETE_PRESET)
+    const p = payload as { elementKey: any; name: string }
+    overlay.deleteElementPreset(p.elementKey, String(p.name || ''))
+    return overlay.getOverlayState()
   })
 
   safeHandle(IPC_CHANNELS.OVERLAY_SET_LOGO, async () => {
@@ -992,6 +1040,21 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.CHAT_CLEAR_PINNED, () => {
     logIPC(IPC_CHANNELS.CHAT_CLEAR_PINNED)
     chatBridge.clearPinned()
+  })
+
+  // build9o (Item #11) — livestream-only pin destination
+  safeHandle(IPC_CHANNELS.CHAT_LIVESTREAM_PIN, async (id: unknown) => {
+    logIPC(IPC_CHANNELS.CHAT_LIVESTREAM_PIN, { id })
+    return chatBridge.livestreamPinMessage(id as string)
+  })
+
+  safeHandle(IPC_CHANNELS.CHAT_LIVESTREAM_UNPIN, async (id: unknown) => {
+    logIPC(IPC_CHANNELS.CHAT_LIVESTREAM_UNPIN, { id })
+    return chatBridge.livestreamUnpinMessage(id as string)
+  })
+
+  safeHandle(IPC_CHANNELS.CHAT_GET_LIVESTREAM_PINNED, () => {
+    return chatBridge.getLivestreamPinned()
   })
 
   safeHandle(IPC_CHANNELS.CHAT_POST_MESSAGE, async (payload: unknown) => {
@@ -1284,6 +1347,11 @@ export function registerAllHandlers(): void {
   // Operator wanted "kick any stalled phase" — previously only ffmpeg + upload
   // queues were kicked. Now also re-fires auto-import for any mounted camera
   // drive (idempotent via dedupByDb + importLock).
+  safeHandle(IPC_CHANNELS.RECONCILE_LOCAL_STATUS, () => {
+    logIPC(IPC_CHANNELS.RECONCILE_LOCAL_STATUS)
+    return uploadService.reconcileLocalStatusFromMediaPackage()
+  })
+
   safeHandle(IPC_CHANNELS.JOB_QUEUE_KICK, async () => {
     logIPC(IPC_CHANNELS.JOB_QUEUE_KICK)
     let importKicked = 0
@@ -1350,6 +1418,11 @@ export function registerAllHandlers(): void {
         const upload = await import('./services/upload')
         upload.startUploads()
       } catch {}
+      const stateBool = kind === 'encode' ? next.behavior.autoEncodeRecordings : next.behavior.autoUploadAfterEncoding
+      events.emit('auto-toggle.changed', {
+        kind,
+        state: stateBool ? 'ON' : 'OFF',
+      })
       return {
         ok: true,
         autoEncode: next.behavior.autoEncodeRecordings,
@@ -1503,6 +1576,13 @@ export function registerAllHandlers(): void {
 
   safeHandle(IPC_CHANNELS.DAY_CHECKLIST_ITEMS_GET, () => {
     return dayChecklistItems.getItems()
+  })
+
+  // Build #9 item #4: backfill recent events for the EventLogPanel on mount.
+  safeHandle(IPC_CHANNELS.EVENTS_GET_RECENT, (limit: unknown, kind: unknown) => {
+    const lim = typeof limit === 'number' && limit > 0 ? Math.min(limit, 2000) : 500
+    const kindFilter = typeof kind === 'string' && kind ? kind : undefined
+    return events.getRecent(lim, kindFilter)
   })
 
   // Start system monitor

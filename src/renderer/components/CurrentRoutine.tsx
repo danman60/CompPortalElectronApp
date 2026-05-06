@@ -36,7 +36,12 @@ export default function CurrentRoutine(): React.ReactElement {
 
   return (
     <div className="section">
-      <div className="section-title">Current Routine</div>
+      <div className="section-title">
+        {competition?.name && (
+          <span className="section-title-comp">{competition.name} · </span>
+        )}
+        Current Routine
+      </div>
       <div className={`routine-card ${obsState.isRecording ? 'is-recording' : ''}`}>
         <div className="routine-top">
           <div className="routine-number">{current.entryNumber}</div>

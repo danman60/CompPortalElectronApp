@@ -15,6 +15,7 @@ import { broadcastFullState, broadcastRoutineUpdate } from './recording'
 import { ThrottleStream } from '../utils/throttle'
 import * as importManifest from './importManifest'
 import { generatePhotoThumbnail } from './ffmpeg'
+import * as events from './events'
 import os from 'os'
 
 interface UploadPayload {
@@ -613,6 +614,12 @@ async function processLoop(): Promise<void> {
       state.updateRoutineStatus(payload.routineId, 'uploading', { uploadRunId })
       activeUploadRoutineIds.add(payload.routineId)
       broadcastRoutineUpdate(payload.routineId)
+      const allUploadJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
+      events.emit('upload.started', {
+        routineId: payload.routineId,
+        entryNumber: routine.entryNumber,
+        fileCount: allUploadJobs.length,
+      })
     }
 
     // Read the current runId for this attempt (just set above, or already set by a
@@ -916,6 +923,15 @@ async function processLoop(): Promise<void> {
             filesCompleted: updatedJobs.length,
             filesTotal: updatedJobs.length,
           })
+          {
+            const compFinal = state.getCompetition()
+            const rFinal = compFinal?.routines.find((r) => r.id === payload.routineId)
+            events.emit('upload.completed', {
+              routineId: payload.routineId,
+              entryNumber: rFinal?.entryNumber ?? null,
+              allMedia: true,
+            })
+          }
           logger.upload.info(`All uploads complete for routine ${payload.routineId}`)
           // T-V7-26: fire-and-forget post-record reconcile for this routine
           // to catch plugin/complete partial failures or any drift the
@@ -936,6 +952,15 @@ async function processLoop(): Promise<void> {
           state.updateRoutineStatus(payload.routineId, 'encoded', {
             error: `Files uploaded but completion call failed: ${errMsg}`,
           })
+          {
+            const compErr = state.getCompetition()
+            const rErr = compErr?.routines.find((r) => r.id === payload.routineId)
+            events.emit('upload.failed', {
+              routineId: payload.routineId,
+              entryNumber: rErr?.entryNumber ?? null,
+              error: errMsg,
+            })
+          }
           activeUploadRoutineIds.delete(payload.routineId)
           broadcastRoutineUpdate(payload.routineId)
           sendProgress(payload.routineId, {
@@ -1445,6 +1470,19 @@ async function callPluginComplete(info: {
         // without waiting for another broadcast.
         const fresh = state.getCompetition()?.routines.find(r => r.id === info.routineId)
         if (fresh) broadcastRoutineUpdate(fresh)
+
+        // When the portal returns 'published' AND the local queue has nothing
+        // pending/running for this routine, transition routine.status to
+        // 'uploaded'. Without this, the row stays "Uploading X%" forever even
+        // though pkg is published — the divergence operator hit on 2026-05-03.
+        if (returned === 'published' && fresh && fresh.status === 'uploading') {
+          const pendingForRoutine = jobQueue
+            .getByRoutine(info.routineId)
+            .filter((j) => j.type === 'upload' && (j.status === 'pending' || j.status === 'running')).length
+          if (pendingForRoutine === 0) {
+            state.updateRoutineStatus(info.routineId, 'uploaded')
+          }
+        }
       }
     } catch {
       // Non-fatal — display lag is the only consequence.
@@ -1897,6 +1935,43 @@ export async function autoResumeUnfinished(): Promise<ResumeUnfinishedReport> {
     endpointAvailable: r.endpointAvailable,
     error: r.skippedReason,
   }
+}
+
+/**
+ * One-shot reconciler that flips local routine.status from 'uploading' to
+ * 'uploaded' for routines whose mediaPackageStatus is already 'published' on
+ * the portal AND whose local upload queue has nothing pending/running.
+ *
+ * Background (incident 2026-05-03 23:17 EDT): six routines on DART showed
+ * "Uploading 95%" rows with green "PORTAL PUBLISHED" pills and an empty
+ * upload queue. callPluginComplete had updated mediaPackageStatus but never
+ * transitioned routine.status, so the row text stayed stuck. Every operator
+ * "kick" hit "Starting upload queue, 0 jobs pending".
+ *
+ * Called once at app startup after state hydration, and via the
+ * RECONCILE_LOCAL_STATUS IPC for a manual button.
+ */
+export function reconcileLocalStatusFromMediaPackage(): { unstuck: number } {
+  const comp = state.getCompetition()
+  if (!comp) return { unstuck: 0 }
+  let unstuck = 0
+  for (const r of comp.routines) {
+    if (r.status !== 'uploading') continue
+    if (r.mediaPackageStatus !== 'published') continue
+    const pending = jobQueue
+      .getByRoutine(r.id)
+      .filter((j) => j.type === 'upload' && (j.status === 'pending' || j.status === 'running')).length
+    if (pending > 0) continue
+    state.updateRoutineStatus(r.id, 'uploaded')
+    logger.upload.info(
+      `Unstuck routine ${r.entryNumber} "${r.routineTitle}": pkg=published + queue empty → uploaded`,
+    )
+    unstuck++
+  }
+  if (unstuck > 0) {
+    logger.upload.info(`reconcileLocalStatusFromMediaPackage: unstuck ${unstuck} routine(s)`)
+  }
+  return { unstuck }
 }
 
 export function getQueueLength(): number {

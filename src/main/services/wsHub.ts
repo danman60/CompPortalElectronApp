@@ -3,6 +3,7 @@ import * as obs from './obs'
 import * as stateService from './state'
 import * as overlay from './overlay'
 import * as recording from './recording'
+import * as slowZoom from './slowZoom'
 import { WSCommandMessage, WSStateMessage, AudioLevel } from '../../shared/types'
 import * as chatBridge from './chatBridge'
 import { logger } from '../logger'
@@ -91,8 +92,31 @@ export function start(): void {
   })
   obs.setOnAudioLevels((levels) => broadcastAudioLevels(levels))
   chatBridge.setOnPinChange(() => broadcastState())
-  // Refresh transition cache when OBS reports a transition change.
-  obs.setOnTransitionChanged(() => refreshTransitionCache())
+  // Refresh transition cache when OBS reports a transition change. ALSO enforce
+  // per-transition duration from settings.obs.transitionDurations — OBS stores
+  // duration globally so we re-apply the configured ms whenever the current
+  // transition changes (via Stream Deck cycle, OBS UI, or programmatic set).
+  obs.setOnTransitionChanged((name) => {
+    refreshTransitionCache()
+    if (!name) return
+    const settings = getSettings()
+    const map = parseDurationMap(settings.obs?.transitionDurations || '')
+    const ms = map.get(name)
+    if (typeof ms === 'number' && ms > 0) {
+      void obs.setCurrentTransitionDuration(ms)
+        .then(() => logger.app.info(`Transition "${name}" → enforced duration ${ms}ms`))
+        .catch((err) => logger.app.warn(`enforce duration for "${name}" failed: ${err instanceof Error ? err.message : err}`))
+    }
+    // Crash Zoom blur gate: enable the listed filters ONLY while Crash Zoom is
+    // current; disable for any other transition. Keeps the blur animator from
+    // firing on Slow Zoom (or any other Move-kind transition that may have
+    // unmatched sources for unrelated reasons).
+    const crashFilters = parseFilterList(settings.obs?.crashZoomBlurFilters || '')
+    const isCrashZoom = name === 'Crash Zoom'
+    for (const { source, filter } of crashFilters) {
+      void obs.setSourceFilterEnabled(source, filter, isCrashZoom)
+    }
+  })
 }
 
 export function stop(): void {
@@ -179,6 +203,27 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
           await obs.saveReplay()
         }
         break
+      case 'slowZoomWideToggle':
+        await slowZoom.triggerWide()
+        break
+      case 'slowZoomTightToggle':
+        await slowZoom.triggerTight()
+        break
+      case 'featureCardUpNext': {
+        const fc = await import('./featureCard')
+        await fc.fire('upNext')
+        break
+      }
+      case 'featureCardThatWas': {
+        const fc = await import('./featureCard')
+        await fc.fire('thatWas')
+        break
+      }
+      case 'featureCardHide': {
+        const fc = await import('./featureCard')
+        await fc.hide()
+        break
+      }
       case 'toggleOverlay':
         if (cmd.element) {
           overlay.toggleElement(cmd.element)
@@ -258,11 +303,31 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
         break
       }
       case 'cycleTransition': {
-        const list = await obs.getTransitionList()
-        if (list.length === 0) break
+        const apiList = await obs.getTransitionList()
+        if (apiList.length === 0) break
+        // Apply preferred order from settings.obs.transitionCycleOrder. Names
+        // listed (and present in OBS) come first, in the listed order; any
+        // remaining transitions follow in OBS API order. Operator-set order
+        // wins because OBS API order is unstable as transitions get added.
+        const preferredRaw = (getSettings().obs?.transitionCycleOrder || '').trim()
+        const preferred = preferredRaw
+          ? preferredRaw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+          : []
+        const apiSet = new Set(apiList)
+        const ordered: string[] = []
+        const used = new Set<string>()
+        for (const name of preferred) {
+          if (apiSet.has(name) && !used.has(name)) {
+            ordered.push(name)
+            used.add(name)
+          }
+        }
+        for (const name of apiList) {
+          if (!used.has(name)) ordered.push(name)
+        }
         const cur = await obs.getCurrentTransitionName()
-        const idx = cur ? list.indexOf(cur) : -1
-        const next = list[(idx + 1 + list.length) % list.length]
+        const idx = cur ? ordered.indexOf(cur) : -1
+        const next = ordered[(idx + 1 + ordered.length) % ordered.length]
         await obs.setCurrentTransitionByName(next)
         logger.app.info(`Stream Deck cycled OBS transition: ${cur ?? '(none)'} → ${next}`)
         break
@@ -280,6 +345,57 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
         logger.app.info('Stream Deck kicked the queue')
         break
       }
+
+      // CompPortal admin livestream parity (2026-05-05). Explicit overlay
+      // verbs that the page queues; CSE pulls them via controlRoomBridge
+      // pollCommands and forwards here. Each routes to the existing
+      // overlay.* / ss* surface so behavior matches a renderer button click.
+      case 'overlayFireLT': {
+        overlay.fireLowerThird()
+        break
+      }
+      case 'overlayHideLT': {
+        overlay.hideLowerThird()
+        break
+      }
+      case 'overlaySetTicker': {
+        const p = (cmd.payload || {}) as { visible?: boolean; text?: string; speed?: number }
+        overlay.setTicker(p)
+        break
+      }
+      case 'overlaySetStartingSoon': {
+        const p = (cmd.payload || {}) as { visible?: boolean; showCountdown?: boolean; countdownTarget?: string }
+        overlay.setStartingSoon(p)
+        break
+      }
+      case 'overlaySetAnimationConfig': {
+        const p = (cmd.payload || {}) as Parameters<typeof overlay.setAnimationConfig>[0]
+        overlay.setAnimationConfig(p)
+        break
+      }
+      case 'ssSetConfig': {
+        const updates = cmd.payload as Partial<import('../../shared/types').StartingSoonConfig> | undefined
+        if (updates) overlay.setSSConfig(updates)
+        break
+      }
+      case 'ssSavePreset': {
+        const preset = cmd.payload as import('../../shared/types').StartingSoonPreset | undefined
+        if (preset) overlay.saveSSPreset(preset)
+        break
+      }
+      case 'ssLoadPreset': {
+        const id = (cmd.payload as { id?: string } | undefined)?.id
+        if (!id) throw new Error('ssLoadPreset: payload.id required')
+        const result = overlay.loadSSPreset(id)
+        if (result === null) throw new Error(`ssLoadPreset: preset ${id} not found`)
+        break
+      }
+      case 'ssDeletePreset': {
+        const id = (cmd.payload as { id?: string } | undefined)?.id
+        if (!id) throw new Error('ssDeletePreset: payload.id required')
+        overlay.deleteSSPreset(id)
+        break
+      }
     }
     broadcastState()
   } catch (err) {
@@ -290,6 +406,35 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
 
 async function handleCommand(cmd: WSCommandMessage): Promise<void> {
   await executeCommand(cmd)
+}
+
+// Parse "source:filter,source:filter" list. Source names may contain colons
+// (uncommon) so we split on the LAST colon per pair. Empty/malformed pairs
+// are skipped silently.
+function parseFilterList(raw: string): { source: string; filter: string }[] {
+  const out: { source: string; filter: string }[] = []
+  for (const entry of raw.split(',')) {
+    const idx = entry.lastIndexOf(':')
+    if (idx <= 0) continue
+    const source = entry.slice(0, idx).trim()
+    const filter = entry.slice(idx + 1).trim()
+    if (source && filter) out.push({ source, filter })
+  }
+  return out
+}
+
+// Parse "name:ms,name:ms" pairs into a Map. Whitespace tolerant. Skips
+// malformed entries silently so a typo can't take down the rest of the map.
+function parseDurationMap(raw: string): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const entry of raw.split(',')) {
+    const idx = entry.lastIndexOf(':')
+    if (idx <= 0) continue
+    const name = entry.slice(0, idx).trim()
+    const ms = parseInt(entry.slice(idx + 1).trim(), 10)
+    if (name && Number.isFinite(ms) && ms > 0) out.set(name, ms)
+  }
+  return out
 }
 
 // Lightweight transition cache so buildStateMessage doesn't fire OBS calls

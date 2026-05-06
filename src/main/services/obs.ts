@@ -54,6 +54,11 @@ export function setOnTransitionChanged(cb: (name: string | null) => void): void 
   onTransitionChangedCb = cb
 }
 
+let onSceneChangedCb: ((name: string | null) => void) | null = null
+export function setOnSceneChanged(cb: (name: string | null) => void): void {
+  onSceneChangedCb = cb
+}
+
 // Fix 11: reconcile hook invoked after (re)sync so recording.ts can fix up orphan state
 type ReconcileCallback = (info: { outputActive: boolean; recordDirectory: string | null }) => void
 let onReconcileCb: ReconcileCallback | null = null
@@ -497,6 +502,60 @@ export async function getInputList(): Promise<string[]> {
   }
 }
 
+// --- Scene-item transform (used by slow-zoom service) ---
+
+export async function getSceneItemId(sceneName: string, sourceName: string): Promise<number | null> {
+  try {
+    const r = await obs.call('GetSceneItemId', { sceneName, sourceName })
+    return (r as { sceneItemId: number }).sceneItemId
+  } catch {
+    return null
+  }
+}
+
+export interface SceneItemTransform {
+  positionX: number
+  positionY: number
+  scaleX: number
+  scaleY: number
+  sourceWidth: number
+  sourceHeight: number
+  alignment: number
+}
+
+export async function getSceneItemTransform(
+  sceneName: string,
+  sceneItemId: number,
+): Promise<SceneItemTransform | null> {
+  try {
+    const r = await obs.call('GetSceneItemTransform', { sceneName, sceneItemId })
+    const t = (r as { sceneItemTransform: SceneItemTransform }).sceneItemTransform
+    return {
+      positionX: t.positionX,
+      positionY: t.positionY,
+      scaleX: t.scaleX,
+      scaleY: t.scaleY,
+      sourceWidth: t.sourceWidth,
+      sourceHeight: t.sourceHeight,
+      alignment: t.alignment,
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function setSceneItemTransform(
+  sceneName: string,
+  sceneItemId: number,
+  transform: { positionX: number; positionY: number; scaleX: number; scaleY: number },
+): Promise<void> {
+  await obs.call('SetSceneItemTransform', {
+    sceneName,
+    sceneItemId,
+    sceneItemTransform: transform,
+  })
+}
+
 // --- Scene transitions (item 7) ---
 
 // Cache of transitionName -> transitionKind, populated by getTransitionList().
@@ -533,6 +592,40 @@ export async function getCurrentTransitionName(): Promise<string | null> {
   } catch (err) {
     logger.obs.warn('GetCurrentSceneTransition failed:', err)
     return null
+  }
+}
+
+export async function getCurrentSceneName(): Promise<string | null> {
+  try {
+    const result: any = await obs.call('GetCurrentProgramScene')
+    return (result.currentProgramSceneName as string) ?? null
+  } catch (err) {
+    logger.obs.warn('GetCurrentProgramScene failed:', err)
+    return null
+  }
+}
+
+export async function setCurrentScene(name: string): Promise<void> {
+  try {
+    await obs.call('SetCurrentProgramScene', { sceneName: name })
+  } catch (err) {
+    logger.obs.warn(`SetCurrentProgramScene(${name}) failed:`, err)
+  }
+}
+
+export async function setCurrentTransitionDuration(durationMs: number): Promise<void> {
+  try {
+    await obs.call('SetCurrentSceneTransitionDuration', { transitionDuration: durationMs })
+  } catch (err) {
+    logger.obs.warn(`SetCurrentSceneTransitionDuration(${durationMs}) failed:`, err)
+  }
+}
+
+export async function setSourceFilterEnabled(sourceName: string, filterName: string, enabled: boolean): Promise<void> {
+  try {
+    await obs.call('SetSourceFilterEnabled', { sourceName, filterName, filterEnabled: enabled })
+  } catch (err) {
+    logger.obs.warn(`SetSourceFilterEnabled(${sourceName}/${filterName}=${enabled}) failed:`, err)
   }
 }
 
@@ -689,6 +782,12 @@ function registerOBSEvents(): void {
       sendToRenderer(IPC_CHANNELS.OBS_TRANSITION_CHANGED, { name })
       try { onTransitionChangedCb?.(name) } catch (err) {
         logger.obs.warn(`onTransitionChanged callback threw: ${err instanceof Error ? err.message : err}`)
+      }
+    }],
+    ['CurrentProgramSceneChanged', (event: any) => {
+      const name = (event?.sceneName as string) ?? null
+      try { onSceneChangedCb?.(name) } catch (err) {
+        logger.obs.warn(`onSceneChanged callback threw: ${err instanceof Error ? err.message : err}`)
       }
     }],
     // Auto-revert to Cut after ANY transition fires. Operator workflow: they

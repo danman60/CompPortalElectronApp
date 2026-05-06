@@ -89,6 +89,13 @@ interface GradientPresetDef {
 }
 
 const GRADIENT_PRESETS: GradientPresetDef[] = [
+  // Design-pro pack 2026-05-05 — listed first as recommended starting points
+  { id: 'slate-aurora', name: 'Slate Aurora', colors: ['#0a0e2a', '#1f1947', '#3b3585', '#4f4a9b'] },
+  { id: 'velvet-night', name: 'Velvet Night', colors: ['#0a0a0f', '#2a0a1f', '#4a0e2f', '#1a0a14'] },
+  { id: 'champagne-light', name: 'Champagne Light', colors: ['#f5f0e1', '#e8c87a', '#d4b48a', '#f0e8d5'] },
+  { id: 'cinematic-teal', name: 'Cinematic Teal', colors: ['#0a3344', '#1a6b8e', '#0a3344', '#0e1d2a'] },
+  { id: 'neutral-studio', name: 'Neutral Studio', colors: ['#1a1a1f', '#2d2d35', '#3a3a44', '#1a1a1f'] },
+  // Original palette
   { id: 'midnight-pulse', name: 'Midnight Pulse', colors: ['#0f0c29', '#302b63', '#24243e', '#667eea'] },
   { id: 'sunset-drift', name: 'Sunset Drift', colors: ['#f12711', '#f5af19', '#fc4a1a', '#f7b733'] },
   { id: 'ocean-wave', name: 'Ocean Wave', colors: ['#0077b6', '#00b4d8', '#023e8a', '#48cae4'] },
@@ -110,6 +117,80 @@ interface FontPairing {
   title: string
   subtitle: string
 }
+
+/* ── Pro Packs (design-pro pass 2026-05-05) ────────────────────────────────
+ * One-tap visual identities. Each pack ships a coherent gradient + typography
+ * + countdown weight + logo treatment combo so operator gets a designed
+ * starting point, then tweaks what they want from there.
+ */
+interface ProPack {
+  id: string
+  name: string
+  vibe: string
+  gradientPreset: GradientPreset
+  gradientAngle: number
+  titleFont: string
+  subtitleFont: string
+  countdownWeight: number
+  logoAnimation: 'pulse' | 'float' | 'fade-in-once' | 'breathing' | 'glow' | 'none'
+  titleColor: string
+  subtitleColor: string
+}
+
+const PRO_PACKS: ProPack[] = [
+  {
+    id: 'broadcast',
+    name: 'Broadcast',
+    vibe: 'Indigo cinematic, refined sans',
+    gradientPreset: 'slate-aurora',
+    gradientAngle: 135,
+    titleFont: 'Inter',
+    subtitleFont: 'Inter',
+    countdownWeight: 200,
+    logoAnimation: 'breathing',
+    titleColor: '#ffffff',
+    subtitleColor: '#c5cae9',
+  },
+  {
+    id: 'theater',
+    name: 'Theater',
+    vibe: 'Velvet wine, classical serif',
+    gradientPreset: 'velvet-night',
+    gradientAngle: 145,
+    titleFont: 'Cormorant Garamond',
+    subtitleFont: 'Montserrat',
+    countdownWeight: 300,
+    logoAnimation: 'glow',
+    titleColor: '#f8eedc',
+    subtitleColor: '#e3c89b',
+  },
+  {
+    id: 'festival',
+    name: 'Festival',
+    vibe: 'Cinematic teal, bold compressed',
+    gradientPreset: 'cinematic-teal',
+    gradientAngle: 120,
+    titleFont: 'Anton',
+    subtitleFont: 'Nunito',
+    countdownWeight: 700,
+    logoAnimation: 'pulse',
+    titleColor: '#ffffff',
+    subtitleColor: '#9bd1e2',
+  },
+  {
+    id: 'studio',
+    name: 'Studio',
+    vibe: 'Neutral corporate, geometric sans',
+    gradientPreset: 'neutral-studio',
+    gradientAngle: 135,
+    titleFont: 'Bebas Neue',
+    subtitleFont: 'Inter',
+    countdownWeight: 900,
+    logoAnimation: 'fade-in-once',
+    titleColor: '#ffffff',
+    subtitleColor: '#b8b8c8',
+  },
+]
 
 const FONT_PAIRINGS: FontPairing[] = [
   { id: 'modern-sans',       name: 'Modern Sans',      vibe: 'Clean, minimal',        title: 'Inter',              subtitle: 'Inter' },
@@ -220,6 +301,26 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
     setConfig(prev => {
       if (!prev) return prev
       const next = { ...prev, gradient: { ...prev.gradient, ...updates } }
+      pushConfig(next)
+      return next
+    })
+  }, [pushConfig])
+
+  // Pro Pack apply — design-pro pass 2026-05-05. Applies a coherent gradient
+  // + typography + countdown weight + logo animation in one update.
+  const applyProPack = useCallback((pack: ProPack) => {
+    setConfig(prev => {
+      if (!prev) return prev
+      const next: StartingSoonConfig = {
+        ...prev,
+        gradient: { ...prev.gradient, preset: pack.gradientPreset, angle: pack.gradientAngle },
+        titleFont: pack.titleFont,
+        subtitleFont: pack.subtitleFont,
+        titleColor: pack.titleColor,
+        subtitleColor: pack.subtitleColor,
+        countdownStyle: { ...prev.countdownStyle, fontWeight: pack.countdownWeight },
+        logo: { ...prev.logo, animation: pack.logoAnimation },
+      }
       pushConfig(next)
       return next
     })
@@ -673,6 +774,24 @@ export function StartingSoonEditor({ onClose }: { onClose: () => void }) {
         <div className="sse-right">
           {(selected === 'background' || selected === null) && (
             <>
+              <div className="sse-props-title">Pro Packs</div>
+              <div className="sse-props-section">
+                <div className="sse-section-label">One-tap design starts</div>
+                <div className="sse-pro-packs">
+                  {PRO_PACKS.map(pack => (
+                    <button
+                      key={pack.id}
+                      type="button"
+                      className="sse-pro-pack"
+                      onClick={() => applyProPack(pack)}
+                      title={pack.vibe}
+                    >
+                      <span className="sse-pro-pack-name">{pack.name}</span>
+                      <span className="sse-pro-pack-vibe">{pack.vibe}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="sse-props-title">Gradient Background</div>
               <div className="sse-props-section">
                 <div className="sse-section-label">Presets</div>

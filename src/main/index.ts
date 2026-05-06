@@ -11,6 +11,7 @@ import { IPC_CHANNELS } from '../shared/types'
 import * as obs from './services/obs'
 import * as recording from './services/recording'
 import * as overlay from './services/overlay'
+import * as featureCard from './services/featureCard'
 import * as wsHub from './services/wsHub'
 import * as hotkeys from './services/hotkeys'
 import * as jobQueue from './services/jobQueue'
@@ -39,6 +40,8 @@ import { runStartupChecks } from './services/startup'
 import { startDebugServer } from './services/debugServer'
 import * as mediaReconciler from './services/mediaReconciler'
 import * as photos from './services/photos'
+import * as events from './services/events'
+import { sendToRenderer } from './ipcUtil'
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
@@ -381,11 +384,21 @@ app.whenReady().then(async () => {
   // Load persisted state BEFORE creating window (so renderer gets correct data on first IPC)
   state.loadState()
 
+  // Build #9 item #4: stream every events.emit() to all renderer windows so
+  // EventLogPanel can render in real time. Wire BEFORE createWindow so emits
+  // during early startup (debugServer.started, etc) are not lost — they'll
+  // arrive at the renderer once it subscribes via the EVENTS_GET_RECENT
+  // backfill. Best-effort fanout; never throws.
+  events.setOnEmit((record) => {
+    try { sendToRenderer(IPC_CHANNELS.EVENT_STREAM, record) } catch { /* swallow */ }
+  })
+
   // Create window
   createWindow()
 
   // Start overlay + WebSocket hub
   overlay.startServer()
+  featureCard.init()
   wsHub.start()
 
   // Start chat bridge (connects to Supabase Realtime if share code already resolved)
@@ -411,6 +424,27 @@ app.whenReady().then(async () => {
   chatBridge.setOnMessagePinned((msg) => {
     try { overlay.fireChatMessage(msg) } catch (err) {
       logger.app.warn('overlay.fireChatMessage failed:', err instanceof Error ? err.message : String(err))
+    }
+  })
+  // build9o (Item #11) — livestream-only pin path. Push to renderer + WS
+  // clients so the chat panel UI + livestream player both reflect changes.
+  // Distinct from setOnMessagePinned (no overlay/OBS broadcast — that path
+  // is the burn-into-video destination).
+  chatBridge.setOnLivestreamPinChange(() => {
+    mainWindow?.webContents.send(
+      IPC_CHANNELS.CHAT_LIVESTREAM_PIN_CHANGED,
+      chatBridge.getLivestreamPinned(),
+    )
+    try { wsHub.broadcastState() } catch (err) {
+      logger.app.warn(`wsHub broadcast on livestream-pin-change failed: ${err instanceof Error ? err.message : err}`)
+    }
+  })
+  // Burlington UDC 2026-05-02: when the chat-fire overlay auto-hides, also unpin
+  // the message so the operator UI's "PINNED" badge clears in lockstep with the
+  // audience-visible bubble. Operator complaint: UI state didn't match on-air state.
+  overlay.setOnChatFireAutoHide((msgId) => {
+    try { chatBridge.unpinMessage(msgId) } catch (err) {
+      logger.app.warn('chatBridge.unpinMessage from auto-hide failed:', err instanceof Error ? err.message : String(err))
     }
   })
 
@@ -506,18 +540,30 @@ app.whenReady().then(async () => {
           const msg = err instanceof Error ? err.message : String(err)
           logger.app.warn(`Startup schedule refetch failed, continuing with persisted state: ${msg}`)
         }
-        // Fix orphaned 'uploading' routines (job queue is in-memory, lost on restart)
+        // Fix orphaned 'uploading' routines (job queue is in-memory, lost on restart).
+        // 2026-05-04: split into two paths so we don't lie about state. If the
+        // portal already knows the pkg is 'published', the routine IS done —
+        // demoting to 'encoded' falsely implies upload work remains. Route those
+        // to 'uploaded'. Everything else still falls back to 'encoded' for the
+        // standard re-upload pass.
         const comp = state.getCompetition()
         if (comp) {
-          let resetCount = 0
+          let toUploaded = 0
+          let toEncoded = 0
           for (const r of comp.routines) {
-            if (r.status === 'uploading') {
+            if (r.status !== 'uploading') continue
+            if (r.mediaPackageStatus === 'published') {
+              state.updateRoutineStatus(r.id, 'uploaded')
+              toUploaded++
+            } else {
               state.updateRoutineStatus(r.id, 'encoded')
-              resetCount++
+              toEncoded++
             }
           }
-          if (resetCount > 0) {
-            logger.app.info(`Reset ${resetCount} orphaned 'uploading' routines to 'encoded'`)
+          if (toUploaded > 0 || toEncoded > 0) {
+            logger.app.info(
+              `Reset orphaned 'uploading' routines: ${toUploaded} → uploaded (pkg=published), ${toEncoded} → encoded`,
+            )
             recording.broadcastFullState()
           }
         }
@@ -580,6 +626,20 @@ app.whenReady().then(async () => {
           if (pendingUploads > 0) {
             logger.app.info(`Boot: waking upload worker — ${pendingUploads} pending jobs in persisted queue`)
             uploadService.startUploads()
+          }
+
+          // Incident 2026-05-03 23:17 EDT — flip routine.status 'uploading'
+          // → 'uploaded' for routines whose pkg is already 'published' on the
+          // portal AND have an empty local queue. Fixes the divergence where
+          // callPluginComplete updated mediaPackageStatus but never
+          // transitioned routine.status.
+          try {
+            const r = uploadService.reconcileLocalStatusFromMediaPackage()
+            if (r.unstuck > 0) {
+              logger.app.info(`Boot: unstuck ${r.unstuck} routine(s) via local-status reconcile`)
+            }
+          } catch (err) {
+            logger.app.warn(`Boot: local-status reconcile failed: ${err instanceof Error ? err.message : err}`)
           }
         } catch (err) {
           logger.app.warn(`startup recovery sequence failed: ${err instanceof Error ? err.message : err}`)

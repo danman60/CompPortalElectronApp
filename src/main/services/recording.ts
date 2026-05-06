@@ -15,6 +15,7 @@ import * as tether from './tether'
 import * as photos from './photos'
 import * as jobQueue from './jobQueue'
 import * as take from './take'
+import * as events from './events'
 import { getSettings } from './settings'
 import * as schedule from './schedule'
 import { postNowPlaying } from './compPortal'
@@ -672,6 +673,19 @@ export async function handleRecordingStopped(
       outputPath,
     })
 
+    {
+      const startMs = takeStartedAt ? Date.parse(takeStartedAt) : NaN
+      const stopMs = Date.parse(timestamp)
+      const durationSec = Number.isFinite(startMs) && Number.isFinite(stopMs)
+        ? Math.max(0, Math.round((stopMs - startMs) / 1000))
+        : null
+      events.emit('recording.stopped', {
+        routineId: routine.id,
+        entryNumber: routine.entryNumber,
+        durationSec,
+      })
+    }
+
     // Phase 2.8: finalize the Take entity. mkvPath gets corrected to the
     // post-rename location later in this function (after the file move into
     // routineDir). Sync the routineId in case it diverged from the active
@@ -752,7 +766,7 @@ export async function handleRecordingStopped(
       //                        number; new take's currentRoutineId points
       //                        at it. Prior take stays for original routine.
       let rerecDecision: RerecDecision = { kind: 'archive' }
-      const rerecAdvancedToRoutine: Routine | null = null
+      let rerecAdvancedToRoutine: Routine | null = null
       try {
         const NEW_DURATION_THRESHOLD_SEC = 30
         if (durationSec >= NEW_DURATION_THRESHOLD_SEC) {
@@ -1075,6 +1089,13 @@ export async function handleRecordingStarted(timestamp: string): Promise<void> {
 
   state.updateRoutineStatus(routine.id, 'recording', {
     recordingStartedAt: timestamp,
+  })
+
+  events.emit('recording.started', {
+    routineId: routine.id,
+    entryNumber: routine.entryNumber,
+    title: routine.routineTitle,
+    studio: routine.studioName,
   })
 
   // Venue TV "now playing" sync (fire-and-forget, semantic B / recording-driven)

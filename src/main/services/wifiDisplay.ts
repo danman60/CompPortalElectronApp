@@ -28,6 +28,23 @@ let unexpectedExitAttempts = 0
 const MAX_UNEXPECTED_EXIT_RESTARTS = 3
 let topologyRestartTimer: NodeJS.Timeout | null = null
 
+// Capture-error frequency watchdog (incident 2026-05-03 morning):
+// `wifi_display_server::capture: Capture error: invalid data` lines spammed
+// stderr 667 times over 11m22s before the operator manually clicked the
+// tablet button to recover. Manual recovery took <1s — a clean stop()+start()
+// cycle. Auto-detect that pattern and self-heal.
+//
+// Threshold: 5 capture-errors within 7 seconds → treat as frozen, auto-restart.
+// Cap: mirror MAX_UNEXPECTED_EXIT_RESTARTS=3 per session — past that, leave it
+// to operator (failure pattern is something we can't fix from inside the app).
+const CAPTURE_ERR_NEEDLE = 'capture: Capture error: invalid data'
+const CAPTURE_ERR_THRESHOLD = 5
+const CAPTURE_ERR_WINDOW_MS = 7000
+const MAX_CAPTURE_RESTART_ATTEMPTS = 3
+let captureErrorTimes: number[] = []
+let captureRestartAttempts = 0
+let captureRestartInFlight = false
+
 /**
  * Pick a safe monitor index from current Electron screen state.
  * - Returns saved if still in range and the display is still present.
@@ -355,6 +372,32 @@ export async function start(): Promise<void> {
     args.push('--client', wd.clientIp)
   }
 
+  // 2026-05-04: opt-in HEVC NVENC path. Default 'openh264' (or unset) =
+  // pass nothing, server uses its baked-in OpenH264 software path. When
+  // operator flips settings.wifiDisplay.encoder to 'hevc-nvenc', point the
+  // Rust binary at the bundled ffmpeg.exe so it can spawn `ffmpeg -c:v
+  // hevc_nvenc` for GPU offload. The CSController tablet also needs a
+  // matching MediaCodec swap (video/avc → video/hevc); until that ships,
+  // turning this on will produce a black screen on the tablet.
+  if (wd.encoder === 'hevc-nvenc') {
+    try {
+      const ffmpegMod = await import('./ffmpeg')
+      // getFFmpegPath is module-private; the public surface gives us the
+      // resolved path via the same resolver used everywhere else. Fall back
+      // to the resources/ffmpeg.exe convention if the helper isn't exported.
+      const ffmpegPath =
+        typeof (ffmpegMod as unknown as { getFFmpegPath?: () => string }).getFFmpegPath === 'function'
+          ? (ffmpegMod as unknown as { getFFmpegPath: () => string }).getFFmpegPath()
+          : path.join(process.resourcesPath || '.', 'ffmpeg.exe')
+      args.push('--encoder', 'hevc-nvenc', '--ffmpeg-path', ffmpegPath)
+      logger.app.info(`Wifi display: opt-in HEVC NVENC enabled (ffmpeg=${ffmpegPath})`)
+    } catch (err) {
+      logger.app.warn(
+        `Wifi display: HEVC NVENC requested but ffmpeg path resolution failed (${err instanceof Error ? err.message : err}); falling back to default OpenH264`,
+      )
+    }
+  }
+
   logger.app.info(`Starting wifi display: ${binaryPath} ${args.join(' ')}`)
 
   childProc = spawn(binaryPath, args, {
@@ -367,6 +410,13 @@ export async function start(): Promise<void> {
     running = true
     activeMonitorIndex = effectiveIndex
     unexpectedExitAttempts = 0
+    // Reset capture-error watchdog state on every fresh start cycle so the
+    // 3-attempt cap is per-burst-cluster, not per-app-lifetime. An operator
+    // manually restarting the wifi display via Settings should reset the
+    // budget.
+    captureErrorTimes = []
+    captureRestartAttempts = 0
+    captureRestartInFlight = false
     // New start cycle — reset drift adoption so the first legitimate tablet
     // discovery can still promote an IP once.
     driftAdoptedThisSession = false
@@ -408,6 +458,55 @@ export async function start(): Promise<void> {
       // visible in main.log without requiring a log-level change. One-line per
       // write so grep for `[wifi-display]` catches everything.
       logger.app.warn(`[wifi-display] ${line}`)
+
+      // Capture-error rate watchdog. A single line is harmless; bursts mean
+      // the capture pipeline froze and the operator would otherwise have to
+      // manually click the tablet button to recover.
+      if (line.includes(CAPTURE_ERR_NEEDLE)) {
+        const now = Date.now()
+        captureErrorTimes.push(now)
+        // Drop entries outside the rolling window.
+        captureErrorTimes = captureErrorTimes.filter((t) => now - t <= CAPTURE_ERR_WINDOW_MS)
+        if (
+          captureErrorTimes.length >= CAPTURE_ERR_THRESHOLD &&
+          !captureRestartInFlight &&
+          captureRestartAttempts < MAX_CAPTURE_RESTART_ATTEMPTS
+        ) {
+          captureRestartInFlight = true
+          captureRestartAttempts++
+          captureErrorTimes = []
+          logger.app.warn(
+            `[wifi-display] capture-error burst: ${CAPTURE_ERR_THRESHOLD}+ in ${CAPTURE_ERR_WINDOW_MS}ms — auto-restart attempt ${captureRestartAttempts}/${MAX_CAPTURE_RESTART_ATTEMPTS}`,
+          )
+          // Async stop()+start(). stop() emits SIGTERM which the exit handler
+          // recognizes as intentional, so this won't trigger the unexpected-exit
+          // restart path on top.
+          ;(async () => {
+            try {
+              await stop()
+              await new Promise((resolve) => setTimeout(resolve, 500))
+              await start()
+              logger.app.info(`[wifi-display] auto-restart ${captureRestartAttempts} complete`)
+            } catch (err) {
+              logger.app.error(
+                `[wifi-display] auto-restart ${captureRestartAttempts} failed: ${err instanceof Error ? err.message : err}`,
+              )
+            } finally {
+              captureRestartInFlight = false
+            }
+          })()
+        } else if (
+          captureErrorTimes.length >= CAPTURE_ERR_THRESHOLD &&
+          captureRestartAttempts >= MAX_CAPTURE_RESTART_ATTEMPTS
+        ) {
+          // Cap reached — log once per burst (gated by length reset below)
+          // then drop the buffer so we don't spam this branch.
+          logger.app.error(
+            `[wifi-display] capture-error burst persists after ${MAX_CAPTURE_RESTART_ATTEMPTS} auto-restarts — manual recovery required (toggle in Settings)`,
+          )
+          captureErrorTimes = []
+        }
+      }
     }
   })
 

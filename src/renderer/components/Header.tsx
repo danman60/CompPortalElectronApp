@@ -7,6 +7,7 @@ import LoadCompetition from './LoadCompetition'
 import { HealthStrip } from './RightPanel'
 import VerticalMeters from './VerticalMeters'
 import PipelineHealthChip from './PipelineHealthChip'
+import EventLogPanel from './EventLogPanel'
 import '../styles/header.css'
 
 function useAppVersion(): string {
@@ -773,6 +774,9 @@ export default function Header(): React.ReactElement {
       </div>
 
       <div className="topband-row topband-live">
+        <div className="topband-activity">
+          <EventLogPanel />
+        </div>
         <div className="topband-current">
           <CurrentRoutine />
         </div>

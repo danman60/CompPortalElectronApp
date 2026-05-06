@@ -42,6 +42,10 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
   const canvasRef = useRef<HTMLDivElement>(null)
   const [iframeScale, setIframeScale] = useState(0.5)
   const [selected, setSelected] = useState<ElementKey | null>(null)
+  // Non-layout elements (no X/Y/W/H — full-bleed or rail-bound). When set,
+  // the props panel renders SelectedElementProperties only. Mutually
+  // exclusive with `selected` so only one panel is open.
+  const [stylePick, setStylePick] = useState<'ticker' | 'startingSoon' | 'featureCard' | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [layout, setLayout] = useState<OverlayLayout>({ ...DEFAULT_LAYOUT })
   const [showGrid, setShowGrid] = useState(false)
@@ -327,6 +331,21 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
               Test Chat Fire
             </button>
           </span>
+          <span className="ve-toggle-group" style={{ marginLeft: 8 }}>
+            {(['ticker', 'startingSoon', 'featureCard'] as const).map((k) => (
+              <button
+                key={k}
+                className={`ve-preview-toggle ${stylePick === k ? 'active' : ''}`}
+                onClick={() => {
+                  setSelected(null)
+                  setStylePick((prev) => (prev === k ? null : k))
+                }}
+                title={`Edit ${k === 'startingSoon' ? 'Starting Soon' : k === 'featureCard' ? 'Feature Card' : 'Ticker'} style + presets`}
+              >
+                {k === 'startingSoon' ? 'SS' : k === 'featureCard' ? 'FC' : 'Ticker'}
+              </button>
+            ))}
+          </span>
           <button onClick={handleReset}>Reset</button>
           <button onClick={handleCancel}>Cancel</button>
           <button className="ve-btn-done" onClick={handleSave}>Done</button>
@@ -464,9 +483,365 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
             <p className="ve-props-hint">
               Arrows nudge. Shift+arrow = 2%. G = grid.
             </p>
+            <SelectedElementProperties elementKey={selected} />
+          </div>
+        )}
+        {!selected && stylePick && (
+          <div className="ve-props">
+            <div className="ve-props-title">
+              {stylePick === 'startingSoon' ? 'Starting Soon' : stylePick === 'featureCard' ? 'Feature Card' : 'Ticker'}
+            </div>
+            <p className="ve-props-hint">
+              Card style, sub-elements, asset & presets. Layout/position is fixed for this element.
+            </p>
+            <SelectedElementProperties elementKey={stylePick} />
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * 2026-05-04 — generic per-element properties panel. Renders three sections:
+ *   1) Card BG / blur / padding / border (uniform across every element)
+ *   2) Sub-elements — per-element list of (font-size, color, weight, order,
+ *      show) inputs. The set of sub-elements is element-specific and lives in
+ *      state.<element>.subElements.
+ *   3) Asset URL override (logo, lowerThird brand glyph, startingSoon SS logo).
+ *      mp4/webm/mov/m4v get rendered as <video>; other extensions = <img>.
+ *   4) Presets — list, save-as-name, load, delete. Per-element namespace.
+ *
+ * Default values are no-op (fontSize=0, color='', borderWidth=-1) so this
+ * panel is a pure progressive enhancement — empty + reset = no operator-
+ * visible regression.
+ */
+type AnyElementKey = 'counter' | 'clock' | 'logo' | 'lowerThird' | 'ticker' | 'startingSoon' | 'featureCard'
+
+interface SubStyle { fontSize: number; color: string; fontWeight: number; order: number; show: boolean }
+interface CardStyle {
+  backgroundColor: string; backgroundOpacity: number; backdropBlur: number
+  paddingX: number; paddingY: number; innerGap: number
+  borderRadius: number; borderColor: string; borderWidth: number
+}
+interface ElementSnapshot {
+  card: CardStyle
+  subElements: Record<string, SubStyle>
+  presets: Record<string, unknown>
+  activePreset: string | null
+  assetUrl: string                  // logo / startingSoon
+  brandGlyphUrl?: string            // lowerThird
+  showBrandGlyph?: boolean
+  showEntryNumber?: boolean
+  showRoutineTitle?: boolean
+  showDancers?: boolean
+  showStudioName?: boolean
+  showCategory?: boolean
+}
+
+const ASSET_KEYS: AnyElementKey[] = ['logo', 'lowerThird', 'startingSoon', 'featureCard']
+
+const SUB_LABELS: Partial<Record<string, string>> = {
+  number: 'Number', label: 'Label',
+  time: 'Time', date: 'Date',
+  image: 'Image',
+  brandGlyph: 'Brand glyph', entryNumber: 'Entry #',
+  routineTitle: 'Routine title', dancers: 'Dancers',
+  studioName: 'Studio', category: 'Category',
+  text: 'Text',
+  logo: 'Logo', title: 'Title', accent: 'Accent line',
+  subtitle: 'Subtitle', countdown: 'Countdown',
+  // Feature Card sub-element labels (2026-05-04)
+  header: 'Header label', studioLogo: 'Studio logo',
+  nextHeader: 'Next-strip header', nextEntryNumber: 'Next entry #',
+  nextRoutineTitle: 'Next title', nextStudioName: 'Next studio',
+}
+
+function SelectedElementProperties({ elementKey }: { elementKey: AnyElementKey }): React.ReactElement | null {
+  const [snap, setSnap] = useState<ElementSnapshot | null>(null)
+  const [presetName, setPresetName] = useState('')
+
+  // Sync snapshot from main on mount + every 2s — picks up external edits
+  // (Stream Deck, other windows) without a manual refresh.
+  useEffect(() => {
+    let cancelled = false
+    const sync = (): void => {
+      ;(window.api as any).overlayGetState().then((state: any) => {
+        if (cancelled) return
+        const el = state?.[elementKey]
+        if (!el) return
+        setSnap({
+          card: el.card || {} as CardStyle,
+          subElements: el.subElements || {},
+          presets: el.presets || {},
+          activePreset: el.activePreset ?? null,
+          assetUrl: el.assetUrl || el.brandGlyphUrl || '',
+          brandGlyphUrl: el.brandGlyphUrl || '',
+          showBrandGlyph: el.showBrandGlyph,
+          showEntryNumber: el.showEntryNumber,
+          showRoutineTitle: el.showRoutineTitle,
+          showDancers: el.showDancers,
+          showStudioName: el.showStudioName,
+          showCategory: el.showCategory,
+        })
+      }).catch(() => {})
+    }
+    sync()
+    const poll = setInterval(sync, 2000)
+    return () => { cancelled = true; clearInterval(poll) }
+  }, [elementKey])
+
+  function pushCard(partial: Partial<CardStyle>): void {
+    if (!snap) return
+    setSnap({ ...snap, card: { ...snap.card, ...partial } })
+    ;(window.api as any).overlaySetElementStyle?.(elementKey, { card: partial })
+  }
+  function pushSub(subKey: string, partial: Partial<SubStyle>): void {
+    if (!snap) return
+    setSnap({
+      ...snap,
+      subElements: { ...snap.subElements, [subKey]: { ...snap.subElements[subKey], ...partial } as SubStyle },
+    })
+    ;(window.api as any).overlaySetElementStyle?.(elementKey, { subElements: { [subKey]: partial } })
+  }
+  function pushAsset(url: string): void {
+    if (!snap) return
+    setSnap({ ...snap, assetUrl: url, brandGlyphUrl: url })
+    ;(window.api as any).overlaySetElementStyle?.(elementKey, { assetUrl: url })
+  }
+  function pushLTFlag(key: keyof ElementSnapshot, value: boolean): void {
+    if (!snap) return
+    setSnap({ ...snap, [key]: value } as ElementSnapshot)
+    ;(window.api as any).overlaySetLowerThird?.({ [key]: value })
+  }
+
+  async function browseAsset(): Promise<void> {
+    const result = await (window.api as any).settingsBrowseFile?.([
+      { name: 'Image / Video', extensions: ['png','jpg','jpeg','svg','webp','gif','apng','avif','mp4','webm','mov','m4v'] },
+    ])
+    if (!result || !result.length) return
+    const filePath = String(result[0])
+    pushAsset(filePath)
+  }
+
+  function savePreset(): void {
+    const trimmed = presetName.trim()
+    if (!trimmed) return
+    ;(window.api as any).overlaySavePreset?.(elementKey, trimmed)
+    setPresetName('')
+  }
+  function loadPreset(name: string): void {
+    ;(window.api as any).overlayLoadPreset?.(elementKey, name)
+  }
+  function deletePreset(name: string): void {
+    if (!confirm(`Delete preset "${name}"?`)) return
+    ;(window.api as any).overlayDeletePreset?.(elementKey, name)
+  }
+
+  if (!snap) return null
+  const subKeys = Object.keys(snap.subElements)
+  const presetNames = Object.keys(snap.presets || {})
+  const supportsAsset = ASSET_KEYS.includes(elementKey)
+
+  return (
+    <>
+      {/* ── LT-only legacy show flags ── */}
+      {elementKey === 'lowerThird' && (
+        <>
+          <div className="ve-props-section-divider" />
+          <div className="ve-props-section-title">Show in LT</div>
+          {([
+            ['showBrandGlyph', 'Brand logo'],
+            ['showEntryNumber', 'Entry #'],
+            ['showRoutineTitle', 'Routine title'],
+            ['showDancers', 'Dancers'],
+            ['showStudioName', 'Studio name'],
+            ['showCategory', 'Category'],
+          ] as Array<[keyof ElementSnapshot, string]>).map(([k, label]) => (
+            <label key={String(k)} className="ve-props-checkbox">
+              <input
+                type="checkbox"
+                checked={snap[k] !== false}
+                onChange={(e) => pushLTFlag(k, e.target.checked)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </>
+      )}
+
+      {/* ── Card ── */}
+      <div className="ve-props-section-divider" />
+      <div className="ve-props-section-title">Card</div>
+      <div className="ve-props-row2">
+        <label className="ve-props-color-row">
+          <span>BG</span>
+          <input
+            type="color"
+            className="ve-props-color"
+            value={snap.card.backgroundColor || '#1e1e2e'}
+            onChange={(e) => pushCard({ backgroundColor: e.target.value })}
+          />
+          <button className="ve-props-clear-btn" onClick={() => pushCard({ backgroundColor: '' })} title="Clear background override">×</button>
+        </label>
+      </div>
+      <div className="ve-props-field">
+        <label>Op</label>
+        <input type="number" step={0.05} min={0} max={1} className="ve-props-number"
+          value={Number(snap.card.backgroundOpacity ?? 1)}
+          onChange={(e) => pushCard({ backgroundOpacity: Number(e.target.value) })}
+        />
+      </div>
+      <div className="ve-props-field">
+        <label>Blur</label>
+        <input type="number" step={1} min={0} max={50} className="ve-props-number"
+          value={Number(snap.card.backdropBlur ?? 0)}
+          onChange={(e) => pushCard({ backdropBlur: Number(e.target.value) })}
+        />
+        <span>px</span>
+      </div>
+      <div className="ve-props-field">
+        <label>Pad-X</label>
+        <input type="number" step={1} min={0} className="ve-props-number"
+          value={Number(snap.card.paddingX ?? 0)}
+          onChange={(e) => pushCard({ paddingX: Number(e.target.value) })}
+        />
+      </div>
+      <div className="ve-props-field">
+        <label>Pad-Y</label>
+        <input type="number" step={1} min={0} className="ve-props-number"
+          value={Number(snap.card.paddingY ?? 0)}
+          onChange={(e) => pushCard({ paddingY: Number(e.target.value) })}
+        />
+      </div>
+      <div className="ve-props-field">
+        <label>Gap</label>
+        <input type="number" step={1} min={0} className="ve-props-number"
+          value={Number(snap.card.innerGap ?? 0)}
+          onChange={(e) => pushCard({ innerGap: Number(e.target.value) })}
+        />
+      </div>
+      <div className="ve-props-field">
+        <label>Radius</label>
+        <input type="number" step={1} min={0} className="ve-props-number"
+          value={Number(snap.card.borderRadius ?? 0)}
+          onChange={(e) => pushCard({ borderRadius: Number(e.target.value) })}
+        />
+      </div>
+      <div className="ve-props-field">
+        <label>Border</label>
+        <input type="number" step={1} min={-1} className="ve-props-number"
+          value={Number(snap.card.borderWidth ?? -1)}
+          onChange={(e) => pushCard({ borderWidth: Number(e.target.value) })}
+        />
+        <input type="color" className="ve-props-color"
+          value={snap.card.borderColor || '#667eea'}
+          onChange={(e) => pushCard({ borderColor: e.target.value })}
+        />
+      </div>
+
+      {/* ── Sub-elements ── */}
+      {subKeys.length > 0 && (
+        <>
+          <div className="ve-props-section-divider" />
+          <div className="ve-props-section-title">Sub-elements</div>
+          {subKeys.map((sk) => {
+            const s = snap.subElements[sk] || { fontSize: 0, color: '', fontWeight: 0, order: 0, show: true }
+            return (
+              <div key={sk} className="ve-props-sub">
+                <div className="ve-props-sub-title">{SUB_LABELS[sk] || sk}</div>
+                <label className="ve-props-checkbox">
+                  <input type="checkbox" checked={s.show !== false}
+                    onChange={(e) => pushSub(sk, { show: e.target.checked })}
+                  />
+                  <span>Show</span>
+                </label>
+                <div className="ve-props-field">
+                  <label>Size</label>
+                  <input type="number" step={1} min={0} className="ve-props-number"
+                    value={Number(s.fontSize ?? 0)}
+                    onChange={(e) => pushSub(sk, { fontSize: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="ve-props-field">
+                  <label>Wgt</label>
+                  <input type="number" step={100} min={0} max={900} className="ve-props-number"
+                    value={Number(s.fontWeight ?? 0)}
+                    onChange={(e) => pushSub(sk, { fontWeight: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="ve-props-field">
+                  <label>Ord</label>
+                  <input type="number" step={1} className="ve-props-number"
+                    value={Number(s.order ?? 0)}
+                    onChange={(e) => pushSub(sk, { order: Number(e.target.value) })}
+                  />
+                </div>
+                <label className="ve-props-color-row">
+                  <span>Color</span>
+                  <input type="color" className="ve-props-color"
+                    value={s.color || '#ffffff'}
+                    onChange={(e) => pushSub(sk, { color: e.target.value })}
+                  />
+                  <button className="ve-props-clear-btn" onClick={() => pushSub(sk, { color: '' })} title="Clear color override">×</button>
+                </label>
+              </div>
+            )
+          })}
+        </>
+      )}
+
+      {/* ── Asset override ── */}
+      {supportsAsset && (
+        <>
+          <div className="ve-props-section-divider" />
+          <div className="ve-props-section-title">Asset override</div>
+          <div className="ve-props-asset">
+            <input
+              type="text"
+              className="ve-props-asset-url"
+              placeholder="(default brand logo)"
+              value={snap.assetUrl || ''}
+              onChange={(e) => pushAsset(e.target.value)}
+            />
+            <button className="ve-props-asset-browse" onClick={browseAsset}>Browse…</button>
+            {snap.assetUrl && (
+              <button className="ve-props-clear-btn" onClick={() => pushAsset('')} title="Clear asset override">×</button>
+            )}
+          </div>
+          <p className="ve-props-hint">.mp4/.webm/.mov = video; png/jpg/svg/webp/gif = image.</p>
+        </>
+      )}
+
+      {/* ── Presets ── */}
+      <div className="ve-props-section-divider" />
+      <div className="ve-props-section-title">Presets</div>
+      <div className="ve-props-presets">
+        {presetNames.length === 0 && <div className="ve-props-hint">No saved presets.</div>}
+        {presetNames.map((name) => (
+          <div key={name} className="ve-props-preset-row">
+            <button
+              className={`ve-props-preset-load ${snap.activePreset === name ? 'active' : ''}`}
+              onClick={() => loadPreset(name)}
+              title="Load this preset"
+            >
+              {name}
+            </button>
+            <button className="ve-props-clear-btn" onClick={() => deletePreset(name)} title="Delete preset">×</button>
+          </div>
+        ))}
+        <div className="ve-props-preset-save">
+          <input
+            type="text"
+            className="ve-props-asset-url"
+            placeholder="Save as…"
+            value={presetName}
+            onChange={(e) => setPresetName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') savePreset() }}
+          />
+          <button className="ve-props-asset-browse" onClick={savePreset} disabled={!presetName.trim()}>Save</button>
+        </div>
+      </div>
+    </>
   )
 }

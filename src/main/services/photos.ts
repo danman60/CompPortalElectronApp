@@ -23,6 +23,8 @@ import {
   type MatcherWorkerPhoto,
   type MatcherWorkerWindow,
 } from './matcherWorkerPool'
+import { getVolumeInfo } from '../utils/volumeSerial'
+import { generateInlineThumbBase64 } from './ffmpeg'
 
 interface RecordingWindow {
   routineId: string
@@ -997,7 +999,25 @@ async function runImport(
   logger.photos.info(`Importing photos from: ${folderPath}${previewOnly ? ' (PREVIEW ONLY)' : ''}`)
 
   const importRunId = new Date().toISOString()
-  const seenHashes = await manifest.getUploadedHashes(outputDir).catch(() => new Set<string>())
+  // build9o (Item #2) — volume-keyed cursor dedup REPLACES sha1(first 128KB)
+  // per-file content hashing as the import-side dedup authority. The sourceHash
+  // field on photo records is now a synthetic identifier (vol:SERIAL:BASENAME:ISO)
+  // so the upload-side importManifest still has a stable key per file without
+  // any content read. seenHashes / seenBasenames are retired here.
+  // Compute the comp's max existing routine.photos[] captureTime ONCE so the
+  // migration safety net (cursor seed for an unknown card on first
+  // post-upgrade launch) can use it without re-walking routines later.
+  let migrationSafetyMaxIso: string | null = null
+  for (const r of routines) {
+    const ps = r.photos
+    if (!ps) continue
+    for (const p of ps) {
+      if (!p.captureTime) continue
+      if (!migrationSafetyMaxIso || p.captureTime > migrationSafetyMaxIso) {
+        migrationSafetyMaxIso = p.captureTime
+      }
+    }
+  }
 
   // Scan recursively in batches so the main event loop stays responsive during large imports.
   async function scanDir(rootDir: string): Promise<string[]> {
@@ -1097,48 +1117,91 @@ async function runImport(
     )
   }
 
-  // Filename-based pre-dedup. When dedupByDb is set, skip any SD photo whose
-  // basename already appears in any routine's photos[] (regardless of upload
-  // status). This avoids reading EXIF and computing source hashes on photos
-  // we've already processed once. Operator directive 2026-04-25: cameras
-  // produce sequential names that don't realistically collide; SDs retain
-  // originals so any rare collision is recoverable. Re-importing previously-
-  // imported names is itself the bigger risk (lost photos via re-match).
-  // Filename pre-dedup. Always runs (was gated by dedupByDb in v15.7 — the
-  // re-import disaster of 2026-04-24 showed every import path needs this).
-  // 2026-04-25 directive: a photo on the SD whose camera filename was EVER
-  // imported into ANY routine — past or present, dup-suffixed or not —
-  // must NEVER be re-imported. Strip `_dupN` from both sides before
-  // comparison so a state record of `Q53A0001_dup3.JPG` matches an SD's
-  // plain `Q53A0001.JPG`.
-  const dupSuffixRe = /_dup[0-9]+/
-  const stripDupAndUpper = (name: string): string =>
-    path.basename(name).replace(dupSuffixRe, '').toUpperCase()
-  let skippedByFilenameDedup = 0
-  const seenBasenames = new Set<string>()
-  for (const r of routines) {
-    const ps = r.photos
-    if (!ps) continue
-    for (const p of ps) {
-      if (p.sourcePath) seenBasenames.add(stripDupAndUpper(p.sourcePath))
-      if (p.filePath) seenBasenames.add(stripDupAndUpper(p.filePath))
+  // build9o (Item #2) — volume-keyed cursor dedup. Per-card EXIF watermark
+  // (state.sdCardCursors) is the sole import-side dedup gate. Each Windows SD
+  // card carries a stable volume serial number; we look up the card's cursor,
+  // skip any photo with EXIF DateTimeOriginal ≤ cursor, and advance the cursor
+  // to the batch's max captureTime after a successful import. Survives the two
+  // failure modes that doomed the body watermark + content-hash approaches:
+  //   • Counter wraparound 9999→0000 — unaffected (EXIF time keeps advancing).
+  //   • Out-of-order recovery (yesterday's morning card inserted after evening
+  //     already imported on a different card) — unaffected because cursor is
+  //     per-card, not per-body.
+  // Non-Windows or vol-cmd failure → cursor.serial is empty and the legacy
+  // skip-by-cursor logic short-circuits (no skip), which is safe: at worst
+  // we re-import on dev workstations.
+  interface VolumeCursorEntry {
+    serial: string       // empty when vol command unavailable / failed
+    cursorIso: string    // empty when no prior import on this card
+    label: string
+  }
+  const cursorByDrive = new Map<string, VolumeCursorEntry>()
+  let unknownCardCount = 0
+  for (const driveKey of byDrive.keys()) {
+    const driveRoot = driveKey.split('::')[0] || driveKey
+    const info = getVolumeInfo(driveRoot)
+    if (!info.serial) {
+      cursorByDrive.set(driveKey, { serial: '', cursorIso: '', label: '' })
+      continue
+    }
+    const existing = state.getSdCardCursor(info.serial)
+    if (existing) {
+      cursorByDrive.set(driveKey, {
+        serial: info.serial,
+        cursorIso: existing.lastCaptureTime,
+        label: existing.volumeLabel || info.label,
+      })
+    } else if (migrationSafetyMaxIso) {
+      // Migration safety net (operator-confirmed 2026-05-05): seed the cursor
+      // at the comp's existing max captureTime so the first post-upgrade
+      // re-insertion of an old card doesn't trigger a re-import wave.
+      state.setSdCardCursor(info.serial, {
+        lastCaptureTime: migrationSafetyMaxIso,
+        volumeLabel: info.label,
+        seededFromRoutines: true,
+      })
+      cursorByDrive.set(driveKey, {
+        serial: info.serial,
+        cursorIso: migrationSafetyMaxIso,
+        label: info.label,
+      })
+      logger.photos.info(
+        `[volume-cursor] seeded ${info.serial} (${info.label}) for ${driveRoot} → ${migrationSafetyMaxIso} (from routine.photos[] safety net)`,
+      )
+    } else {
+      // Brand-new card AND no existing photos in comp — emit unknownCard event
+      // with a small inline thumbnail of the latest scanned photo so the
+      // operator can recognize the card visually in the event log.
+      cursorByDrive.set(driveKey, {
+        serial: info.serial,
+        cursorIso: '',
+        label: info.label,
+      })
+      unknownCardCount++
+      const samplePath = (byDrive.get(driveKey) || []).slice(-1)[0]
+      if (samplePath) {
+        void generateInlineThumbBase64(samplePath).then((thumb) => {
+          events.emit('drive.unknownCard', {
+            volumeSerial: info.serial,
+            volumeLabel: info.label,
+            driveRoot,
+            photoCount: byDrive.get(driveKey)?.length ?? 0,
+            thumbBase64: thumb,
+            samplePath,
+          })
+        }).catch(() => {})
+      }
     }
   }
-  if (seenBasenames.size > 0) {
-    const filtered: string[] = []
-    for (const fp of partitionedPaths) {
-      if (seenBasenames.has(stripDupAndUpper(fp))) {
-        skippedByFilenameDedup++
-        continue
-      }
-      filtered.push(fp)
-    }
-    partitionedPaths.length = 0
-    partitionedPaths.push(...filtered)
+  if (cursorByDrive.size > 0) {
     logger.photos.info(
-      `Filename pre-dedup: skipped ${skippedByFilenameDedup} already-imported names (dup-suffix-aware); ${partitionedPaths.length} new files to scan`,
+      `[volume-cursor] ${cursorByDrive.size} drive partition(s) keyed; ${unknownCardCount} unknown card(s)`,
     )
   }
+  // Retired by build9o: skippedByFilenameDedup (no longer used as a dedup
+  // tier; cursor is the sole authority). Variable kept at 0 for log-parser
+  // compatibility downstream.
+  const skippedByFilenameDedup = 0
 
   // A15 / Northstar UX: distinct toast for "all dedup-skipped" case. When
   // pre-dedup leaves zero files to scan AND we DID skip some by filename,
@@ -1304,18 +1367,27 @@ async function runImport(
     fireExifShadowBatch(samples)
   }
 
+  // build9o helper — recompute the {drive::dcim} key for a single path so
+  // we can look up the volume cursor. Mirrors the partition logic above.
+  function driveKeyFor(p: string): string {
+    let driveKey = path.parse(p).root
+    if (!driveKey) {
+      const first = p.split(path.sep).filter(Boolean)[0]
+      driveKey = first ? path.sep + first : path.sep
+    }
+    driveKey = driveKey.toUpperCase()
+    const dcimKey = getDcimFolderKey(p)
+    return dcimKey ? `${driveKey}::${dcimKey}` : driveKey
+  }
   for (let i = 0; i < partitionedPaths.length; i++) {
     if (signal.aborted) {
       logger.photos.warn(`Import cancelled during EXIF read at ${i}/${partitionedPaths.length}`)
       return cancelledResult()
     }
-    const sourceHash = await manifest.computeSourceHash(partitionedPaths[i]).catch(() => '')
-    if (sourceHash && seenHashes.has(sourceHash)) {
-      skippedDupes++
-      continue
-    }
-    // Flag ON: use worker cache (if present). On miss (worker batch failed)
-    // fall through to inline. Flag OFF: inline authoritative + shadow.
+    // build9o (Item #2) — read EXIF FIRST, then apply volume-cursor dedup.
+    // Replaces the sha1(first 128KB) compute that gated entry into the photo
+    // list. Cursor compare is O(1) lookup + ISO string compare; avoids the
+    // 128KB read per file.
     let captureTime: Date | null = null
     if (useExifWorkerAuthoritative && exifWorkerCache.has(partitionedPaths[i])) {
       const iso = exifWorkerCache.get(partitionedPaths[i]) ?? null
@@ -1331,6 +1403,25 @@ async function runImport(
         if (shadowBuf.length >= SHADOW_BATCH) flushShadowBuf()
       }
     }
+    // Apply volume cursor BEFORE we synthesize a sourceHash or push the
+    // record. Any photo whose EXIF time is ≤ this card's recorded watermark
+    // was already imported on a prior pass and must be skipped.
+    const _vcDriveKey = driveKeyFor(partitionedPaths[i])
+    const _vcEntry = cursorByDrive.get(_vcDriveKey)
+    if (captureTime && _vcEntry && _vcEntry.cursorIso && captureTime.toISOString() <= _vcEntry.cursorIso) {
+      skippedDupes++
+      continue
+    }
+    // Synthesize a sourceHash for the upload-side importManifest. The string
+    // is content-free but globally unique per (card, file, EXIF time), so
+    // markUploaded() / getUploadedHashes() still key cleanly. Falls back to
+    // a path-only key when the volume serial is unavailable.
+    const _vcSerial = _vcEntry?.serial || 'NOSERIAL'
+    const _vcBaseName = path.basename(partitionedPaths[i]).toUpperCase()
+    const _vcIso = captureTime ? captureTime.toISOString() : ''
+    const sourceHash = _vcIso
+      ? `vol:${_vcSerial}:${_vcBaseName}:${_vcIso}`
+      : `path:${_vcSerial}:${partitionedPaths[i].toUpperCase()}`
     if (captureTime) {
       const captureIsoForRange = captureTime.toISOString()
       if (!firstCaptureTime || captureIsoForRange < firstCaptureTime) firstCaptureTime = captureIsoForRange
@@ -1353,29 +1444,14 @@ async function runImport(
             lastFilenameSeq: seq ?? undefined,
           }
         }
-        if (!allowlistUpper) {
-          const wm = state.getSdWatermark(bodyKey)
-          if (wm) {
-            // Phase 2.3 skip gate: iso < wm.lastCaptureTime
-            //   OR (iso === wm.lastCaptureTime AND seq <= wm.lastFilenameSeq)
-            // Legacy fallback: if the watermark predates seq tracking
-            // (lastFilenameSeq undefined), use the old `iso <= lastCaptureTime`
-            // gate so upgrade-from-legacy doesn't accidentally re-import
-            // already-processed same-second photos.
-            const isOlder = iso < wm.lastCaptureTime
-            const sameTime = iso === wm.lastCaptureTime
-            const legacyWatermark = wm.lastFilenameSeq === undefined
-            const isSameTimeOlderSeq = sameTime && (
-              legacyWatermark
-                ? true   // legacy: treat same-time as already-processed
-                : (seq ?? -1) <= (wm.lastFilenameSeq ?? -1)
-            )
-            if (isOlder || isSameTimeOlderSeq) {
-              skippedByWatermark++
-              continue
-            }
-          }
-        }
+        // build9o (2026-05-06, Item #2): the per-body watermark is still
+        // ADVANCED here for the clock-sampler in driveMonitor (it reads
+        // sdWatermarks to avoid sampling pre-imported files for the "N days
+        // off" check). The dedup gate now lives at the EXIF-loop top — a
+        // per-VOLUME cursor (`state.sdCardCursors`), keyed by the SD card's
+        // Windows volume serial number rather than the camera body. This is
+        // immune to counter wraparound (cursor uses EXIF time) and to out-of-
+        // order recovery (per-card, so a yesterday card has its own cursor).
       }
       // Bug F skip-mismatched mode: drop photos whose EXIF date != today.
       if (skipMismatchedDates && !isSameLocalDate(captureTime, new Date())) {
@@ -2096,6 +2172,33 @@ async function runImport(
   // EXIF time — never by filename sequence.
   if (!previewOnly && Object.keys(maxCaptureByBody).length > 0) {
     state.setSdWatermarksBulk(maxCaptureByBody)
+  }
+
+  // build9o (Item #2) — advance per-volume EXIF cursors with the batch's max
+  // captureTime per drive-partition. Volume cursors are the primary import-
+  // side dedup gate on the next insertion of this card. Per-card, not per-
+  // body, so multi-card same-body workflows stay correct.
+  if (!previewOnly) {
+    const maxByVolumeSerial = new Map<string, { iso: string; label: string }>()
+    for (const photo of photos) {
+      const dk = driveKeyFor(photo.path)
+      const cd = cursorByDrive.get(dk)
+      if (!cd || !cd.serial) continue
+      const iso = photo.captureTime.toISOString()
+      const existing = maxByVolumeSerial.get(cd.serial)
+      if (!existing || iso > existing.iso) {
+        maxByVolumeSerial.set(cd.serial, { iso, label: cd.label })
+      }
+    }
+    for (const [serial, { iso, label }] of maxByVolumeSerial) {
+      state.setSdCardCursor(serial, { lastCaptureTime: iso, volumeLabel: label })
+    }
+    if (maxByVolumeSerial.size > 0) {
+      logger.photos.info(
+        `[volume-cursor] advanced ${maxByVolumeSerial.size} cursor(s): ` +
+        Array.from(maxByVolumeSerial.entries()).map(([s, e]) => `${s}=${e.iso}`).join(', '),
+      )
+    }
   }
 
   // ── Distribution-sanity validator ──

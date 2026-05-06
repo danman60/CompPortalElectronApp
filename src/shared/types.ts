@@ -16,6 +16,10 @@ export interface ChatMessage {
   routineIdAtPost?: string
 }
 export interface PinnedChatMessage { id: string; name: string; text: string; pinnedAt: number }
+// build9o (Item #11) — distinct type for livestream-only pins so renderer
+// state stays cleanly separated from burn-into-video pins. Same shape today,
+// but typed apart so future divergence (TTL, expiresAt, color) is contained.
+export interface LivestreamPinnedMessage { id: string; name: string; text: string; pinnedAt: number }
 export interface PinnedChatConfig { enabled: boolean; maxVisible: number; rotateIntervalSec: number; showTimestamps: boolean }
 
 // --- Routine & Schedule ---
@@ -286,6 +290,11 @@ export interface TickerState {
   speed: number // px/s, 20-200
   backgroundColor: string
   textColor: string
+  // 2026-05-04 unified depth (subElements: { text }).
+  card: OverlayElementCardStyle
+  subElements: Record<string, OverlaySubElementStyle>
+  presets: Record<string, OverlayElementPreset>
+  activePreset: string | null
 }
 
 export interface StartingSoonState {
@@ -295,13 +304,22 @@ export interface StartingSoonState {
   showCountdown: boolean
   countdownTarget: string // ISO timestamp
   config?: StartingSoonConfig
+  // 2026-05-04 unified depth (subElements: logo/title/accent/subtitle/countdown).
+  assetUrl: string  // SS logo override; '' = use brand-logo route
+  card: OverlayElementCardStyle
+  subElements: Record<string, OverlaySubElementStyle>
+  presets: Record<string, OverlayElementPreset>
+  activePreset: string | null
 }
 
 // ── Starting Soon Scene Editor Types ──
 
 export type GradientPreset =
   | 'midnight-pulse' | 'sunset-drift' | 'ocean-wave' | 'aurora'
-  | 'ember-glow' | 'monochrome-shift' | 'neon-cyber' | 'forest-mist' | 'custom' | 'brand'
+  | 'ember-glow' | 'monochrome-shift' | 'neon-cyber' | 'forest-mist'
+  // Design-pro pack 2026-05-05 — broadcast-grade palettes
+  | 'slate-aurora' | 'velvet-night' | 'champagne-light' | 'cinematic-teal' | 'neutral-studio'
+  | 'custom' | 'brand'
 
 export interface GradientConfig {
   preset: GradientPreset
@@ -329,6 +347,9 @@ export interface StartingSoonLayout {
   eventCard: SSElementPosition
   upNext: SSElementPosition
   pinnedChat: SSElementPosition
+  // Premium pass 2026-05-06 — broadcast hallmarks
+  venueId?: SSElementPosition       // Eurosport-style identifier strip
+  sectionBadge?: SSElementPosition  // Top-corner scene-state pill
 }
 
 export interface VideoPlaylistConfig {
@@ -374,6 +395,16 @@ export interface CountdownStyleConfig {
   fontSize: number; color: string; fontWeight: number; showLabels: boolean
   expiredText?: string // shown when countdown hits zero (default: "SOON")
   prefixText?: string  // optional prefix above/before the timer (e.g. "Doors open in")
+  // Premium pass 2026-05-06 — broadcast-style digit treatment.
+  // 'soft' = legacy (color blink colons). 'flipboard' = mechanical split-flap per digit.
+  // 'sevenSeg' = LED-glow seven-segment style.
+  style?: 'soft' | 'flipboard' | 'sevenSeg'
+  // Final-N takeover — when remaining ≤ threshold, fade layout countdown
+  // and show full-screen centered flipboard. Operator-toggleable.
+  finalSecondsTakeover?: boolean
+  finalSecondsThreshold?: number  // default 30
+  finalLabel?: string             // default "FINAL 30 SECONDS"
+  finalSubLabel?: string          // default "Show begins shortly"
 }
 
 export type LogoAnimation = 'none' | 'pulse' | 'float' | 'spin' | 'fade-in-once' | 'breathing' | 'glow'
@@ -385,6 +416,9 @@ export interface LogoConfig {
   opacity: number            // 0..1
   animation: LogoAnimation
   animationSpeed: number     // 1..10 → keyframe duration scaler
+  // Premium pass 2026-05-06 — trophy plinth + rotating conic halo behind logo.
+  haloEnabled?: boolean
+  haloColor?: string         // halo tint (default brand-accent)
 }
 
 export interface SSTickerConfig {
@@ -394,6 +428,30 @@ export interface SSTickerConfig {
   color: string
   bgColor: string    // optional rail background color (e.g. rgba)
   fontSize: number
+  // Premium pass 2026-05-06 — broadcast two-row ticker treatment.
+  // Accent row above main scroller shows category label + pulsing LIVE dot.
+  twoRow?: boolean
+  categoryLabel?: string    // e.g., "EVENT INFO", "UP NEXT"
+  liveIndicator?: boolean   // pulsing red dot in accent row
+}
+
+// Premium pass 2026-05-06 — Eurosport-style identifier strip in scene corner.
+export interface VenueIdentifierConfig {
+  enabled: boolean
+  eventLabel: string        // e.g., "UDC LONDON 2026"
+  venueName: string         // e.g., "ROYAL ALBERT HALL"
+  dayLabel: string          // e.g., "DAY 2 · SAT" (free-form)
+  fontSize: number
+  color: string
+}
+
+// Premium pass 2026-05-06 — top-corner scene-state pill with pulsing dot.
+export interface SectionBadgeConfig {
+  enabled: boolean
+  label: string             // e.g., "STARTING SOON" / "INTERMISSION"
+  dotColor: string          // pulsing-dot tint (default red)
+  fontSize: number
+  color: string
 }
 
 export interface EventInfoConfig {
@@ -433,6 +491,9 @@ export interface StartingSoonConfig {
   upNext: UpNextConfig
   pinnedChat: PinnedChatConfig
   tickerEnabled: boolean // legacy — kept for backward compat with old saved configs
+  // Premium pass 2026-05-06 — broadcast hallmarks
+  venueIdentifier?: VenueIdentifierConfig
+  sectionBadge?: SectionBadgeConfig
 }
 
 export interface AnimationConfig {
@@ -478,6 +539,32 @@ export interface AppSettings {
     password: string
     recordingFormat: 'mkv' | 'mp4' | 'flv'
     maxRecordMinutes: number    // 0 = no limit
+    transitionCycleOrder: string // comma-separated transition names — controls Stream Deck cycle button order. Empty = OBS API order. Unknown names = ignored.
+    // Feature Card / Move Transition integration (2026-05-04). Operator pre-
+    // creates these scenes + transitions in OBS; CSE just references by name.
+    featureCardScene: string          // OBS scene cut to when featureCard fires (default "FEATURE CARD")
+    // Slow zoom — Move transition between a base scene and a "zoomed" scene
+    // for both Wide and Tight. Two separate Stream Deck buttons (Wide + Tight)
+    // each toggle their own pair. Crash zoom transitions are managed via the
+    // transitionCycleOrder above (operator adds Move transitions named e.g.
+    // "Crash Zoom" or "Crash Zoom Reverse" to that comma list).
+    slowZoomTransition: string        // Move Transition name (default "Slow Zoom")
+    slowZoomWideBaseScene: string     // (default "Wide")
+    slowZoomWideZoomedScene: string   // (default "Wide Zoomed")
+    slowZoomTightBaseScene: string    // (default "Tight")
+    slowZoomTightZoomedScene: string  // (default "Tight Zoomed")
+    // Per-transition duration enforcement (2026-05-04). OBS stores transition
+    // duration globally, not per-transition — so when operator cycles to e.g.
+    // "Crash Zoom" via Stream Deck the duration stays at whatever it was last
+    // set to. CSE listens to CurrentSceneTransitionChanged and looks up the
+    // desired duration in this map. Format: comma-separated "name:ms" pairs.
+    transitionDurations: string       // e.g. "Slow Zoom:10000,Crash Zoom:400"
+    // Crash Zoom: blur filter enable-gate. Lists "source/filter" pairs that
+    // should be enabled ONLY when the Crash Zoom transition is current and
+    // disabled for all other transitions. Prevents the Move Value blur
+    // animator from firing on Slow Zoom or any non-crash-zoom move transition.
+    // Format: comma-separated "source:filter" pairs.
+    crashZoomBlurFilters: string      // e.g. "WideAngleCam:Crash Blur Animator,WideAngleCam:Crash Blur Animator (down),Video Capture Device:Crash Blur Animator,Video Capture Device:Crash Blur Animator (down)"
   }
   compsync: {
     shareCode: string // replaces tenant/apiKey/competition/uploadEndpoint
@@ -583,6 +670,15 @@ export interface AppSettings {
     videoPort: number
     touchPort: number
     autoStart: boolean
+    // 2026-05-04: opt-in HEVC NVENC path. Default 'openh264' = legacy
+    // OpenH264 software encoder, identical to historical behavior. When set
+    // to 'hevc-nvenc', wifiDisplay.ts passes `--encoder hevc-nvenc
+    // --ffmpeg-path <path>` to the Rust binary which then pipes BGRA frames
+    // to ffmpeg.exe -c:v hevc_nvenc. NOTE: the Android client (CSController)
+    // also needs to flip its MediaCodec from video/avc to video/hevc — until
+    // that ships, the tablet will NOT render the stream when this is on.
+    // See docs/plans/2026-05-04-hevc-nvenc-encoder.md for the full plan.
+    encoder?: 'openh264' | 'hevc-nvenc'
   }
   branding: {
     organizationName: string
@@ -743,9 +839,18 @@ export const IPC_CHANNELS = {
   OVERLAY_AUTO_FIRE_TOGGLE: 'overlay:auto-fire-toggle',
   OVERLAY_UPDATE_LAYOUT: 'overlay:update-layout',
   OVERLAY_SET_TICKER: 'overlay:set-ticker',
+  OVERLAY_SET_LOWER_THIRD: 'overlay:set-lower-third',
   OVERLAY_SET_STARTING_SOON: 'overlay:set-starting-soon',
   OVERLAY_SET_ANIMATION_CONFIG: 'overlay:set-animation-config',
   OVERLAY_SET_LOGO: 'overlay:set-logo',
+  // 2026-05-04 unified depth — per-element style + preset operations.
+  OVERLAY_SET_ELEMENT_STYLE: 'overlay:set-element-style',
+  OVERLAY_SAVE_PRESET: 'overlay:save-preset',
+  OVERLAY_LOAD_PRESET: 'overlay:load-preset',
+  OVERLAY_DELETE_PRESET: 'overlay:delete-preset',
+  // Feature Card (2026-05-04) — full-screen broadcast graphic, two modes.
+  OVERLAY_FIRE_FEATURE_CARD: 'overlay:fire-feature-card',
+  OVERLAY_HIDE_FEATURE_CARD: 'overlay:hide-feature-card',
 
   // Recording
   RECORDING_NEXT_FULL: 'recording:next-full',
@@ -823,6 +928,7 @@ export const IPC_CHANNELS = {
   JOB_QUEUE_PROGRESS: 'job:queue-progress',
   JOB_QUEUE_KICK: 'job:queue-kick',
   JOB_QUEUE_AUTO_TOGGLE: 'job:queue-auto-toggle',
+  RECONCILE_LOCAL_STATUS: 'upload:reconcile-local-status',
 
   // Startup
   APP_STARTUP_REPORT: 'app:startup-report',
@@ -874,6 +980,14 @@ export const IPC_CHANNELS = {
   CHAT_POST_MESSAGE: 'chat:post-message',
   CHAT_HIDE_MESSAGE: 'chat:hide-message',
   CHAT_BAN_AUTHOR: 'chat:ban-author',
+  // build9o (Item #11) — two-destination chat pin. Livestream-only path
+  // posts to CompPortal so the player overlays the message client-side
+  // without ever entering OBS. Existing CHAT_PIN keeps the burn-into-video
+  // (LT-style OBS overlay) behavior.
+  CHAT_LIVESTREAM_PIN: 'chat:livestream-pin',
+  CHAT_LIVESTREAM_UNPIN: 'chat:livestream-unpin',
+  CHAT_GET_LIVESTREAM_PINNED: 'chat:get-livestream-pinned',
+  CHAT_LIVESTREAM_PIN_CHANGED: 'chat:livestream-pin-changed',
 
   // Late-insert / empty-routine recording (operator-spec 2026-04-25):
   // creates a new ad-hoc routine row right after the current one, marks it
@@ -914,7 +1028,24 @@ export const IPC_CHANNELS = {
   DAY_CHECKLIST_REOPEN: 'day-checklist:reopen',
   DAY_CHECKLIST_SHOW: 'day-checklist:show',
   DAY_CHECKLIST_ITEMS_GET: 'day-checklist:items:get',
+
+  // Build #9 item #4: unified event log (replaces toast soup)
+  EVENT_STREAM: 'events:stream',
+  EVENTS_GET_RECENT: 'events:get-recent',
 } as const
+
+// --- Event Log (build #9 item #4) ---
+
+export type EventSeverity = 'info' | 'ok' | 'warning' | 'error'
+
+export interface EventRecord {
+  /** ISO timestamp at emit time. */
+  t: string
+  /** Dotted kind path, e.g. "import.finished", "upload.failed". */
+  kind: string
+  /** Free-form structured payload. */
+  data: Record<string, unknown>
+}
 
 // --- Day Checklist (Start-of-Day / End-of-Day) ---
 
@@ -1022,11 +1153,89 @@ export interface OverlayCounterState extends OverlayElementState {
   // schedule (gap >= 15 min between consecutive routines). Falls back to
   // end-of-last-routine for the last session of the day. null = hide label.
   nextAwardsTime?: string | null
+  // 2026-05-04 unified depth: per-element card / sub-element / preset state.
+  card: OverlayElementCardStyle
+  subElements: Record<string, OverlaySubElementStyle>
+  presets: Record<string, OverlayElementPreset>
+  activePreset: string | null
+}
+
+export interface OverlayClockState extends OverlayElementState {
+  // 2026-05-04 unified depth.
+  card: OverlayElementCardStyle
+  subElements: Record<string, OverlaySubElementStyle>
+  presets: Record<string, OverlayElementPreset>
+  activePreset: string | null
 }
 
 export interface OverlayLogoState extends OverlayElementState {
   url: string
+  // 2026-05-04 unified depth — assetUrl override (mp4/webm => video, else img).
+  assetUrl: string
+  card: OverlayElementCardStyle
+  subElements: Record<string, OverlaySubElementStyle>
+  presets: Record<string, OverlayElementPreset>
+  activePreset: string | null
 }
+
+/**
+ * Per-sub-element styling, generalized across ALL overlay elements.
+ * Each sub-element gets its own font size, color, weight, and flex order
+ * within its row. fontSize/color/fontWeight overlay the element's CSS
+ * defaults via inline style. order is meaningful only within the row the
+ * sub-element lives in.
+ *
+ * Used by LT (6 sub-elements: brandGlyph, entryNumber, routineTitle,
+ * dancers, studioName, category), Starting Soon (logo, title, subtitle,
+ * countdown, accent), and any future multi-part element.
+ */
+export interface OverlaySubElementStyle {
+  fontSize: number     // px; 0 = use CSS default
+  color: string        // hex like '#ffffff'; '' = use CSS default
+  fontWeight: number   // 100..900; 0 = use CSS default
+  order: number        // flex order within row; default 0
+  show: boolean        // visibility toggle for this sub-element
+}
+
+/**
+ * Element-level card / container styling. Applied via inline CSS vars on
+ * the element's root selector. Used by every overlay element so the same
+ * VisualEditor UI works for LT, counter, clock, logo, starting-soon, ticker.
+ */
+export interface OverlayElementCardStyle {
+  backgroundColor: string    // hex; '' = use existing default
+  backgroundOpacity: number  // 0..1
+  backdropBlur: number       // px; 0 = none
+  paddingX: number           // px
+  paddingY: number           // px
+  innerGap: number           // px; gap between sub-elements
+  borderRadius: number       // px; 0 = use default
+  borderColor: string        // hex; '' = use default
+  borderWidth: number        // px; -1 = use default
+}
+
+/**
+ * A named per-element preset = full snapshot of one element's visually-
+ * editable state. Operator saves layouts per element so each element has
+ * its own preset namespace (LT presets ≠ counter presets).
+ */
+export interface OverlayElementPreset {
+  card: OverlayElementCardStyle
+  subElements: Record<string, OverlaySubElementStyle>
+  assetUrl: string  // logo URL override (LT brand, ss-logo, corner logo, etc.)
+}
+
+// Backward-compat aliases (older code may still reference these names).
+export type OverlayLTSubElementStyle = OverlaySubElementStyle
+export type OverlayLTCardStyle = OverlayElementCardStyle
+export type OverlayLTPreset = OverlayElementPreset
+export type OverlayLTSubElementKey =
+  | 'brandGlyph'
+  | 'entryNumber'
+  | 'routineTitle'
+  | 'dancers'
+  | 'studioName'
+  | 'category'
 
 export interface OverlayLowerThirdState extends OverlayElementState {
   entryNumber: string
@@ -1036,11 +1245,18 @@ export interface OverlayLowerThirdState extends OverlayElementState {
   category: string
   autoHideSeconds: number
   animation: OverlayAnimation
+  showBrandGlyph: boolean
   showEntryNumber: boolean
   showRoutineTitle: boolean
   showDancers: boolean
   showStudioName: boolean
   showCategory: boolean
+  // 2026-05-04 LT depth additions:
+  brandGlyphUrl: string                                            // override; '' = default /brand-logo route
+  card: OverlayLTCardStyle
+  subElements: Record<OverlayLTSubElementKey, OverlayLTSubElementStyle>
+  presets: Record<string, OverlayLTPreset>                         // name → snapshot
+  activePreset: string | null
 }
 
 export interface OverlayChatFireState {
@@ -1053,13 +1269,72 @@ export interface OverlayChatFireState {
   firedAt: number
 }
 
+/**
+ * Feature Card — full-screen broadcast graphic for routines that need more
+ * room than a regular Lower Third. Two modes:
+ *   - upNext: pre-routine large layout of upcoming routine
+ *   - thatWas: post-routine large layout of just-performed routine, with a
+ *              compact UP NEXT strip at the bottom previewing the next.
+ *
+ * Surface: opaque (no transparency). Slide-on always (random direction per
+ * fire), bounce ease-in-out, motion blur during slide. Slide-off mirrors.
+ *
+ * PIP: NOT rendered by the iframe. Fires couple to OBS scene "FEATURE CARD"
+ * (operator-managed) which contains a separately-positioned camera source
+ * behind the browser source. Card design reserves a corner zone.
+ */
+export type OverlayFeatureCardMode = 'upNext' | 'thatWas'
+export type OverlayFeatureCardSlideDirection = 'up' | 'down' | 'left' | 'right'
+
+export type OverlayFeatureCardSubElementKey =
+  | 'header'         // "UP NEXT" / "THAT WAS" label
+  | 'studioLogo'     // optional studio logo (assetUrl)
+  | 'entryNumber'
+  | 'routineTitle'
+  | 'dancers'
+  | 'studioName'
+  | 'category'
+  | 'nextHeader'     // "UP NEXT" label on bottom strip (thatWas mode only)
+  | 'nextEntryNumber'
+  | 'nextRoutineTitle'
+  | 'nextStudioName'
+
+export interface OverlayFeatureCardState extends OverlayElementState {
+  mode: OverlayFeatureCardMode
+  // Main slot — current routine for upNext, just-performed for thatWas.
+  entryNumber: string
+  routineTitle: string
+  dancers: string
+  studioName: string
+  category: string
+  // Bottom strip slot — populated in thatWas mode (next routine).
+  nextEntryNumber: string
+  nextRoutineTitle: string
+  nextStudioName: string
+  nextDancers: string
+  nextCategory: string
+  // Animation: slide-on with bounce + motion blur. Direction chosen at fire
+  // time and stored here so the same direction plays on slide-off.
+  slideDirection: OverlayFeatureCardSlideDirection
+  // firedAt is a monotonically increasing counter so the iframe can
+  // re-trigger the slide animation when the same mode is fired twice.
+  firedAt: number
+  // Edit-depth (mirrors all other unified-depth elements).
+  assetUrl: string                                       // studio logo override
+  card: OverlayElementCardStyle
+  subElements: Record<OverlayFeatureCardSubElementKey, OverlaySubElementStyle>
+  presets: Record<string, OverlayElementPreset>
+  activePreset: string | null
+}
+
 export interface OverlayState {
   counter: OverlayCounterState
-  clock: OverlayElementState
+  clock: OverlayClockState
   logo: OverlayLogoState
   lowerThird: OverlayLowerThirdState
   ticker: TickerState
   startingSoon: StartingSoonState
+  featureCard: OverlayFeatureCardState
   chatFire?: OverlayChatFireState
   animConfig: AnimationConfig
 }
@@ -1148,12 +1423,23 @@ export interface WSCommandMessage {
     | 'setCameraOffset' | 'clearCameraOffsets'
     | 'toggleOverlay' | 'loadShareCode'
     | 'cycleTransition' | 'kickQueue'
-  element?: 'counter' | 'clock' | 'logo' | 'lowerThird' | 'startingSoon'
+    | 'slowZoomWideToggle' | 'slowZoomTightToggle'
+    | 'featureCardUpNext' | 'featureCardThatWas' | 'featureCardHide'
+    // CompPortal admin livestream parity (2026-05-05) — explicit overlay verbs
+    // and SS config family. Mirror the existing window.api / SS_* IPC handlers
+    // so a queued command from `/dashboard/admin/livestream` produces the same
+    // CSE state mutation as a button click in OverlayControls.tsx.
+    | 'overlayFireLT' | 'overlayHideLT'
+    | 'overlaySetTicker' | 'overlaySetStartingSoon' | 'overlaySetAnimationConfig'
+    | 'ssSetConfig' | 'ssSavePreset' | 'ssLoadPreset' | 'ssDeletePreset'
+  element?: 'counter' | 'clock' | 'logo' | 'lowerThird' | 'startingSoon' | 'ticker' | 'featureCard'
   shareCode?: string
   routineId?: string
   chatMessageId?: string
   cameraBody?: string
   offsetMs?: number
+  /** Free-form payload — used by the new SS / overlay setter actions above. */
+  payload?: Record<string, unknown>
 }
 
 export interface WSIdentifyMessage {
@@ -1195,6 +1481,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
     password: '',
     recordingFormat: 'mkv',
     maxRecordMinutes: 15,
+    transitionCycleOrder: 'Cut, Fade, Luma Wipe',
+    featureCardScene: 'FEATURE CARD',
+    slowZoomTransition: 'Slow Zoom',
+    slowZoomWideBaseScene: 'Wide',
+    slowZoomWideZoomedScene: 'Wide Zoomed',
+    slowZoomTightBaseScene: 'Tight',
+    slowZoomTightZoomedScene: 'Tight Zoomed',
+    transitionDurations: 'Slow Zoom:10000,Crash Zoom:400',
+    crashZoomBlurFilters: 'WideAngleCam:Crash Blur Animator,WideAngleCam:Crash Blur Animator (down),Video Capture Device:Crash Blur Animator,Video Capture Device:Crash Blur Animator (down)',
   },
   compsync: {
     shareCode: '',
@@ -1297,6 +1592,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     // when a monitor is configured. (If `monitorIndex` is null, autoStart
     // is a no-op — see main/index.ts.)
     autoStart: true,
+    // Default openh264 keeps current production behavior. Operator must
+    // explicitly opt in once the matching CSController HEVC client ships.
+    encoder: 'openh264',
   },
   branding: {
     organizationName: '',

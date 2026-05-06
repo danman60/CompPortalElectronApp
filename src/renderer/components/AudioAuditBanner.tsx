@@ -330,9 +330,12 @@ export default function AudioAuditBanner(): React.ReactElement | null {
       {pass && (
         <div
           style={{
+            // 2026-05-02 Burlington UDC Day 2: moved from bottom-right (was
+            // overlapping the right-rail chat panel) to top-left over the CPU
+            // stats tile, where it doesn't compete with chat moderation.
             position: 'fixed',
-            bottom: 80,
-            right: 16,
+            top: 8,
+            left: 16,
             zIndex: 9997,
             background: '#0c2515',
             border: '1px solid #2da855',

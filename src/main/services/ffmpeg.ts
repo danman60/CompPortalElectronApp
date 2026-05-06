@@ -12,6 +12,7 @@ import * as uploadService from './upload'
 import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate, pickLongestMkv } from './recording'
 import * as schedule from './schedule'
+import * as events from './events'
 
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
@@ -350,6 +351,62 @@ export async function generatePhotoThumbnail(
     } catch (err) {
       logger.ffmpeg.warn(`generatePhotoThumbnail: sync throw: ${err instanceof Error ? err.message : err}`)
       resolve(false)
+    }
+  })
+}
+
+/**
+ * Generate a small inline thumbnail (96x96 WebP, ~3-6KB) and return as a
+ * data: URL ready to drop straight into an <img src> in the renderer.
+ *
+ * Used by build9o (Item #2) — when an unrecognized SD card is detected, we
+ * surface an event-log entry with this thumbnail so the operator can visually
+ * confirm which physical card it is before it gets imported.
+ *
+ * Returns empty string on any failure so callers can `if (thumb) { ... }`.
+ */
+export async function generateInlineThumbBase64(inputJpgPath: string, timeoutMs = 4000): Promise<string> {
+  if (!inputJpgPath) return ''
+  try { if (!fs.existsSync(inputJpgPath)) return '' } catch { return '' }
+  const ffmpegPath = getFFmpegPath()
+  const args = [
+    '-y',
+    '-i', inputJpgPath,
+    '-vf', 'scale=w=96:h=96:force_original_aspect_ratio=increase,crop=96:96',
+    '-c:v', 'libwebp',
+    '-quality', '70',
+    '-compression_level', '4',
+    '-frames:v', '1',
+    '-f', 'webp',
+    'pipe:1',
+  ]
+  return new Promise<string>((resolve) => {
+    try {
+      const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      const chunks: Buffer[] = []
+      proc.stdout?.on('data', (d: Buffer) => { chunks.push(d) })
+      proc.stderr?.on('data', () => {})
+      const timer = setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch {}
+        resolve('')
+      }, timeoutMs)
+      proc.on('close', (code) => {
+        clearTimeout(timer)
+        if (code === 0 && chunks.length > 0) {
+          const buf = Buffer.concat(chunks)
+          // Cap at 32KB safety so a misbehaving ffmpeg can never blow the events ring.
+          if (buf.length === 0 || buf.length > 32 * 1024) {
+            resolve('')
+            return
+          }
+          resolve('data:image/webp;base64,' + buf.toString('base64'))
+        } else {
+          resolve('')
+        }
+      })
+      proc.on('error', () => { clearTimeout(timer); resolve('') })
+    } catch {
+      resolve('')
     }
   })
 }
@@ -704,6 +761,15 @@ async function processNext(): Promise<void> {
 
     logger.ffmpeg.info(`Processing routine ${job.routineId}: ${job.inputPath}`)
     state.updateRoutineStatus(job.routineId, 'encoding')
+    {
+      const compStart = state.getCompetition()
+      const rStart = compStart?.routines.find((r) => r.id === job.routineId)
+      events.emit('encode.started', {
+        routineId: job.routineId,
+        entryNumber: rStart?.entryNumber ?? null,
+        tracks: job.judgeCount + 1,
+      })
+    }
     broadcastRoutineUpdate(job.routineId)
     sendProgress({
       routineId: job.routineId,
@@ -747,6 +813,15 @@ async function processNext(): Promise<void> {
       }
 
       state.updateRoutineStatus(job.routineId, 'encoded', { encodedFiles, keyframes: keyframePaths })
+      {
+        const compDone = state.getCompetition()
+        const rDone = compDone?.routines.find((r) => r.id === job.routineId)
+        events.emit('encode.completed', {
+          routineId: job.routineId,
+          entryNumber: rDone?.entryNumber ?? null,
+          tracks: encodedFiles.length,
+        })
+      }
       jobQueue.updateStatus(jobRecord.id, 'done')
       broadcastRoutineUpdate(job.routineId)
 
@@ -783,6 +858,16 @@ async function processNext(): Promise<void> {
       const errMsg = err instanceof Error ? err.message : String(err)
       logger.ffmpeg.error(`Encoding failed for routine ${job.routineId}:`, errMsg)
       jobQueue.updateStatus(jobRecord.id, 'failed', { error: errMsg })
+
+      {
+        const compFail = state.getCompetition()
+        const rFail = compFail?.routines.find((r) => r.id === job.routineId)
+        events.emit('encode.failed', {
+          routineId: job.routineId,
+          entryNumber: rFail?.entryNumber ?? null,
+          error: errMsg,
+        })
+      }
 
       cleanupTempFiles(job.outputDir)
 

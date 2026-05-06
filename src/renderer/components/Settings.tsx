@@ -493,7 +493,17 @@ export default function Settings(): React.ReactElement {
                 value={draft.obs.maxRecordMinutes}
                 onChange={(e) => update('obs', { maxRecordMinutes: parseInt(e.target.value) || 0 })}
               />
-              <span className="hint">Auto-stop after N minutes (0 = no limit). Increase for awards/long sets.</span>
+              <span className="hint">Warning fires after N minutes (0 = no warning). Recording continues until manual stop.</span>
+            </div>
+            <div className="field">
+              <label>Transition Cycle Order</label>
+              <input
+                type="text"
+                value={draft.obs.transitionCycleOrder ?? ''}
+                onChange={(e) => update('obs', { transitionCycleOrder: e.target.value })}
+                placeholder="Cut, Fade, Luma Wipe, UDC Stinger"
+              />
+              <span className="hint">Comma-separated transition names — controls Stream Deck cycle button order. Empty = OBS API order. Names not in OBS are ignored; any extra OBS transitions appear after the listed ones.</span>
             </div>
           </div>
         </div>

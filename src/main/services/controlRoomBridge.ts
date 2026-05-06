@@ -14,6 +14,7 @@ import * as upload from './upload'
 import * as ffmpeg from './ffmpeg'
 import * as wsHub from './wsHub'
 import * as chatBridge from './chatBridge'
+import * as overlay from './overlay'
 import * as systemMonitor from './systemMonitor'
 import { getResolvedConnection } from './schedule'
 import { getSettings } from './settings'
@@ -187,6 +188,13 @@ function buildSnapshot() {
     cameraOffsets: state.listCameraOffsets(),
     sdWatermarks: state.listSdWatermarks(),
     recentEvents: events.getRecent(MAX_EVENTS),
+    // CompPortal admin livestream parity (2026-05-05). Page reads
+    // snapshot.overlay.{counter,clock,logo,lowerThird,ticker,startingSoon,
+    // featureCard,animConfig} for LIVE/OFF badge state, and snapshot.ssConfig
+    // for the future Starting Soon editor surface. Both stored opaquely by
+    // the heartbeat endpoint — no CompPortal-side schema change.
+    overlay: overlay.getOverlayState(),
+    ssConfig: overlay.getSSConfig(),
   }
 }
 
@@ -289,6 +297,11 @@ async function pollCommands(): Promise<void> {
         chatMessageId?: string
         cameraBody?: string
         offsetMs?: number
+        // CompPortal admin livestream parity (2026-05-05) — forward both new
+        // fields so the new overlay/ss case branches in wsHub.executeCommand
+        // receive their typed payload + element selector.
+        element?: WSCommandMessage['element']
+        payload?: Record<string, unknown>
       }>
     }
     for (const command of body.commands || []) {
@@ -300,6 +313,8 @@ async function pollCommands(): Promise<void> {
           chatMessageId: command.chatMessageId,
           cameraBody: command.cameraBody,
           offsetMs: command.offsetMs,
+          element: command.element,
+          payload: command.payload,
         })
         events.emit('control-room.command.completed', {
           commandId: command.id,

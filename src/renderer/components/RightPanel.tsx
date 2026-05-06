@@ -97,6 +97,10 @@ export function HealthStrip(): React.ReactElement {
   // of the strip not clipping. PipelineHealthChip already surfaces queue
   // pressure when something IS stuck, which is the only time those tiles
   // actually mattered.
+  // 2026-05-02 Day 2: REM tile dropped — same reason. The remaining-routine
+  // count is derivable from REC's denominator minus numerator, and it was the
+  // tile that the meta row was clipping under tight horizontal budget. REC's
+  // tooltip surfaces the explicit "(N/M)" detail on hover for confirmation.
   return (
     <div className="health-strip">
       <div className="health-tile" title="Complete">
@@ -107,13 +111,9 @@ export function HealthStrip(): React.ReactElement {
         <span className="health-label">Pix</span>
         <strong>{photosPendingCount}</strong>
       </div>
-      <div className="health-tile" title={`Recorded routines (${recorded}/${total})`}>
+      <div className="health-tile" title={`Recorded routines (${recorded}/${total}) — ${remaining} remaining`}>
         <span className="health-label">Rec</span>
         <strong>{recorded}<span className="health-denom">/{total}</span></strong>
-      </div>
-      <div className="health-tile" title="Remaining routines">
-        <span className="health-label">Rem</span>
-        <strong>{remaining}</strong>
       </div>
     </div>
   )

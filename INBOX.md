@@ -1,10 +1,21 @@
 # Electron App INBOX — Active Items
 
-Last audited: 2026-04-19 13:08 EDT. Everything below is either OUTSTANDING or PARTIAL. Completed/stale items are at the bottom under `## Archive`.
+Last audited: 2026-05-05 22:27 EDT. Operator confirmed "almost all stale" — entire archive below is pre-build8 / pre-build9 work or operator-superseded.
+
+## Active
+
+- None pending in this file. Active work tracked in:
+  - `docs/plans/2026-05-03-build9-fix-list.md` — build #9 fix list (status table inline)
+  - `docs/plans/2026-05-04-late-cut.md` — Late Cut spec, not yet implemented
+  - `docs/plans/2026-05-05-build9-items-3-4-11-plan.md` — items #3, #4, #11 design + status
+
+## Archive (everything below — pre-build8 / pre-build9, mostly stale per operator 2026-05-05)
+
+If an item below resurfaces in operator complaint, lift it back to ## Active above.
 
 ---
 
-## BUG P0 2026-04-24 16:23 EDT — Hallucinated 20-photo threshold blocking Latest Photos visibility
+## BUG P0 2026-04-24 16:23 EDT — Hallucinated 20-photo threshold blocking Latest Photos visibility (FUNCTIONALLY ADDRESSED — incrementalPublishEvery default = 1 in types.ts:1476; threshold-gate cleanup never landed but UX is correct)
 
 **This is a regression, not a feature.** Introduced in commit `452a6de8` (2026-04-19 14:08 UTC) which bundled three things under "feat(upload): round-robin photo upload + incremental plugin/complete + sharp thumbnail fix":
 1. Round-robin upload strategy (legitimate, user-requested)

@@ -32,6 +32,7 @@ import * as state from './state'
 import * as uploadService from './upload'
 import * as photoService from './photos'
 import * as ffmpegService from './ffmpeg'
+import * as events from './events'
 import { getSettings } from './settings'
 import type { RemoteRoutineInventory } from './upload'
 
@@ -351,6 +352,20 @@ export async function reconcileMedia(opts: ReconcileOpts): Promise<ReconcileResu
   // ── Surface result to renderer when non-silent + actionable ──
   if (!silent && (result.queued > 0 || result.errors.length > 0)) {
     sendToRenderer(IPC_CHANNELS.MEDIA_RECONCILE_RESULT, result)
+  }
+
+  // Build #9 item #4: surface every non-silent reconcile in the event log,
+  // plus any reconcile that actually queued or errored regardless of silence.
+  if (!silent || result.queued > 0 || result.errors.length > 0) {
+    events.emit('reconcile.summary', {
+      scope,
+      scanned: result.scanned,
+      repaired: result.repaired,
+      queued: result.queued,
+      skipped: result.skippedReason ?? null,
+      errors: result.errors.length,
+      tookMs: result.tookMs,
+    })
   }
 
   return result

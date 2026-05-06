@@ -37,11 +37,27 @@ function getPath(): string {
 const RECENT_RING_SIZE = 2000
 const recentEvents: Array<{ t: string; kind: string; data: EventPayload }> = []
 
+/**
+ * Live emit subscriber — main/index.ts wires this to BrowserWindow fanout so
+ * the renderer's EventLogPanel receives events in real-time. Single subscriber
+ * (the main app window). Best-effort; never throws back into emit().
+ */
+type EmitListener = (record: { t: string; kind: string; data: EventPayload }) => void
+let emitListener: EmitListener | null = null
+
+export function setOnEmit(cb: EmitListener | null): void {
+  emitListener = cb
+}
+
 export function emit(kind: string, data: EventPayload = {}): void {
   const t = new Date().toISOString()
   const record = { t, kind, data }
   recentEvents.push(record)
   if (recentEvents.length > RECENT_RING_SIZE) recentEvents.shift()
+
+  if (emitListener) {
+    try { emitListener(record) } catch { /* never let UI fanout break the emit */ }
+  }
 
   if (writeFailures >= MAX_WRITE_FAILURES_BEFORE_QUIET) return
 

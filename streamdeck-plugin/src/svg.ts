@@ -70,10 +70,36 @@ export function nextRoutineAlert(entryNumber: string | null): string {
 
 // Item 7: cycle OBS transitions on press. Button face shows the current
 // transition name (truncated) so operator knows what's loaded.
+// Stinger transitions get a big glowing red border because firing one is
+// destructive (auto-reverts after settle) \u2014 operator wants a hard visual
+// cue so they don't accidentally leave the button on stinger.
 export function cycleTransition(currentName: string | null): string {
   const safeName = (currentName ?? 'NONE').toUpperCase()
   const cropped = safeName.length > 9 ? safeName.slice(0, 8) + '\u2026' : safeName
   const fs = cropped.length <= 5 ? 28 : cropped.length <= 7 ? 22 : 18
+  const isStinger = (currentName ?? '').toLowerCase().includes('stinger')
+
+  if (isStinger) {
+    // Custom wrap \u2014 red glow border + warmer body. Border rect inset 4px
+    // so the stroke (8px) sits inside the 144px canvas without clipping.
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
+      <defs>
+        <filter id="redGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="3.5"/>
+        </filter>
+      </defs>
+      <rect width="144" height="144" rx="12" fill="#2a0a0a"/>
+      <rect x="4" y="4" width="136" height="136" rx="10" fill="none" stroke="#ef4444" stroke-width="8" filter="url(#redGlow)" opacity="0.9">
+        <animate attributeName="opacity" values="0.6;1;0.6" dur="1.4s" repeatCount="indefinite"/>
+      </rect>
+      <rect x="4" y="4" width="136" height="136" rx="10" fill="none" stroke="#ff6b6b" stroke-width="3"/>
+      <text x="72" y="32" text-anchor="middle" fill="#ff8a8a" font-size="18" font-weight="800" font-family="sans-serif" letter-spacing="2.5">CYCLE</text>
+      <text x="72" y="62" text-anchor="middle" fill="#ffb0b0" font-size="14" font-weight="700" font-family="sans-serif" letter-spacing="1.5">TRANSITION</text>
+      <text x="72" y="100" text-anchor="middle" fill="#ffffff" font-size="${fs}" font-weight="900" font-family="sans-serif">${cropped}</text>
+      <text x="72" y="128" text-anchor="middle" fill="#ff6b6b" font-size="22" font-weight="900" font-family="sans-serif">\u26a0</text>
+    </svg>`
+  }
+
   return wrap(`
     <text x="72" y="32" text-anchor="middle" fill="#a5b4fc" font-size="18" font-weight="800" font-family="sans-serif" letter-spacing="2.5">CYCLE</text>
     <text x="72" y="62" text-anchor="middle" fill="#9090b0" font-size="14" font-weight="700" font-family="sans-serif" letter-spacing="1.5">TRANSITION</text>
@@ -221,5 +247,93 @@ export function startingSoonToggle(active: boolean): string {
     <text x="72" y="74" text-anchor="middle" fill="${labelColor}" font-size="22" font-weight="900" font-family="sans-serif" letter-spacing="2">SOON</text>
     <circle cx="60" cy="112" r="9" fill="${color}"/>
     <text x="80" y="120" text-anchor="start" fill="${statusColor}" font-size="24" font-weight="900" font-family="sans-serif" letter-spacing="2">${status}</text>
+  `, bg)
+}
+
+// Unified meter — N vertical columns side-by-side on a single button.
+// `entries` = [{label, peak (0..1)}]. Color-graded: green / amber / red.
+export function unifiedMeter(entries: Array<{ label: string; peak: number }>): string {
+  if (entries.length === 0) return wrap('', '#0d0d14')
+  const N = entries.length
+  const SIDE_PAD = 8
+  const COL_GAP = 4
+  const LABEL_Y = 14
+  const LABEL_H = 18
+  const BAR_TOP = LABEL_H + 4
+  const BAR_BOTTOM = 138
+  const BAR_H = BAR_BOTTOM - BAR_TOP
+  const totalGapW = (N - 1) * COL_GAP
+  const colW = (144 - 2 * SIDE_PAD - totalGapW) / N
+
+  function fillFor(ratio: number): string {
+    if (ratio < 0.55) return '#22c55e'
+    if (ratio < 0.85) return '#f59e0b'
+    return '#ef4444'
+  }
+
+  let parts = ''
+  for (let i = 0; i < N; i++) {
+    const { label, peak } = entries[i]
+    const clamped = Math.max(0, Math.min(1, peak))
+    const x = SIDE_PAD + i * (colW + COL_GAP)
+    // Label
+    parts += `<text x="${x + colW / 2}" y="${LABEL_Y}" text-anchor="middle" fill="#cbd5e1" font-size="13" font-weight="800" font-family="sans-serif" letter-spacing="1">${label}</text>`
+    // Track (background)
+    parts += `<rect x="${x}" y="${BAR_TOP}" width="${colW}" height="${BAR_H}" fill="#1a1a24" opacity="0.85" rx="2"/>`
+    // Filled portion (grows from bottom up)
+    const fillH = clamped * BAR_H
+    const fillY = BAR_TOP + (BAR_H - fillH)
+    parts += `<rect x="${x}" y="${fillY}" width="${colW}" height="${fillH}" fill="${fillFor(clamped)}" rx="2"/>`
+    // Tick marks at -20dB (~0.67), -10dB (~0.83), 0dB (1.0) — visual reference
+    for (const t of [0.55, 0.85]) {
+      const tickY = BAR_TOP + (1 - t) * BAR_H
+      parts += `<line x1="${x}" y1="${tickY}" x2="${x + colW}" y2="${tickY}" stroke="#0d0d14" stroke-width="1.5" opacity="0.6"/>`
+    }
+  }
+
+  return wrap(parts, '#0d0d14')
+}
+
+// Slow zoom — magnifying glass with + (zoomed-in state) or - (zoomed-out state).
+export function slowZoom(zoomedIn: boolean): string {
+  const accent = zoomedIn ? '#fbbf24' : '#a5b4fc'
+  const bg = zoomedIn ? '#1f1a0a' : '#1a1a2e'
+  const sign = zoomedIn ? '+' : '−' // − minus
+  return wrap(`
+    <text x="72" y="34" text-anchor="middle" fill="${accent}" font-size="20" font-weight="700" font-family="sans-serif" letter-spacing="3">ZOOM</text>
+    <circle cx="60" cy="78" r="26" fill="none" stroke="${accent}" stroke-width="6"/>
+    <line x1="80" y1="98" x2="104" y2="122" stroke="${accent}" stroke-width="8" stroke-linecap="round"/>
+    <text x="60" y="88" text-anchor="middle" fill="${accent}" font-size="36" font-weight="900" font-family="sans-serif">${sign}</text>
+    <text x="72" y="138" text-anchor="middle" fill="#888" font-size="14" font-weight="600" font-family="sans-serif" letter-spacing="2">${zoomedIn ? 'IN' : 'OUT'}</text>
+  `, bg)
+}
+
+export function slowZoomScene(label: string, zoomedIn: boolean): string {
+  const accent = zoomedIn ? '#fbbf24' : '#a5b4fc'
+  const bg = zoomedIn ? '#1f1a0a' : '#1a1a2e'
+  const sign = zoomedIn ? '+' : '−'
+  return wrap(`
+    <text x="72" y="30" text-anchor="middle" fill="${accent}" font-size="16" font-weight="700" font-family="sans-serif" letter-spacing="3">${label}</text>
+    <circle cx="60" cy="78" r="22" fill="none" stroke="${accent}" stroke-width="5"/>
+    <line x1="76" y1="94" x2="100" y2="118" stroke="${accent}" stroke-width="7" stroke-linecap="round"/>
+    <text x="60" y="86" text-anchor="middle" fill="${accent}" font-size="30" font-weight="900" font-family="sans-serif">${sign}</text>
+    <text x="72" y="138" text-anchor="middle" fill="#888" font-size="13" font-weight="600" font-family="sans-serif" letter-spacing="2">${zoomedIn ? 'ZOOMED' : 'BASE'}</text>
+  `, bg)
+}
+
+export function featureCard(mode: 'upNext' | 'thatWas', active: boolean): string {
+  const accent = active ? '#fbbf24' : '#a5b4fc'
+  const bg = active ? '#1f1a0a' : '#0f1024'
+  const top = mode === 'upNext' ? 'UP NEXT' : 'THAT WAS'
+  // Simple "page" icon: outer card, brand stripe, two text lines, dancers row
+  return wrap(`
+    <rect x="22" y="34" width="100" height="78" rx="6" fill="none" stroke="${accent}" stroke-width="4"/>
+    <rect x="22" y="34" width="100" height="6" fill="${accent}"/>
+    <text x="72" y="22" text-anchor="middle" fill="${accent}" font-size="14" font-weight="800" font-family="sans-serif" letter-spacing="3">${top}</text>
+    <text x="72" y="68" text-anchor="middle" fill="${active ? '#fff7d6' : '#cbd5e1'}" font-size="22" font-weight="900" font-family="sans-serif">#42</text>
+    <line x1="36" y1="80" x2="108" y2="80" stroke="${accent}" stroke-width="2" opacity="0.6"/>
+    <line x1="36" y1="90" x2="108" y2="90" stroke="${accent}" stroke-width="2" opacity="0.4"/>
+    <line x1="36" y1="100" x2="86" y2="100" stroke="${accent}" stroke-width="2" opacity="0.3"/>
+    <text x="72" y="138" text-anchor="middle" fill="#888" font-size="13" font-weight="600" font-family="sans-serif" letter-spacing="2">${active ? 'LIVE' : 'FIRE'}</text>
   `, bg)
 }

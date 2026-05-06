@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
-import type { ChatMessage, PinnedChatMessage } from '../../shared/types'
+import type { ChatMessage, PinnedChatMessage, LivestreamPinnedMessage } from '../../shared/types'
 
 const ADMIN_NAME_KEY = 'cse:chatAdminName'
 
@@ -29,6 +29,7 @@ export default function PanelChat(): React.ReactElement {
   const chat = useStore((s) => s.chat)
   const setChatMessages = useStore((s) => s.setChatMessages)
   const setChatPinned = useStore((s) => s.setChatPinned)
+  const setChatLivestreamPinned = useStore((s) => s.setChatLivestreamPinned)
   const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -39,7 +40,11 @@ export default function PanelChat(): React.ReactElement {
     api?.chatGetPinned?.().then((pinned: PinnedChatMessage[]) => {
       if (Array.isArray(pinned)) setChatPinned(pinned)
     }).catch(() => {})
-  }, [setChatMessages, setChatPinned])
+    // build9o (Item #11) — backfill the livestream-pinned list at mount
+    api?.chatGetLivestreamPinned?.().then((pinned: LivestreamPinnedMessage[]) => {
+      if (Array.isArray(pinned)) setChatLivestreamPinned(pinned)
+    }).catch(() => {})
+  }, [setChatMessages, setChatPinned, setChatLivestreamPinned])
 
   // Auto-scroll to newest message on update
   useEffect(() => {
@@ -54,6 +59,15 @@ export default function PanelChat(): React.ReactElement {
     const optimistic = chat.pinned.filter((p) => p.id !== id)
     setChatPinned(optimistic)
     try { await (window.api as any)?.chatUnpin?.(id) } catch { /* ignore */ }
+  }
+  // build9o (Item #11) — livestream-only pin destination
+  async function handleLivestreamPin(id: string): Promise<void> {
+    try { await (window.api as any)?.chatLivestreamPin?.(id) } catch { /* ignore */ }
+  }
+  async function handleLivestreamUnpin(id: string): Promise<void> {
+    const optimistic = chat.livestreamPinned.filter((p) => p.id !== id)
+    setChatLivestreamPinned(optimistic)
+    try { await (window.api as any)?.chatLivestreamUnpin?.(id) } catch { /* ignore */ }
   }
   async function handleHide(id: string, name: string): Promise<void> {
     if (!window.confirm(`Hide message from "${name}"? Already-broadcast viewers won't see it removed, but reloads will be clean.`)) return
@@ -71,6 +85,7 @@ export default function PanelChat(): React.ReactElement {
   }
 
   const pinnedIds = new Set(chat.pinned.map((p) => p.id))
+  const livestreamPinnedIds = new Set(chat.livestreamPinned.map((p) => p.id))
 
   const [adminName, setAdminName] = useState<string>(() => {
     try { return localStorage.getItem(ADMIN_NAME_KEY) || 'Host' } catch { return 'Host' }
@@ -114,23 +129,34 @@ export default function PanelChat(): React.ReactElement {
         )}
         {chat.messages.slice(-100).map((msg) => {
           const pinned = pinnedIds.has(msg.id)
+          const livestreamPinned = livestreamPinnedIds.has(msg.id)
+          const anyPinned = pinned || livestreamPinned
           return (
-            <div key={msg.id} className={`panel-chat-msg${pinned ? ' pinned' : ''}`}>
+            <div key={msg.id} className={`panel-chat-msg${anyPinned ? ' pinned' : ''}`}>
               <div className="panel-chat-avatar">{initial(msg.name)}</div>
               <div className="panel-chat-body">
                 <div className="panel-chat-meta">
                   <strong>{msg.name || 'anon'}</strong>
                   <span className="panel-chat-time">{relTime(msg.timestamp)}</span>
+                  {pinned && <span className="panel-chat-pin-badge pin-video" title="Pinned to recording">\ud83d\udcf9</span>}
+                  {livestreamPinned && <span className="panel-chat-pin-badge pin-stream" title="Pinned to livestream">\ud83c\udf10</span>}
                 </div>
                 <div className="panel-chat-text">{msg.text}</div>
               </div>
               <div className="panel-chat-actions">
                 <button
-                  className="panel-chat-pin-btn"
+                  className={`panel-chat-pin-btn pin-video${pinned ? ' active' : ''}`}
                   onClick={() => (pinned ? handleUnpin(msg.id) : handlePin(msg.id))}
-                  title={pinned ? 'Unpin' : 'Pin'}
+                  title={pinned ? 'Unpin from recording' : 'Pin to recording (burns into video)'}
                 >
-                  {pinned ? '\u2605' : '\u2606'}
+                  \ud83d\udcf9
+                </button>
+                <button
+                  className={`panel-chat-pin-btn pin-stream${livestreamPinned ? ' active' : ''}`}
+                  onClick={() => (livestreamPinned ? handleLivestreamUnpin(msg.id) : handleLivestreamPin(msg.id))}
+                  title={livestreamPinned ? 'Unpin from livestream' : 'Pin to livestream only (no video burn)'}
+                >
+                  \ud83c\udf10
                 </button>
                 <button
                   className="panel-chat-hide-btn"

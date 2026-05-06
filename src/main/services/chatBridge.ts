@@ -4,7 +4,7 @@
  * Starting Soon overlay.
  */
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js'
-import { ChatMessage, PinnedChatMessage } from '../../shared/types'
+import { ChatMessage, PinnedChatMessage, LivestreamPinnedMessage } from '../../shared/types'
 import { getResolvedConnection } from './schedule'
 import { logger } from '../logger'
 import * as events from './events'
@@ -23,6 +23,11 @@ let pinnedMessages: PinnedChatMessage[] = []
 let onPinChange: (() => void) | null = null
 let onMessagePush: ((msg: ChatMessage) => void) | null = null
 let onMessagePinned: ((msg: ChatMessage) => void) | null = null
+// build9o (Item #11) — livestream-only pin destination is independent of
+// the burn-into-video path (no LT/OBS broadcast, no onMessagePinned fire).
+// Same MAX cap so a single operator can't accidentally fill the player.
+let livestreamPinnedMessages: LivestreamPinnedMessage[] = []
+let onLivestreamPinChange: (() => void) | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
 let pollTimer: NodeJS.Timeout | null = null
 let reconnectDelayMs = 2000  // grows on repeated failures
@@ -47,6 +52,14 @@ export function setOnMessagePinned(cb: (msg: ChatMessage) => void): void {
 
 function notifyPinChange(): void {
   if (onPinChange) onPinChange()
+}
+
+// build9o (Item #11)
+export function setOnLivestreamPinChange(cb: () => void): void {
+  onLivestreamPinChange = cb
+}
+function notifyLivestreamPinChange(): void {
+  if (onLivestreamPinChange) onLivestreamPinChange()
 }
 
 function scheduleReconnect(): void {
@@ -202,6 +215,7 @@ export function stopChatBridge(): void {
   logger.app.info('Chat bridge: stopped')
   messages = []
   pinnedMessages = []
+  livestreamPinnedMessages = []
 }
 
 export function getChatMessages(): ChatMessage[] {
@@ -250,6 +264,101 @@ export function clearPinned(): void {
   if (pinnedMessages.length === 0) return
   pinnedMessages = []
   notifyPinChange()
+}
+
+// ── build9o (Item #11) — livestream-only pin path ──
+//
+// Posts to a CompPortal plugin endpoint that the livestream player subscribes
+// to client-side; the player overlays the message on the video stream in the
+// browser, never burning into the recorded archive video. Two-button operator
+// UI (📹 video / 🌐 livestream) toggles each destination independently.
+//
+// Local state advances on operator click; the POST is best-effort. CompPortal
+// realtime UPDATE will eventually be the authoritative source, but until that
+// channel ships in CompPortal-2 we keep CSE responsive immediately and rely on
+// 5s backfill / next session's startup for cross-CSE convergence.
+
+export function getLivestreamPinned(): LivestreamPinnedMessage[] {
+  return livestreamPinnedMessages.slice()
+}
+
+export async function livestreamPinMessage(id: string): Promise<boolean> {
+  if (livestreamPinnedMessages.find((p) => p.id === id)) return false
+  const msg = messages.find((m) => m.id === id)
+  if (!msg) return false
+  if (livestreamPinnedMessages.length >= MAX_PINNED) {
+    livestreamPinnedMessages.shift()
+  }
+  livestreamPinnedMessages.push({
+    id: msg.id,
+    name: msg.name,
+    text: msg.text,
+    pinnedAt: Date.now(),
+  })
+  notifyLivestreamPinChange()
+  // Best-effort POST to CompPortal. Failures don't roll back local state —
+  // the next backfill / page load will reconcile if CompPortal lost it.
+  const conn = getResolvedConnection()
+  if (!conn) {
+    logger.app.warn(`Chat livestream-pin: no resolved connection (id=${id}); local-only`)
+    return true
+  }
+  try {
+    const response = await fetch(
+      `${conn.apiBase}/api/plugin/chat/${encodeURIComponent(id)}/livestream-pin`,
+      { method: 'POST', headers: { Authorization: `Bearer ${conn.apiKey}` } },
+    )
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      logger.app.warn(
+        `Chat livestream-pin: HTTP ${response.status}${body ? ` ${body.slice(0, 160)}` : ''} (id=${id})`,
+      )
+    } else {
+      events.emit('chat.livestream.pinned', { id, name: msg.name })
+    }
+  } catch (err) {
+    logger.app.warn(
+      `Chat livestream-pin: post failed (id=${id}): ${err instanceof Error ? err.message : err}`,
+    )
+  }
+  return true
+}
+
+export async function livestreamUnpinMessage(id: string): Promise<boolean> {
+  const idx = livestreamPinnedMessages.findIndex((p) => p.id === id)
+  if (idx === -1) return false
+  livestreamPinnedMessages.splice(idx, 1)
+  notifyLivestreamPinChange()
+  const conn = getResolvedConnection()
+  if (!conn) {
+    logger.app.warn(`Chat livestream-unpin: no resolved connection (id=${id}); local-only`)
+    return true
+  }
+  try {
+    const response = await fetch(
+      `${conn.apiBase}/api/plugin/chat/${encodeURIComponent(id)}/livestream-pin`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${conn.apiKey}` } },
+    )
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      logger.app.warn(
+        `Chat livestream-unpin: HTTP ${response.status}${body ? ` ${body.slice(0, 160)}` : ''} (id=${id})`,
+      )
+    } else {
+      events.emit('chat.livestream.unpinned', { id })
+    }
+  } catch (err) {
+    logger.app.warn(
+      `Chat livestream-unpin: delete failed (id=${id}): ${err instanceof Error ? err.message : err}`,
+    )
+  }
+  return true
+}
+
+export function clearLivestreamPinned(): void {
+  if (livestreamPinnedMessages.length === 0) return
+  livestreamPinnedMessages = []
+  notifyLivestreamPinChange()
 }
 
 /**

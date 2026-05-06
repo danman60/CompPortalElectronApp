@@ -69,8 +69,25 @@ export async function postRoutineStatus(
     return false
   }
   const url = `${conn.apiBase}/api/plugin/routine-status`
-  const body: Record<string, unknown> = { competitionId, entryId, status }
-  if (status === 'scratched' && scratchedAt) body.scratchedAt = scratchedAt
+  // CompPortal contract (verified 2026-05-04 against
+  // CompPortal/src/app/api/plugin/routine-status/route.ts:34-42):
+  //   { entryId: string, scratched: boolean, reason?: string }
+  // Tenant lookup is derived from the bearer token, so competitionId in the
+  // body is unused server-side. The legacy `{competitionId, entryId, status:'scratched'|'unscratched'}`
+  // shape this function used to send returned 400 "Missing required fields:
+  // entryId, scratched" — that's the cosmetic warning operator hit on
+  // 2026-05-03 17:42 / 17:56 / 22:32 EDT for entry fba489ef. scratchedAt is
+  // computed server-side at the time of the update; passing it from CSE was
+  // never honored.
+  const body: Record<string, unknown> = {
+    entryId,
+    scratched: status === 'scratched',
+  }
+  // Suppress unused-arg warnings while keeping the signature stable for callers
+  // that already pass these. competitionId stays in the public API for future
+  // tenant-routing changes; scratchedAt is intentionally dropped (server sets it).
+  void competitionId
+  void scratchedAt
 
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), ROUTINE_STATUS_TIMEOUT_MS)
@@ -114,6 +131,17 @@ export async function postRoutineStatusBulk(
   const conn = getResolvedConnection()
   if (!conn) return false
   const url = `${conn.apiBase}/api/plugin/routine-status-bulk`
+  // CompPortal contract (verified 2026-05-04 against
+  // CompPortal/src/app/api/plugin/routine-status-bulk/route.ts:18-19):
+  //   { items: [{ entryId: string, scratched: boolean, reason?: string }] }
+  // Was sending `{competitionId, entries: [{entryId, status, scratchedAt}]}`,
+  // hence the "items must be an array of 1..100 ..." 400. Tenant comes from
+  // bearer auth — competitionId in the body is unused server-side.
+  const items = entries.map((e) => ({
+    entryId: e.entryId,
+    scratched: e.status === 'scratched',
+  }))
+  void competitionId
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), ROUTINE_STATUS_TIMEOUT_MS * 2)
   try {
@@ -123,7 +151,7 @@ export async function postRoutineStatusBulk(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${conn.apiKey}`,
       },
-      body: JSON.stringify({ competitionId, entries }),
+      body: JSON.stringify({ items }),
       signal: abort.signal,
     })
     if (!response.ok) {

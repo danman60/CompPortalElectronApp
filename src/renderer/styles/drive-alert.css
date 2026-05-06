@@ -65,11 +65,18 @@
 .da-close:hover { color: var(--text-primary); background: var(--bg-hover); }
 
 /* ── Import Pill (Header) ── */
+/* 2026-05-02 (Burlington UDC Day 2): operator reported the "Safe to remove …
+   634 photos · done 7:15 PM" text wrapping into a 6-line tower under tight
+   topband-brand width. Force single-line with nowrap and tighten paddings —
+   keep the info, lose the vertical stack. Pill grows horizontally instead.
+   2026-05-04: nowrap caused the pill to dominate the topband — operator
+   wanted it constrained to a card-shape. Cap max-width and ellipsis the
+   overflow so the pill stays single-line but proportionate. */
 .import-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 5px;
+  padding: 3px 9px;
   margin: 0 6px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
@@ -78,6 +85,20 @@
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 1;
+  max-width: 320px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The text label inside the pill takes the overflow — the dot + remove icon
+   stay full-size; only the message body ellipsizes. */
+.import-pill > span:not(.import-pill-dot):not(.import-pill-remove-icon) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .import-pill:hover { border-color: var(--accent); background: var(--bg-hover); }
 .import-pill.complete {

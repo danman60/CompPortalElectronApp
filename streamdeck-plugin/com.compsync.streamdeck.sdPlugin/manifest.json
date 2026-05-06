@@ -130,6 +130,17 @@
       ]
     },
     {
+      "UUID": "com.compsync.streamdeck.overlay-ticker",
+      "Name": "Ticker",
+      "Tooltip": "Toggle scrolling ticker bar overlay",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/actions/clock", "Title": "TKR" },
+        { "Image": "imgs/actions/clock", "Title": "TKR" }
+      ]
+    },
+    {
       "UUID": "com.compsync.streamdeck.overlay-starting-soon",
       "Name": "Starting Soon",
       "Tooltip": "Toggle Starting Soon overlay; button shows ON/OFF",
@@ -150,6 +161,46 @@
       "UUID": "com.compsync.streamdeck.cycle-transition",
       "Name": "Cycle OBS Transition",
       "Tooltip": "Cycles through OBS scene transitions; button shows current",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.slow-zoom",
+      "Name": "Slow Zoom (Wide)",
+      "Tooltip": "Toggle slow zoom on the Wide scene via OBS Move Transition",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.slow-zoom-tight",
+      "Name": "Slow Zoom (Tight)",
+      "Tooltip": "Toggle slow zoom on the Tight scene via OBS Move Transition",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.unified-meters",
+      "Name": "Unified Meters",
+      "Tooltip": "All audio feeds on one button as side-by-side vertical meters (default: PERF + J1-J3)",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.feature-card-up-next",
+      "Name": "Feature Card — UP NEXT",
+      "Tooltip": "Cut to FEATURE CARD scene with UP NEXT layout. Press again to hide.",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
+      "UUID": "com.compsync.streamdeck.feature-card-that-was",
+      "Name": "Feature Card — THAT WAS",
+      "Tooltip": "Cut to FEATURE CARD scene with THAT WAS layout (and bottom UP NEXT strip).",
       "Icon": "imgs/actions/clock",
       "Controllers": ["Keypad"],
       "States": [{ "Image": "imgs/actions/clock", "Title": "" }]

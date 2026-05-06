@@ -24,6 +24,7 @@ export interface AppState {
     logo: { visible: boolean; url: string }
     lowerThird: { visible: boolean }
     startingSoon?: { visible: boolean }
+    ticker?: { visible: boolean }
   }
 }
 

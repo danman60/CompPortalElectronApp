@@ -150,14 +150,6 @@ export default function Controls(): React.ReactElement {
           Prev
         </button>
         <button
-          className={`ctrl-btn record ${isRecording ? 'is-recording' : ''}`}
-          onClick={handleToggleRecord}
-          disabled={!isConnected}
-        >
-          {isRecording ? 'Stop Rec' : 'Record'}
-          <span className="hotkey-hint">{hotkeys?.toggleRecording || 'F5'}</span>
-        </button>
-        <button
           className={`ctrl-btn${isRecording && !isAwardsNext ? '' : ' disabled-muted'}${shouldFlash && flashAltPhase && !isAwardsNext ? ' next-flash-alert' : ''}${shouldFlash && !isAwardsNext ? ' next-flash-base' : ''}`}
           onClick={isRecording && !isAwardsNext ? handleNextFull : undefined}
           disabled={!isRecording || isAwardsNext}

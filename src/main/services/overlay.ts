@@ -3,7 +3,7 @@ import http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
-import { OverlayState, OverlayLayout, DEFAULT_LAYOUT, TickerState, StartingSoonState, AnimationConfig, StartingSoonConfig, StartingSoonPreset, StartingSoonLayout, GradientConfig, SSElementPosition, TimeDateConfig, CountdownStyleConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SocialBarConfig, SponsorCarouselConfig, VisualizerConfig, EventInfoConfig, ChatMessage, OverlayAnimation } from '../../shared/types'
+import { OverlayState, OverlayLayout, DEFAULT_LAYOUT, TickerState, StartingSoonState, AnimationConfig, StartingSoonConfig, StartingSoonPreset, StartingSoonLayout, GradientConfig, SSElementPosition, TimeDateConfig, CountdownStyleConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SocialBarConfig, SponsorCarouselConfig, VisualizerConfig, EventInfoConfig, ChatMessage, OverlayAnimation, VenueIdentifierConfig, SectionBadgeConfig } from '../../shared/types'
 import { getSettings } from './settings'
 import { logger } from '../logger'
 import { setupMediaRoutes, setVideoFolder, setPhotoFolder, setSponsorFolder } from './startingSoonMedia'
@@ -13,10 +13,50 @@ let server: http.Server | null = null
 let autoHideTimer: NodeJS.Timeout | null = null
 let chatFireTimer: NodeJS.Timeout | null = null
 
+// 2026-05-04 unified depth defaults — every element gets a card / subElements /
+// presets / activePreset. Defaults are tuned so the rendered output is byte-
+// equal to the previous CSS-only render (paddings/blurs match existing CSS,
+// fontSize=0 / color='' / fontWeight=0 / borderWidth=-1 mean "use CSS default").
+function defaultCard(overrides: Partial<import('../../shared/types').OverlayElementCardStyle> = {}): import('../../shared/types').OverlayElementCardStyle {
+  return {
+    backgroundColor: '',
+    backgroundOpacity: 1,
+    backdropBlur: 0,
+    paddingX: 0,
+    paddingY: 0,
+    innerGap: 0,
+    borderRadius: 0,
+    borderColor: '',
+    borderWidth: -1,
+    ...overrides,
+  }
+}
+function defaultSub(overrides: Partial<import('../../shared/types').OverlaySubElementStyle> = {}): import('../../shared/types').OverlaySubElementStyle {
+  return { fontSize: 0, color: '', fontWeight: 0, order: 0, show: true, ...overrides }
+}
+
 let overlayState: OverlayState = {
-  counter: { visible: true, current: 0, total: 0, entryNumber: '', nextAwardsTime: null },
-  clock: { visible: false },
-  logo: { visible: true, url: '' },
+  counter: {
+    visible: true, current: 0, total: 0, entryNumber: '', nextAwardsTime: null,
+    card: defaultCard(),
+    subElements: { number: defaultSub({ order: 0 }), label: defaultSub({ order: 1 }) },
+    presets: {},
+    activePreset: null,
+  },
+  clock: {
+    visible: false,
+    card: defaultCard(),
+    subElements: { time: defaultSub({ order: 0 }), date: defaultSub({ order: 1 }) },
+    presets: {},
+    activePreset: null,
+  },
+  logo: {
+    visible: true, url: '', assetUrl: '',
+    card: defaultCard(),
+    subElements: { image: defaultSub({ order: 0 }) },
+    presets: {},
+    activePreset: null,
+  },
   lowerThird: {
     visible: false,
     entryNumber: '',
@@ -26,11 +66,34 @@ let overlayState: OverlayState = {
     category: '',
     autoHideSeconds: 8,
     animation: 'random',
+    showBrandGlyph: true,
     showEntryNumber: true,
     showRoutineTitle: true,
     showDancers: true,
     showStudioName: true,
     showCategory: true,
+    brandGlyphUrl: '', // empty = use default /brand-logo route
+    card: {
+      backgroundColor: '',     // empty = use existing gradient
+      backgroundOpacity: 1,
+      backdropBlur: 16,        // matches existing CSS default
+      paddingX: 38,
+      paddingY: 24,
+      innerGap: 22,
+      borderRadius: 0,         // 0 = CSS default
+      borderColor: '',
+      borderWidth: -1,
+    },
+    subElements: {
+      brandGlyph:   defaultSub({ order: 0 }),
+      entryNumber:  defaultSub({ order: 1 }),
+      routineTitle: defaultSub({ order: 0 }),
+      dancers:      defaultSub({ order: 1 }),
+      studioName:   defaultSub({ order: 0 }),
+      category:     defaultSub({ order: 1 }),
+    },
+    presets: {},
+    activePreset: null,
   },
   ticker: {
     visible: false,
@@ -38,6 +101,10 @@ let overlayState: OverlayState = {
     speed: 60,
     backgroundColor: '#1e1e2e',
     textColor: '#ffffff',
+    card: defaultCard(),
+    subElements: { text: defaultSub({ order: 0 }) },
+    presets: {},
+    activePreset: null,
   },
   startingSoon: {
     visible: false,
@@ -45,6 +112,60 @@ let overlayState: OverlayState = {
     subtitle: '',
     showCountdown: false,
     countdownTarget: '',
+    assetUrl: '',
+    card: defaultCard(),
+    subElements: {
+      logo:     defaultSub({ order: 0 }),
+      title:    defaultSub({ order: 1 }),
+      accent:   defaultSub({ order: 2 }),
+      subtitle: defaultSub({ order: 3 }),
+      countdown:defaultSub({ order: 4 }),
+    },
+    presets: {},
+    activePreset: null,
+  },
+  featureCard: {
+    visible: false,
+    mode: 'upNext',
+    entryNumber: '',
+    routineTitle: '',
+    dancers: '',
+    studioName: '',
+    category: '',
+    nextEntryNumber: '',
+    nextRoutineTitle: '',
+    nextStudioName: '',
+    nextDancers: '',
+    nextCategory: '',
+    slideDirection: 'up',
+    firedAt: 0,
+    assetUrl: '',
+    card: {
+      backgroundColor: '',     // empty = use built-in gradient
+      backgroundOpacity: 1,
+      backdropBlur: 0,         // intentionally 0 — surface is fully opaque
+      paddingX: 64,
+      paddingY: 56,
+      innerGap: 28,
+      borderRadius: 0,
+      borderColor: '',
+      borderWidth: -1,
+    },
+    subElements: {
+      header:           defaultSub({ order: 0 }),
+      studioLogo:       defaultSub({ order: 1 }),
+      entryNumber:      defaultSub({ order: 2 }),
+      routineTitle:     defaultSub({ order: 3 }),
+      dancers:          defaultSub({ order: 4 }),
+      studioName:       defaultSub({ order: 5 }),
+      category:         defaultSub({ order: 6 }),
+      nextHeader:       defaultSub({ order: 7 }),
+      nextEntryNumber:  defaultSub({ order: 8 }),
+      nextRoutineTitle: defaultSub({ order: 9 }),
+      nextStudioName:   defaultSub({ order: 10 }),
+    },
+    presets: {},
+    activePreset: null,
   },
   chatFire: {
     visible: false,
@@ -69,9 +190,10 @@ const defaultSSConfig: StartingSoonConfig = {
   // "Magazine cover" default layout — asymmetric, intentional, looks good
   // out of the box without operator tweaking. Title-block on the left,
   // countdown hero on the right, logo top-left, time bottom-left.
-  // Aurora gradient + Bebas Neue / Inter pairing for a calm broadcast feel.
+  // Slate Aurora gradient — deep indigo cinematic baseline. Operator can
+  // switch to Aurora / any other preset via SSE; this is just a pro start.
   gradient: {
-    preset: 'aurora',
+    preset: 'slate-aurora',
     speed: 4,
     angle: 135,
   },
@@ -92,6 +214,10 @@ const defaultSSConfig: StartingSoonConfig = {
     eventCard:      { x:  5, y: 62, width: 32, height: 26, visible: false },
     upNext:         { x:  5, y: 58, width: 38, height: 34, visible: false },
     pinnedChat:     { x: 60, y: 64, width: 36, height: 26, visible: false },
+    // Premium pass 2026-05-06 — broadcast hallmarks. Sit in scene corners,
+    // operator-draggable via SSE if exposed; safe defaults below.
+    venueId:        { x: 36, y:  3, width: 28, height:  4, visible: true  },
+    sectionBadge:   { x: 82, y:  3, width: 16, height:  4, visible: true  },
   },
   title: 'Starting Soon',
   titleFontSize: 112,
@@ -110,6 +236,13 @@ const defaultSSConfig: StartingSoonConfig = {
     showLabels: false,
     expiredText: 'SOON',
     prefixText: '',
+    // Premium pass 2026-05-06 — flipboard digit treatment by default for the
+    // broadcast feel. Operator can drop back to 'soft' via SSE.
+    style: 'flipboard',
+    finalSecondsTakeover: true,
+    finalSecondsThreshold: 30,
+    finalLabel: 'FINAL 30 SECONDS',
+    finalSubLabel: 'Show begins shortly',
   },
   timeDate: {
     enabled: true,
@@ -126,6 +259,10 @@ const defaultSSConfig: StartingSoonConfig = {
     opacity: 1,
     animation: 'pulse',
     animationSpeed: 5,
+    // Premium pass 2026-05-06 — trophy plinth on by default; operator can
+    // disable via SSE if the brand mark already has a busy shape.
+    haloEnabled: true,
+    haloColor: '#a4b3ff',
   },
   ticker: {
     enabled: false,
@@ -134,6 +271,10 @@ const defaultSSConfig: StartingSoonConfig = {
     color: '#ffffff',
     bgColor: 'rgba(0,0,0,0.55)',
     fontSize: 22,
+    // Premium pass 2026-05-06 — broadcast two-row treatment. Operator-overridable.
+    twoRow: true,
+    categoryLabel: 'EVENT INFO',
+    liveIndicator: true,
   },
   videoPlaylist: {
     enabled: false,
@@ -192,6 +333,22 @@ const defaultSSConfig: StartingSoonConfig = {
     showTimestamps: false,
   },
   tickerEnabled: false,
+  // Premium pass 2026-05-06 — broadcast hallmarks. Operator-editable via SSE.
+  venueIdentifier: {
+    enabled: true,
+    eventLabel: '',     // operator fills via SSE; empty = section hidden
+    venueName: '',
+    dayLabel: '',
+    fontSize: 14,
+    color: '#c5cae9',
+  },
+  sectionBadge: {
+    enabled: true,
+    label: 'STARTING SOON',
+    dotColor: '#ef4444',
+    fontSize: 12,
+    color: '#ffffff',
+  },
 }
 
 let startingSoonConfig: StartingSoonConfig = { ...defaultSSConfig }
@@ -252,6 +409,8 @@ function loadSSConfig(): void {
         visualizer: { ...defaultSSConfig.visualizer, ...(data.visualizer || {}) },
         upNext: { ...defaultSSConfig.upNext, ...(data.upNext || {}) },
         pinnedChat: { ...defaultSSConfig.pinnedChat, ...(data.pinnedChat || {}) },
+        venueIdentifier: { ...(defaultSSConfig.venueIdentifier as VenueIdentifierConfig), ...(data.venueIdentifier || {}) },
+        sectionBadge: { ...(defaultSSConfig.sectionBadge as SectionBadgeConfig), ...(data.sectionBadge || {}) },
       }
       logger.app.info('Starting soon config loaded from disk (deep-merged with defaults)')
     } else {
@@ -491,6 +650,44 @@ function getConfigPath(): string {
   return path.join(app.getPath('userData'), 'overlay-config.json')
 }
 
+// Helper — pluck the stylable surface (card/subElements/presets/activePreset
+// + asset overrides) for a single element so we can persist it without the
+// data-flow churn (entryNumber, current, etc. that should NEVER restore).
+function snapshotElementStyle(elementKey: OverlayElementKey): Record<string, unknown> {
+  const el = overlayState[elementKey] as any
+  return {
+    card: el.card,
+    subElements: el.subElements,
+    presets: el.presets,
+    activePreset: el.activePreset,
+    assetUrl: el.assetUrl,                  // logo / startingSoon
+    brandGlyphUrl: el.brandGlyphUrl,        // lowerThird
+    showBrandGlyph: el.showBrandGlyph,      // LT visibility flags
+    showEntryNumber: el.showEntryNumber,
+    showRoutineTitle: el.showRoutineTitle,
+    showDancers: el.showDancers,
+    showStudioName: el.showStudioName,
+    showCategory: el.showCategory,
+  }
+}
+
+function applyElementStyleSnapshot(elementKey: OverlayElementKey, snap: any): void {
+  if (!snap || typeof snap !== 'object') return
+  const el = overlayState[elementKey] as any
+  if (snap.card)           el.card = { ...el.card, ...snap.card }
+  if (snap.subElements)    el.subElements = { ...el.subElements, ...snap.subElements }
+  if (snap.presets)        el.presets = { ...el.presets, ...snap.presets }
+  if ('activePreset' in snap) el.activePreset = snap.activePreset
+  if (typeof snap.assetUrl === 'string')         el.assetUrl = snap.assetUrl
+  if (typeof snap.brandGlyphUrl === 'string')    el.brandGlyphUrl = snap.brandGlyphUrl
+  if (typeof snap.showBrandGlyph === 'boolean')  el.showBrandGlyph = snap.showBrandGlyph
+  if (typeof snap.showEntryNumber === 'boolean') el.showEntryNumber = snap.showEntryNumber
+  if (typeof snap.showRoutineTitle === 'boolean')el.showRoutineTitle = snap.showRoutineTitle
+  if (typeof snap.showDancers === 'boolean')     el.showDancers = snap.showDancers
+  if (typeof snap.showStudioName === 'boolean')  el.showStudioName = snap.showStudioName
+  if (typeof snap.showCategory === 'boolean')    el.showCategory = snap.showCategory
+}
+
 function saveOverlayConfig(): void {
   try {
     const config = {
@@ -506,6 +703,18 @@ function saveOverlayConfig(): void {
       },
       animation: overlayState.lowerThird.animation,
       autoFireEnabled: _autoFireEnabled,
+      // 2026-05-04 unified depth — per-element stylable surface, restored on
+      // boot. Excludes routine data (entryNumber/title/etc.) which is
+      // re-populated by updateRoutineData each session.
+      elementStyles: {
+        counter:      snapshotElementStyle('counter'),
+        clock:        snapshotElementStyle('clock'),
+        logo:         snapshotElementStyle('logo'),
+        lowerThird:   snapshotElementStyle('lowerThird'),
+        ticker:       snapshotElementStyle('ticker'),
+        startingSoon: snapshotElementStyle('startingSoon'),
+        featureCard:  snapshotElementStyle('featureCard'),
+      },
     }
     fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2))
   } catch (_err) { /* ignore persistence errors */ }
@@ -531,6 +740,13 @@ function loadOverlayConfig(): void {
       if (typeof config.autoFireEnabled === 'boolean') {
         _autoFireEnabled = config.autoFireEnabled
       }
+      // 2026-05-04 unified depth — restore per-element style snapshots.
+      if (config.elementStyles && typeof config.elementStyles === 'object') {
+        const es = config.elementStyles as Record<string, any>
+        ;(['counter','clock','logo','lowerThird','ticker','startingSoon','featureCard'] as OverlayElementKey[]).forEach((k) => {
+          if (es[k]) applyElementStyleSnapshot(k, es[k])
+        })
+      }
       logger.app.info('Overlay config loaded from disk')
     }
   } catch (_err) { /* ignore load errors */ }
@@ -552,20 +768,45 @@ export function getOverlayState(): OverlayState {
  * Inherits the current lower-third animation + animConfig.autoHideSeconds.
  * If called again while a fire is still visible, replaces the current
  * message and resets the auto-hide timer (simplest queue policy).
+ *
+ * 2026-05-02 (Burlington UDC Day 2): when each fire's timer expires, fire the
+ * `onChatFireAutoHide` callback so external code (chatBridge) can clear that
+ * specific pinned-message state.
+ *
+ * 2026-05-02 (Burlington UDC Day 2 — bug fix): the shared `chatFireTimer`
+ * was being cleared on every subsequent fire, which cancelled earlier pins'
+ * auto-hide-unpin timers. When operator hammered pins faster than 8s apart,
+ * earlier pins stayed "PINNED" in the operator UI forever. Now each fire gets
+ * its own per-msgId unpin timer in `chatFireUnpinTimers` so all pins reliably
+ * auto-clean even under burst-pin workloads.
  */
+let onChatFireAutoHide: ((msgId: string) => void) | null = null
+export function setOnChatFireAutoHide(cb: (msgId: string) => void): void {
+  onChatFireAutoHide = cb
+}
+const chatFireUnpinTimers = new Map<string, NodeJS.Timeout>()
+
 export function fireChatMessage(msg: ChatMessage): void {
   const animation = (overlayState.lowerThird.animation || 'random') as OverlayAnimation
-  const seconds = overlayState.animConfig.autoHideSeconds ?? 8
+  // 2026-05-02 (Burlington UDC Day 2): operator request — chat-fires (comment
+  // pins) should hold 1s less than the LT autoHide. LT settings stay
+  // authoritative; chat snaps off a beat earlier so the audience-visible state
+  // and the operator's pin queue feel responsive. Floor at 2s.
+  const baseSeconds = overlayState.animConfig.autoHideSeconds ?? 8
+  const seconds = Math.max(2, baseSeconds - 1)
+  const msgId = msg.id
   overlayState.chatFire = {
     visible: true,
-    messageId: msg.id,
+    messageId: msgId,
     username: msg.name || 'Anonymous',
     message: msg.text || '',
     animation,
     autoHideSeconds: seconds,
     firedAt: Date.now(),
   }
-  logger.app.info(`Overlay chat fire: "${msg.text?.slice(0, 40) ?? ''}" (${animation}, ${seconds}s)`)
+  logger.app.info(`Overlay chat fire: "${msg.text?.slice(0, 40) ?? ''}" (${animation}, ${seconds}s) id=${msgId.slice(0, 8)}`)
+  // Visibility timer: only the LAST fire's bubble is on-air, so clobbering
+  // the prior visibility timer is correct here.
   if (chatFireTimer) clearTimeout(chatFireTimer)
   if (seconds > 0) {
     chatFireTimer = setTimeout(() => {
@@ -574,10 +815,25 @@ export function fireChatMessage(msg: ChatMessage): void {
       notifyChange()
     }, seconds * 1000)
   }
+  // Per-message unpin timer: every pin gets its OWN timer so all pins clear in
+  // operator UI even if more pins fire in the meantime. Replacing the same
+  // message's timer if it gets re-pinned mid-fire is intentional (one unpin).
+  if (seconds > 0) {
+    const existing = chatFireUnpinTimers.get(msgId)
+    if (existing) clearTimeout(existing)
+    const t = setTimeout(() => {
+      chatFireUnpinTimers.delete(msgId)
+      logger.app.info(`Chat fire auto-hide unpinning id=${msgId.slice(0, 8)}`)
+      try { onChatFireAutoHide?.(msgId) } catch (e) {
+        logger.app.warn(`onChatFireAutoHide callback failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }, seconds * 1000)
+    chatFireUnpinTimers.set(msgId, t)
+  }
   notifyChange()
 }
 
-export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird' | 'startingSoon'): OverlayState {
+export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThird' | 'startingSoon' | 'ticker' | 'featureCard'): OverlayState {
   const el = overlayState[element]
   el.visible = !el.visible
 
@@ -585,6 +841,13 @@ export function toggleElement(element: 'counter' | 'clock' | 'logo' | 'lowerThir
   if (element === 'lowerThird' && !el.visible && autoHideTimer) {
     clearTimeout(autoHideTimer)
     autoHideTimer = null
+  }
+
+  // Persist ticker visibility — setTicker() is the canonical write path that
+  // saves overlay-config.json, so call it for parity instead of relying on a
+  // bare overlayState mutation that wouldn't survive restart.
+  if (element === 'ticker') {
+    saveOverlayConfig()
   }
 
   logger.app.info(`Overlay ${element}: ${el.visible ? 'ON' : 'OFF'}`)
@@ -645,6 +908,73 @@ export function hideLowerThird(): void {
   }
   logger.app.info('Overlay lower third hidden')
   notifyChange()
+}
+
+// ── Feature Card (2026-05-04) ──
+// Full-screen broadcast graphic. Two modes:
+//   - upNext:  large layout of upcoming routine
+//   - thatWas: large layout of just-performed routine + bottom UP NEXT strip
+// Surface is fully opaque (no transparency, no backdrop blur). Slide-on with
+// random direction per fire, bounce ease-in-out, motion blur during slide.
+// Slide-off mirrors. Auto-hide is intentionally OFF — operator owns timing.
+
+const FEATURE_CARD_DIRECTIONS: import('../../shared/types').OverlayFeatureCardSlideDirection[] =
+  ['up', 'down', 'left', 'right']
+
+export interface FeatureCardSlot {
+  entryNumber: string
+  routineTitle: string
+  dancers: string
+  studioName: string
+  category: string
+}
+
+export function setFeatureCardData(data: {
+  main: FeatureCardSlot
+  next: FeatureCardSlot
+}): void {
+  overlayState.featureCard.entryNumber = data.main.entryNumber
+  overlayState.featureCard.routineTitle = data.main.routineTitle
+  overlayState.featureCard.dancers = data.main.dancers
+  overlayState.featureCard.studioName = data.main.studioName
+  overlayState.featureCard.category = data.main.category
+  overlayState.featureCard.nextEntryNumber = data.next.entryNumber
+  overlayState.featureCard.nextRoutineTitle = data.next.routineTitle
+  overlayState.featureCard.nextDancers = data.next.dancers
+  overlayState.featureCard.nextStudioName = data.next.studioName
+  overlayState.featureCard.nextCategory = data.next.category
+  notifyChange()
+}
+
+export function fireFeatureCard(
+  mode: import('../../shared/types').OverlayFeatureCardMode,
+): import('../../shared/types').OverlayFeatureCardSlideDirection {
+  const dir = FEATURE_CARD_DIRECTIONS[Math.floor(Math.random() * FEATURE_CARD_DIRECTIONS.length)]
+  overlayState.featureCard.mode = mode
+  overlayState.featureCard.slideDirection = dir
+  overlayState.featureCard.firedAt = Date.now()
+  overlayState.featureCard.visible = true
+  logger.app.info(`Overlay feature card fired: mode=${mode} slide=${dir}`)
+  notifyChange()
+  return dir
+}
+
+export function hideFeatureCard(): void {
+  if (!overlayState.featureCard.visible) return
+  overlayState.featureCard.visible = false
+  // Bump firedAt so the iframe can re-trigger the slide-off animation
+  // independently of slide-on (it uses the same monotonic counter).
+  overlayState.featureCard.firedAt = Date.now()
+  logger.app.info('Overlay feature card hidden')
+  notifyChange()
+}
+
+export function isFeatureCardVisible(): boolean {
+  return overlayState.featureCard.visible
+}
+
+export function getFeatureCardMode(): import('../../shared/types').OverlayFeatureCardMode {
+  return overlayState.featureCard.mode
 }
 
 export function setLogoUrl(url: string): void {
@@ -721,6 +1051,20 @@ export function setTicker(updates: Partial<TickerState>): void {
   notifyChange()
 }
 
+/**
+ * Apply partial updates to the lower-third state. Mirror of setTicker —
+ * called from the VisualEditor when the operator toggles per-sub-element
+ * visibility (showBrandGlyph, showEntryNumber, showRoutineTitle, showDancers,
+ * showStudioName, showCategory) or any other LT field. notifyChange triggers
+ * the broadcast so the live overlay iframe updates without a refresh.
+ */
+export function setLowerThirdState(
+  updates: Partial<OverlayState['lowerThird']>,
+): void {
+  overlayState.lowerThird = { ...overlayState.lowerThird, ...updates }
+  notifyChange()
+}
+
 // --- Starting Soon ---
 
 export function setStartingSoon(updates: Partial<StartingSoonState>): void {
@@ -754,6 +1098,117 @@ export function setAnimationConfig(updates: Partial<AnimationConfig> & { animati
   notifyChange()
 }
 
+// --- 2026-05-04 Unified per-element style + preset operations ---
+
+export type OverlayElementKey =
+  | 'counter' | 'clock' | 'logo' | 'lowerThird' | 'ticker' | 'startingSoon' | 'featureCard'
+
+/**
+ * Decide whether a URL should be rendered as <video>, <img>, or skipped.
+ * Local Windows paths (operator-browsed) are normalized to lowercase to
+ * detect extensions safely. Animated GIF / animated WebP / APNG stay as
+ * <img> — the browser animates them natively. Only true video containers
+ * (mp4 / webm / mov / m4v) become <video autoplay loop muted playsinline>.
+ */
+export function assetTagForUrl(url: string): 'video' | 'img' | 'none' {
+  if (!url || typeof url !== 'string') return 'none'
+  const lower = url.toLowerCase().split('?')[0].split('#')[0]
+  if (/\.(mp4|webm|mov|m4v)$/.test(lower)) return 'video'
+  if (/\.(png|jpg|jpeg|svg|webp|gif|apng|avif)$/.test(lower)) return 'img'
+  // Default to img for ambiguous URLs (operator may have browsed an unusual ext)
+  return 'img'
+}
+
+/**
+ * Apply a partial style snapshot to one element's card / subElements / assetUrl.
+ * Used by the renderer's SelectedElementProperties panel — operator twiddles
+ * a knob, this fires, the WS state push fans out to every overlay iframe.
+ */
+export function setElementStyle(
+  elementKey: OverlayElementKey,
+  partial: {
+    card?: Partial<import('../../shared/types').OverlayElementCardStyle>
+    subElements?: Record<string, Partial<import('../../shared/types').OverlaySubElementStyle>>
+    assetUrl?: string
+  },
+): OverlayState {
+  const el = overlayState[elementKey] as any
+  if (!el) return overlayState
+  if (partial.card) {
+    el.card = { ...el.card, ...partial.card }
+  }
+  if (partial.subElements) {
+    const merged: Record<string, any> = { ...(el.subElements || {}) }
+    for (const [k, v] of Object.entries(partial.subElements)) {
+      merged[k] = { ...(merged[k] || {}), ...v }
+    }
+    el.subElements = merged
+  }
+  if (partial.assetUrl !== undefined) {
+    if (elementKey === 'logo' || elementKey === 'startingSoon' || elementKey === 'featureCard') {
+      el.assetUrl = partial.assetUrl
+    } else if (elementKey === 'lowerThird') {
+      el.brandGlyphUrl = partial.assetUrl
+    }
+  }
+  saveOverlayConfig()
+  notifyChange()
+  return overlayState
+}
+
+function ensurePresetsBag(elementKey: OverlayElementKey): Record<string, import('../../shared/types').OverlayElementPreset> {
+  const el = overlayState[elementKey] as any
+  if (!el.presets) el.presets = {}
+  return el.presets
+}
+
+export function saveElementPreset(elementKey: OverlayElementKey, name: string): OverlayState {
+  if (!name || !name.trim()) return overlayState
+  const el = overlayState[elementKey] as any
+  const snapshot: import('../../shared/types').OverlayElementPreset = {
+    card: { ...el.card },
+    subElements: JSON.parse(JSON.stringify(el.subElements || {})),
+    assetUrl: (elementKey === 'lowerThird') ? (el.brandGlyphUrl || '') : (el.assetUrl || ''),
+  }
+  const bag = ensurePresetsBag(elementKey)
+  bag[name.trim()] = snapshot
+  el.activePreset = name.trim()
+  saveOverlayConfig()
+  notifyChange()
+  logger.app.info(`Overlay preset saved: ${elementKey} → "${name.trim()}"`)
+  return overlayState
+}
+
+export function loadElementPreset(elementKey: OverlayElementKey, name: string): OverlayState {
+  const el = overlayState[elementKey] as any
+  const preset = el.presets?.[name]
+  if (!preset) return overlayState
+  el.card = { ...el.card, ...preset.card }
+  el.subElements = JSON.parse(JSON.stringify(preset.subElements || {}))
+  if (elementKey === 'lowerThird') {
+    el.brandGlyphUrl = preset.assetUrl || ''
+  } else if (elementKey === 'logo' || elementKey === 'startingSoon' || elementKey === 'featureCard') {
+    el.assetUrl = preset.assetUrl || ''
+  }
+  el.activePreset = name
+  saveOverlayConfig()
+  notifyChange()
+  logger.app.info(`Overlay preset loaded: ${elementKey} → "${name}"`)
+  return overlayState
+}
+
+export function deleteElementPreset(elementKey: OverlayElementKey, name: string): OverlayState {
+  const el = overlayState[elementKey] as any
+  if (el.presets && name in el.presets) {
+    delete el.presets[name]
+    if (el.activePreset === name) el.activePreset = null
+    saveOverlayConfig()
+    notifyChange()
+    logger.app.info(`Overlay preset deleted: ${elementKey} → "${name}"`)
+  }
+  return overlayState
+}
+
 export function startServer(): void {
   if (server) return
   initDefaults()
@@ -763,6 +1218,38 @@ export function startServer(): void {
     res.setHeader('Content-Type', 'text/html')
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
     res.send(buildOverlayHTML())
+  })
+
+  // 2026-05-04 unified depth — per-element asset override route. Mirrors
+  // /brand-logo's file-piping pattern so <img>/<video> in the iframe can fetch
+  // the operator-configured override (logo, LT brand glyph, SS logo) from
+  // their respective state.assetUrl / state.brandGlyphUrl fields without
+  // hitting the file:// cross-origin block.
+  app.get('/element-asset', (req, res) => {
+    try {
+      const key = String(req.query.key || '').toLowerCase()
+      let filePath = ''
+      if (key === 'logo')              filePath = (overlayState.logo as any).assetUrl || ''
+      else if (key === 'startingsoon') filePath = (overlayState.startingSoon as any).assetUrl || ''
+      else if (key === 'lowerthird')   filePath = (overlayState.lowerThird as any).brandGlyphUrl || ''
+      else if (key === 'featurecard')  filePath = (overlayState.featureCard as any).assetUrl || ''
+      if (!filePath || !fs.existsSync(filePath)) {
+        res.status(404).send('No element asset configured')
+        return
+      }
+      const ext = path.extname(filePath).toLowerCase().slice(1)
+      const mimeMap: Record<string, string> = {
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+        svg: 'image/svg+xml', webp: 'image/webp', apng: 'image/apng', avif: 'image/avif',
+        mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v',
+      }
+      res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream')
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+      fs.createReadStream(filePath).pipe(res)
+    } catch (err) {
+      logger.app.warn('Failed to serve element asset: ' + (err instanceof Error ? err.message : String(err)))
+      res.status(500).send('Element asset error')
+    }
   })
 
   // Brand logo HTTP route — Chromium blocks file:// URLs from http origin.
@@ -834,6 +1321,11 @@ export function stopServer(): void {
 }
 
 function buildOverlayHTML(): string {
+  // 2026-05-02 (Burlington UDC Day 2): pull tenant brand accent from settings
+  // for the LT redesign. Falls back to the legacy purple if unset so non-branded
+  // tenants render unchanged. Reads only — never writes branding settings.
+  const settings = getSettings()
+  const brandAccent = (settings as { branding?: { brandColors?: string[] } })?.branding?.brandColors?.[0] || '#667eea'
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -845,6 +1337,7 @@ function buildOverlayHTML(): string {
   :root {
     --anim-dur: 0.5s;
     --anim-ease: ease;
+    --brand-accent: ${brandAccent};
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -870,11 +1363,93 @@ function buildOverlayHTML(): string {
   }
   .counter-number::before { content: '#'; opacity: 0.4; font-size: 28px; }
   .counter-label { font-size: 13px; color: #e8e8f5; margin-top: 4px; letter-spacing: 0.5px; }
-  .counter.advance .counter-number { animation: counterPop 0.5s ease; }
-  @keyframes counterPop {
-    0% { transform: scale(1); }
-    40% { transform: scale(1.25); color: #667eea; }
+
+  /* Counter advance — premium animation pack (build #9, 2026-05-05).
+     One variant picked at random per advance, no-repeat with prior. Classes
+     v1–v6 are added by the iframe JS alongside .advance, then cleared at end.
+     Each animation 0.6–0.9s. Designed to read at broadcast distance. */
+  .counter.advance .counter-number { will-change: transform, filter, color, text-shadow; }
+
+  /* v1 — Premium pop: scale + brand-color glow flash + brightness pulse */
+  .counter.advance.v1 .counter-number { animation: counterV1 0.7s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes counterV1 {
+    0%   { transform: scale(1); filter: brightness(1) drop-shadow(0 0 0 rgba(102,126,234,0)); }
+    35%  { transform: scale(1.32); filter: brightness(1.4) drop-shadow(0 0 22px rgba(102,126,234,0.9)); color: #a4b3ff; }
+    100% { transform: scale(1); filter: brightness(1) drop-shadow(0 0 0 rgba(102,126,234,0)); }
+  }
+
+  /* v2 — 3D flip (perspective rotateX) with brand color at apex */
+  .counter.advance.v2 .counter-number {
+    animation: counterV2 0.85s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-style: preserve-3d;
+  }
+  @keyframes counterV2 {
+    0%   { transform: perspective(420px) rotateX(0deg); }
+    45%  { transform: perspective(420px) rotateX(90deg); color: #667eea; filter: brightness(1.5); }
+    55%  { transform: perspective(420px) rotateX(-90deg); color: #667eea; filter: brightness(1.5); }
+    100% { transform: perspective(420px) rotateX(0deg); }
+  }
+
+  /* v3 — Slide down + spring overshoot bounce */
+  .counter.advance.v3 .counter-number { animation: counterV3 0.85s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes counterV3 {
+    0%   { transform: translateY(-60%); opacity: 0; filter: blur(8px); }
+    55%  { transform: translateY(10%); opacity: 1; filter: blur(0); }
+    75%  { transform: translateY(-4%); }
+    90%  { transform: translateY(2%); }
+    100% { transform: translateY(0); }
+  }
+
+  /* v4 — RGB-split glitch sweep settling into brand glow */
+  .counter.advance.v4 .counter-number { animation: counterV4 0.7s steps(1, end); }
+  @keyframes counterV4 {
+    0%   { transform: translate(0,0); text-shadow: 0 0 0 transparent; }
+    8%   { transform: translate(-3px,2px); text-shadow: 3px 0 0 #ff00ea, -3px 0 0 #00fff0; }
+    16%  { transform: translate(3px,-2px); text-shadow: -3px 0 0 #ff00ea, 3px 0 0 #00fff0; }
+    24%  { transform: translate(-2px,1px); text-shadow: 2px 0 0 #ff00ea, -2px 0 0 #00fff0; }
+    32%  { transform: translate(2px,-1px); text-shadow: -2px 0 0 #ff00ea, 2px 0 0 #00fff0; }
+    40%  { transform: translate(-1px,0); text-shadow: 1px 0 0 #ff00ea, -1px 0 0 #00fff0; }
+    50%  { transform: translate(0,0); text-shadow: 0 0 16px rgba(102,126,234,0.85); }
+    100% { transform: translate(0,0); text-shadow: 0 0 0 transparent; }
+  }
+
+  /* v5 — Zoom burst: starts blurred-small, blows out, settles back */
+  .counter.advance.v5 .counter-number { animation: counterV5 0.8s cubic-bezier(0.22, 1, 0.36, 1); }
+  @keyframes counterV5 {
+    0%   { transform: scale(0.55); filter: blur(14px) brightness(1.2); opacity: 0; }
+    40%  { transform: scale(1.5); filter: blur(0) brightness(1.6); opacity: 1; color: #c7d0ff; }
+    65%  { transform: scale(0.94); filter: blur(0) brightness(1); color: #ffffff; }
     100% { transform: scale(1); }
+  }
+
+  /* v6 — Shimmer streak across the number (additive ::after overlay) */
+  .counter.advance.v6 .counter-number {
+    position: relative;
+    animation: counterV6Pop 0.7s ease-out;
+  }
+  .counter.advance.v6 .counter-number::after {
+    content: '';
+    position: absolute;
+    inset: -4px -8px;
+    background: linear-gradient(115deg,
+      transparent 35%,
+      rgba(255,255,255,0.9) 48%,
+      rgba(164,179,255,0.9) 52%,
+      transparent 65%);
+    transform: translateX(-110%);
+    animation: counterV6Sweep 0.85s ease-out forwards;
+    mix-blend-mode: screen;
+    pointer-events: none;
+    border-radius: 8px;
+  }
+  @keyframes counterV6Pop {
+    0%   { transform: scale(1); filter: brightness(1); }
+    50%  { transform: scale(1.18); filter: brightness(1.35); }
+    100% { transform: scale(1); filter: brightness(1); }
+  }
+  @keyframes counterV6Sweep {
+    0%   { transform: translateX(-110%); }
+    100% { transform: translateX(110%); }
   }
   .logo {
     position: absolute;
@@ -922,20 +1497,20 @@ function buildOverlayHTML(): string {
 
   /* ── Animation variants ── */
 
-  /* Slide */
-  .lower-third.anim-slide { transform: translateX(-100px); }
-  .lower-third.anim-slide.visible { transform: translateX(0); transition: opacity calc(var(--anim-dur) * 0.6) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  /* Slide — dramatized 2026-05-02: 100→240px travel, snappier overshoot bezier */
+  .lower-third.anim-slide { transform: translateX(-240px) skewX(-4deg); }
+  .lower-third.anim-slide.visible { transform: translateX(0) skewX(0deg); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform calc(var(--anim-dur) * 1.15) cubic-bezier(0.18, 1.7, 0.32, 1); }
 
   /* Fade */
   .lower-third.anim-fade { transform: none; }
 
-  /* Zoom */
-  .lower-third.anim-zoom { transform: scale(0.3); }
-  .lower-third.anim-zoom.visible { transform: scale(1); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1); }
+  /* Zoom — dramatized: 0.3→0.12 start, longer overshoot with shadow inflation */
+  .lower-third.anim-zoom { transform: scale(0.12); }
+  .lower-third.anim-zoom.visible { transform: scale(1); transition: opacity calc(var(--anim-dur) * 0.45) ease, transform calc(var(--anim-dur) * 1.2) cubic-bezier(0.22, 1.85, 0.42, 1); }
 
-  /* Rise */
-  .lower-third.anim-rise { transform: translateY(60px); }
-  .lower-third.anim-rise.visible { transform: translateY(0); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  /* Rise — dramatized: 60→160px, harder spring */
+  .lower-third.anim-rise { transform: translateY(160px) scale(0.92); }
+  .lower-third.anim-rise.visible { transform: translateY(0) scale(1); transition: opacity calc(var(--anim-dur) * 0.45) ease, transform calc(var(--anim-dur) * 1.15) cubic-bezier(0.18, 1.75, 0.4, 1); }
 
   /* Typewriter — JS-driven character reveal */
   .lower-third.anim-typewriter { transform: none; }
@@ -953,74 +1528,227 @@ function buildOverlayHTML(): string {
     50% { opacity: 0; }
   }
 
-  /* Bounce — drop in from top */
-  .lower-third.anim-bounce { transform: translateY(-80px); }
-  .lower-third.anim-bounce.visible { transform: translateY(0); transition: opacity calc(var(--anim-dur) * 0.3) ease, transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1); }
+  /* Bounce — dramatized: -80→-200px drop, more aggressive bezier */
+  .lower-third.anim-bounce { transform: translateY(-200px) scale(0.88); }
+  .lower-third.anim-bounce.visible { transform: translateY(0) scale(1); transition: opacity calc(var(--anim-dur) * 0.28) ease, transform calc(var(--anim-dur) * 1.2) cubic-bezier(0.2, 1.95, 0.42, 1); }
 
-  /* Split — expand from center */
-  .lower-third.anim-split { transform: scaleX(0); transform-origin: center; }
-  .lower-third.anim-split.visible { transform: scaleX(1); transition: opacity calc(var(--anim-dur) * 0.4) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  /* Split — dramatized: scaleX with slight Y squash on rebound */
+  .lower-third.anim-split { transform: scaleX(0) scaleY(0.6); transform-origin: center; }
+  .lower-third.anim-split.visible { transform: scaleX(1) scaleY(1); transition: opacity calc(var(--anim-dur) * 0.35) ease, transform calc(var(--anim-dur) * 1.15) cubic-bezier(0.2, 1.7, 0.4, 1); }
 
-  /* Blur — focus in */
-  .lower-third.anim-blur { filter: blur(20px); transform: scale(1.1); }
-  .lower-third.anim-blur.visible { filter: blur(0px); transform: scale(1); }
+  /* Blur — dramatized: 20→44px blur, stronger scale punch */
+  .lower-third.anim-blur { filter: blur(44px); transform: scale(1.18); }
+  .lower-third.anim-blur.visible { filter: blur(0px); transform: scale(1); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform calc(var(--anim-dur) * 1.1) cubic-bezier(0.22, 1.4, 0.4, 1), filter calc(var(--anim-dur) * 1.3) ease-out; }
 
-  /* Sparkle */
+  /* Sparkle — dramatized: brighter punch, larger brand-tinted glow */
   .lower-third.anim-sparkle {
-    transform: scale(0.9);
-    filter: brightness(1.8) drop-shadow(0 0 0px rgba(255,215,0,0));
+    transform: scale(0.84);
+    filter: brightness(2.4) drop-shadow(0 0 0px var(--brand-accent));
   }
   .lower-third.anim-sparkle.visible {
     transform: scale(1);
-    filter: brightness(1) drop-shadow(0 0 12px rgba(255,215,0,0.35));
-    transition: opacity calc(var(--anim-dur) * 0.5) ease,
-                transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1),
-                filter calc(var(--anim-dur) * 1.2) ease;
+    filter: brightness(1) drop-shadow(0 0 28px var(--brand-accent));
+    transition: opacity calc(var(--anim-dur) * 0.45) ease,
+                transform calc(var(--anim-dur) * 1.2) cubic-bezier(0.22, 1.7, 0.42, 1),
+                filter calc(var(--anim-dur) * 1.4) ease;
   }
 
+  /* LT card — dramatized 2026-05-02: heavier border with brand-color stripe,
+     deeper shadow with tenant-tinted glow, beefier padding/radius. */
   .lt-card {
-    background: rgba(30, 30, 46, 0.92);
-    border: 1px solid rgba(102, 126, 234, 0.4);
-    border-radius: 10px; padding: 20px 30px;
-    backdrop-filter: blur(10px); min-width: 500px;
+    position: relative;
+    background: linear-gradient(135deg, rgba(20, 20, 32, 0.94), rgba(30, 30, 46, 0.92));
+    border: 2px solid color-mix(in srgb, var(--brand-accent) 55%, transparent);
+    border-left: 6px solid var(--brand-accent);
+    border-radius: 14px; padding: 24px 38px;
+    backdrop-filter: blur(16px);
+    min-width: 580px;
+    box-shadow:
+      0 18px 60px color-mix(in srgb, var(--brand-accent) 30%, rgba(0,0,0,0.55)),
+      0 0 0 1px rgba(255,255,255,0.04) inset,
+      0 0 80px color-mix(in srgb, var(--brand-accent) 14%, transparent) inset;
+    overflow: hidden;
   }
-  .lt-top { display: flex; align-items: center; gap: 16px; }
+  /* Animated shimmer sweep on entry — single pass, decorative only.
+     2026-05-02 perf fix: animate transform instead of left to keep this on the
+     GPU compositor — animating left forces layout recalc per frame and was
+     measurably bumping renderer CPU (~300% combined across 3 windows). */
+  .lt-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 60%; height: 100%;
+    background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,0.16) 50%, transparent 100%);
+    transform: translateX(-200%) skewX(-20deg);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .lower-third.visible .lt-card::before {
+    transform: translateX(380%) skewX(-20deg);
+    transition: transform calc(var(--anim-dur) * 1.6) cubic-bezier(0.22, 1, 0.36, 1) calc(var(--anim-dur) * 0.2);
+  }
+  .lt-top { display: flex; align-items: center; gap: 22px; }
+  /* Title + dancers stack — flex column so it self-centers vertically against
+     the entry-number pill regardless of how many lines either row wraps to.
+     min-width:0 lets long titles shrink instead of overflowing the card. */
+  .lt-stack {
+    display: flex; flex-direction: column; justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  /* Brand glyph mounted at the leading edge of the card. Hidden when the
+     tenant has no brand logo (image fails to load → JS clears display). */
+  .lt-brand-glyph {
+    /* Sized to fit within the lt-top row height set by .lt-number (~74px).
+       No pill background / padding — img fills the container, so visual logo
+       is ~72px vs. the previous 52px (64px box - 6px padding × 2). */
+    width: 72px; height: 72px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    filter: drop-shadow(0 0 22px color-mix(in srgb, var(--brand-accent) 42%, transparent))
+            drop-shadow(0 2px 6px rgba(0,0,0,0.45));
+    opacity: 0;
+    transform: scale(0.6) rotate(-8deg);
+    transition: opacity calc(var(--anim-dur) * 0.5) ease,
+                transform calc(var(--anim-dur) * 0.9) cubic-bezier(0.2, 1.6, 0.4, 1);
+  }
+  .lower-third.visible .lt-brand-glyph {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+    transition-delay: 0s, 0s;
+  }
+  .lt-brand-glyph img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .lt-brand-glyph.empty { display: none; }
   .lt-number {
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    color: white; font-weight: 700; font-size: 36px;
-    padding: 6px 16px; border-radius: 8px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--brand-accent), color-mix(in srgb, var(--brand-accent) 55%, #1a1a2e));
+    color: white; font-weight: 900; font-size: 48px;
+    padding: 6px 22px; border-radius: 10px; flex-shrink: 0;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    display: flex; align-items: baseline; justify-content: center;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    box-shadow: 0 6px 22px color-mix(in srgb, var(--brand-accent) 45%, transparent),
+                0 0 0 1px rgba(255,255,255,0.08) inset;
   }
-  .lt-number::before { content: '#'; opacity: 0.6; font-size: 22px; }
-  .lt-title { font-size: 33px; font-weight: 700; color: #ffffff; }
-  .lt-dancers { font-size: 21px; color: #a5b4fc; margin-top: 4px; }
-  .lt-meta { font-size: 18px; color: #e8e8f5; margin-top: 8px; }
+  .lt-number::before { content: '#'; opacity: 0.55; font-size: 28px; font-weight: 700; margin-right: 2px; }
+  .lt-title {
+    font-size: 40px; font-weight: 800; color: #ffffff;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+    text-shadow: 0 2px 12px color-mix(in srgb, var(--brand-accent) 25%, rgba(0,0,0,0.5));
+  }
+  .lt-dancers {
+    font-size: 22px; color: #d8dbff; font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: 0.005em;
+    opacity: 0.92;
+  }
+  .lt-meta {
+    font-size: 18px; color: #e8e8f5;
+    margin-top: 14px;
+    line-height: 1.3;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+    opacity: 0.85;
+  }
+  /* Brand-color underline that draws in below the title block on entry */
+  .lt-card::after {
+    content: '';
+    position: absolute;
+    left: 38px; right: 38px; bottom: 14px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--brand-accent), transparent);
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform calc(var(--anim-dur) * 1.1) cubic-bezier(0.22, 1, 0.36, 1) calc(var(--anim-dur) * 0.15);
+  }
+  .lower-third.visible .lt-card::after { transform: scaleX(1); }
 
-  /* ── Starting Soon Scene ── */
+  /* ── Starting Soon Scene — design-pro pass 2026-05-05 ──
+     Defaults still operator-editable through SSE; what changed is the baseline.
+     Adds atmospheric depth (vignette + grain + bloom), cinematic scene-entry
+     orchestration on first-show, and broadcast-grade typography polish. */
   .starting-soon {
     position: absolute;
     top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(30, 30, 46, 0.95);
+    background: #0a0e1a;
     opacity: 0;
     transition: opacity 0.8s ease;
     z-index: 50;
+    overflow: hidden;
   }
   .starting-soon.visible { opacity: 1; }
+
+  /* Scene-entry: subtle camera-zoom on the whole scene, settles to 1:1 */
+  .starting-soon.first-show {
+    animation: ssSceneZoom 2.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes ssSceneZoom {
+    0%   { transform: scale(1.025); }
+    100% { transform: scale(1.0); }
+  }
+
+  /* Atmospheric layers — radial vignette pulls eye to center */
+  .ss-vignette {
+    position: absolute; inset: 0; z-index: 1;
+    background: radial-gradient(ellipse at center,
+      transparent 0%,
+      transparent 45%,
+      rgba(0, 0, 0, 0.35) 100%);
+    pointer-events: none;
+  }
+  /* Subtle film grain — CSS-generated noise via SVG fractal turbulence */
+  .ss-grain {
+    position: absolute; inset: 0; z-index: 1;
+    pointer-events: none;
+    opacity: 0.04;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    background-size: 200px 200px;
+  }
+  /* Conic light bloom — soft brand-tinted halo behind the logo position.
+     Position via CSS variables so layout edits in SSE move it with the logo. */
+  .ss-bloom {
+    position: absolute; z-index: 1;
+    left: var(--ss-bloom-x, 12%); top: var(--ss-bloom-y, 10%);
+    width: 38vw; height: 38vw;
+    transform: translate(-50%, -50%);
+    background: conic-gradient(from 220deg,
+      transparent 0%,
+      rgba(102,126,234,0.22) 22%,
+      rgba(164,179,255,0.30) 32%,
+      rgba(102,126,234,0.18) 50%,
+      transparent 72%);
+    filter: blur(48px);
+    pointer-events: none;
+    opacity: 0.85;
+    animation: ssBloomDrift 24s ease-in-out infinite;
+  }
+  @keyframes ssBloomDrift {
+    0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+    50%      { transform: translate(-48%, -52%) rotate(40deg); }
+  }
+
   .ss-title {
     position: absolute;
     display: none;
     font-weight: 700;
     color: #ffffff;
-    letter-spacing: 2px;
+    letter-spacing: 0.04em;
     text-align: center;
     white-space: nowrap;
     transform: translate(-50%, -50%);
+    text-shadow: 0 4px 32px rgba(0, 0, 0, 0.45);
   }
   .ss-subtitle {
     position: absolute;
     display: none;
     font-weight: 400;
-    color: #ffffff;
-    opacity: 0.8;
+    color: #c5cae9;
+    opacity: 0.92;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
     text-align: center;
     white-space: nowrap;
     transform: translate(-50%, -50%);
@@ -1029,15 +1757,90 @@ function buildOverlayHTML(): string {
     position: absolute;
     display: none;
     font-weight: 300;
-    color: #667eea;
+    color: #ffffff;
     font-variant-numeric: tabular-nums;
-    letter-spacing: 4px;
+    letter-spacing: -0.02em;
     text-align: center;
     white-space: nowrap;
     transform: translate(-50%, -50%);
+    text-shadow: 0 6px 40px rgba(0, 0, 0, 0.5);
   }
+  /* Subtle 1s blink on every colon character inside the countdown so the
+     timer feels alive without being noisy. JS marks colons with .ss-cd-colon */
+  .ss-cd-colon { animation: ssColonBlink 1.05s ease-in-out infinite; }
+  @keyframes ssColonBlink {
+    0%, 100% { opacity: 1; }
+    52%      { opacity: 0.55; }
+  }
+  /* Title accent — thin gradient hairline that sweeps in on first show.
+     Sits centered horizontally below the title, scales from 0 → 1. */
   .ss-accent-line {
+    position: absolute;
     display: none;
+    height: 2px;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(164, 179, 255, 0.35) 18%,
+      rgba(164, 179, 255, 0.95) 50%,
+      rgba(164, 179, 255, 0.35) 82%,
+      transparent 100%);
+    transform: translate(-50%, -50%) scaleX(0);
+    transform-origin: center;
+    border-radius: 1px;
+  }
+  .starting-soon.first-show .ss-accent-line.visible {
+    animation: ssAccentSweep 0.9s cubic-bezier(0.22, 1, 0.36, 1) 1.0s both;
+  }
+  @keyframes ssAccentSweep {
+    0%   { transform: translate(-50%, -50%) scaleX(0); opacity: 0; }
+    100% { transform: translate(-50%, -50%) scaleX(1); opacity: 1; }
+  }
+
+  /* First-show entry orchestration. Each element fades + transforms in
+     with a staggered offset. Settles via animation-fill-mode: both. */
+  .starting-soon.first-show .ss-title {
+    animation: ssTitleEnter 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
+  }
+  @keyframes ssTitleEnter {
+    0%   { transform: translate(-50%, -50%) translateY(20px); letter-spacing: 0.18em; opacity: 0; filter: blur(6px); }
+    100% { transform: translate(-50%, -50%) translateY(0);    letter-spacing: 0.04em; opacity: 1; filter: blur(0); }
+  }
+  .starting-soon.first-show .ss-subtitle {
+    animation: ssSubtitleEnter 0.7s ease-out 0.85s both;
+  }
+  @keyframes ssSubtitleEnter {
+    0%   { transform: translate(-50%, -50%) translateY(8px); opacity: 0; }
+    100% { transform: translate(-50%, -50%) translateY(0);   opacity: 0.92; }
+  }
+  .starting-soon.first-show .ss-countdown {
+    animation: ssCountdownIgnite 1.0s cubic-bezier(0.22, 1, 0.36, 1) 1.1s both;
+  }
+  @keyframes ssCountdownIgnite {
+    0%   { transform: translate(-50%, -50%) scale(0.85); opacity: 0; filter: blur(10px); }
+    65%  { transform: translate(-50%, -50%) scale(1.03); opacity: 1; filter: blur(0); }
+    100% { transform: translate(-50%, -50%) scale(1.0); }
+  }
+  .starting-soon.first-show .ss-time-date {
+    animation: ssTimeDateEnter 0.6s ease-out 1.6s both;
+  }
+  @keyframes ssTimeDateEnter {
+    0%   { opacity: 0; transform: translateY(4px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .starting-soon.first-show .ss-vignette {
+    animation: ssVignetteFade 1.4s ease-out both;
+  }
+  @keyframes ssVignetteFade {
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  /* Background saturation ramps from 60% → 100% on entry */
+  .starting-soon.first-show .ss-gradient-bg {
+    animation: ssBgIgnite 1.6s ease-out both, gradient-shift var(--gradient-speed, 18s) ease infinite 1.6s;
+  }
+  @keyframes ssBgIgnite {
+    0%   { filter: saturate(0.55) brightness(0.7); }
+    100% { filter: saturate(1.0)  brightness(1.0); }
   }
   .ss-logo {
     position: absolute;
@@ -1047,6 +1850,15 @@ function buildOverlayHTML(): string {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    filter: drop-shadow(0 12px 32px rgba(0, 0, 0, 0.45));
+  }
+  /* Logo first-show — subtle scale-up from 0.92 with motion blur */
+  .starting-soon.first-show .ss-logo {
+    animation: ssLogoEnter 1.1s cubic-bezier(0.22, 1, 0.36, 1) 1.4s both;
+  }
+  @keyframes ssLogoEnter {
+    0%   { transform: scale(0.92); opacity: 0; filter: blur(4px); }
+    100% { transform: scale(1.0);  opacity: 1; filter: blur(0); }
   }
   /* Logo animations — applied as classes from applyStartingSoon */
   .ss-logo.anim-pulse img {
@@ -1092,15 +1904,419 @@ function buildOverlayHTML(): string {
     0%, 100% { filter: drop-shadow(0 0 4px rgba(255,255,255,0.3)); }
     50%      { filter: drop-shadow(0 0 14px rgba(255,255,255,0.85)); }
   }
-  /* Independent SSE ticker rail (not the main overlay ticker) */
-  .ss-ticker-rail {
+  /* ── Premium pass 2026-05-06 — broadcast hallmarks ──
+     Logo plinth halo, venue identifier strip, section identifier badge,
+     two-row ticker treatment, flip-board countdown digits. */
+
+  /* Logo plinth — translucent beveled plate behind logo with rotating
+     conic halo. Sits in the same layout slot as the logo; halo extends
+     beyond the plate edges. */
+  .ss-logo-halo {
     position: absolute;
-    overflow: hidden;
-    display: none;
-    align-items: center;
+    inset: -18%;
+    pointer-events: none;
+    z-index: 0;
+    background: conic-gradient(from 0deg,
+      transparent 0deg,
+      var(--ss-halo, rgba(164,179,255,0.55)) 70deg,
+      transparent 130deg,
+      transparent 230deg,
+      var(--ss-halo, rgba(164,179,255,0.55)) 290deg,
+      transparent 360deg);
+    filter: blur(22px);
+    opacity: 0;
+    border-radius: 50%;
+    transform: scale(0.85);
+  }
+  .starting-soon.visible .ss-logo-halo {
+    animation: ssHaloIn 1.1s cubic-bezier(0.22,1,0.36,1) 1.4s forwards,
+               ssHaloSpin 18s linear 2.5s infinite;
+  }
+  @keyframes ssHaloIn {
+    0%   { opacity: 0; transform: scale(0.85); }
+    100% { opacity: 1; transform: scale(1.0); }
+  }
+  @keyframes ssHaloSpin {
+    from { transform: scale(1.0) rotate(0deg); }
+    to   { transform: scale(1.0) rotate(360deg); }
+  }
+  .ss-logo-plate {
+    position: absolute;
+    inset: -8%;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: 14px;
+    background: linear-gradient(135deg,
+      rgba(255,255,255,0.06) 0%,
+      rgba(255,255,255,0.02) 50%,
+      rgba(255,255,255,0.06) 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.10),
+      inset 0 -1px 0 rgba(0,0,0,0.30),
+      0 12px 38px rgba(0,0,0,0.45);
+    opacity: 0;
+  }
+  .starting-soon.visible .ss-logo-plate {
+    animation: ssPlateIn 1.0s cubic-bezier(0.22,1,0.36,1) 1.2s forwards;
+  }
+  @keyframes ssPlateIn {
+    0%   { opacity: 0; transform: scale(0.96); }
+    100% { opacity: 1; transform: scale(1.0); }
+  }
+  .ss-logo .ss-logo-img-wrap {
+    position: relative;
+    width: 100%; height: 100%;
     z-index: 2;
   }
-  .ss-ticker-rail.visible { display: flex; }
+  .ss-logo.has-halo img {
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Eurosport-style identifier strip — sits in scene corner.
+     Renders 1-3 segments separated by a hairline pipe. */
+  .ss-venue-id {
+    position: absolute;
+    display: none;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 14px;
+    z-index: 3;
+    color: #c5cae9;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 600;
+    background: linear-gradient(135deg, rgba(20,24,44,0.62), rgba(20,24,44,0.32));
+    border: 1px solid rgba(164,179,255,0.18);
+    border-radius: 4px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  .ss-venue-id.visible { display: inline-flex; }
+  .ss-venue-id .ss-vid-seg {
+    display: inline-block;
+    white-space: nowrap;
+  }
+  .ss-venue-id .ss-vid-pipe {
+    display: inline-block;
+    width: 1px; height: 12px;
+    background: linear-gradient(180deg, transparent, rgba(164,179,255,0.55), transparent);
+  }
+  .ss-venue-id .ss-vid-seg.ss-vid-event {
+    color: #ffffff;
+    font-weight: 800;
+  }
+  .starting-soon.first-show .ss-venue-id.visible {
+    animation: ssVenueEnter 0.8s ease-out 0.6s both;
+  }
+  @keyframes ssVenueEnter {
+    0%   { opacity: 0; transform: translateY(-6px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Section identifier badge — top-corner pill ("STARTING SOON" + dot) */
+  .ss-section-badge {
+    position: absolute;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    z-index: 3;
+    color: #ffffff;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    font-weight: 700;
+    background: linear-gradient(135deg, rgba(0,0,0,0.55), rgba(0,0,0,0.30));
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 999px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  }
+  .ss-section-badge.visible { display: inline-flex; }
+  .ss-section-badge .ss-sb-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--ss-sb-dot, #ef4444);
+    box-shadow: 0 0 8px var(--ss-sb-dot, #ef4444);
+    animation: ssBadgeDotPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes ssBadgeDotPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.35); opacity: 0.55; }
+  }
+  .starting-soon.first-show .ss-section-badge.visible {
+    animation: ssBadgeEnter 0.7s ease-out 0.4s both;
+  }
+  @keyframes ssBadgeEnter {
+    0%   { opacity: 0; transform: translateY(-4px) scale(0.92); }
+    100% { opacity: 1; transform: translateY(0)    scale(1.0); }
+  }
+
+  /* Two-row ticker — accent row above main scroller. The main rail keeps
+     its existing styles; the accent row sits flush above with category +
+     LIVE indicator. */
+  .ss-ticker-block {
+    position: absolute;
+    display: none;
+    flex-direction: column;
+    z-index: 2;
+  }
+  .ss-ticker-block.visible { display: flex; }
+  .ss-ticker-accent {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 14px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.65), rgba(0,0,0,0.40));
+    border-bottom: 1px solid rgba(164,179,255,0.22);
+    color: #ffffff;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    font-weight: 700;
+    font-size: 12px;
+    flex: 0 0 auto;
+  }
+  .ss-ticker-accent .ss-ticker-cat {
+    color: #c5cae9;
+  }
+  .ss-ticker-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid rgba(239,68,68,0.45);
+    border-radius: 3px;
+    color: #ff6b6b;
+    font-weight: 800;
+    font-size: 11px;
+  }
+  .ss-ticker-live::before {
+    content: '';
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 6px #ef4444;
+    animation: ssLiveDot 1.0s ease-in-out infinite;
+  }
+  @keyframes ssLiveDot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.75); }
+  }
+  /* Flip-board countdown digits. JS wraps each digit in
+     <span class="ss-cd-digit">D</span>; on tick the old digit slides up
+     and the new digit slides in. Background plates evoke Olympic flip clocks. */
+  .ss-countdown.style-flipboard {
+    display: flex !important;
+    gap: 6px;
+    align-items: baseline;
+    justify-content: center;
+    line-height: 1;
+  }
+  .ss-cd-digit-cell {
+    display: inline-block;
+    position: relative;
+    padding: 0.18em 0.28em;
+    border-radius: 8px;
+    background: linear-gradient(180deg,
+      rgba(20,24,44,0.85) 0%,
+      rgba(20,24,44,0.85) 49%,
+      rgba(0,0,0,0.92) 50%,
+      rgba(20,24,44,0.85) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.10),
+      inset 0 -1px 0 rgba(0,0,0,0.55),
+      0 6px 18px rgba(0,0,0,0.50);
+    overflow: hidden;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.65);
+  }
+  .ss-cd-digit-cell::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    top: 50%;
+    height: 1px;
+    background: rgba(0,0,0,0.65);
+    pointer-events: none;
+  }
+  .ss-cd-digit-cell .ss-cd-digit {
+    display: inline-block;
+    animation: ssDigitFlip 0.45s cubic-bezier(0.22,1,0.36,1) both;
+    transform-origin: center top;
+  }
+  @keyframes ssDigitFlip {
+    0%   { transform: translateY(-12%) rotateX(-90deg); opacity: 0; }
+    55%  { transform: translateY(0)    rotateX(0deg);   opacity: 1; }
+    100% { transform: translateY(0)    rotateX(0deg);   opacity: 1; }
+  }
+  /* Flipboard colon — no plate, just a stylized separator */
+  .ss-cd-sep {
+    display: inline-block;
+    color: #c5cae9;
+    opacity: 0.85;
+    padding: 0 0.04em;
+    animation: ssColonBlink 1.05s ease-in-out infinite;
+  }
+
+  /* ── Final-30 countdown takeover (premium pass 2026-05-06) ──
+     When countdown ≤ 30s, fade the layout-positioned countdown and reveal
+     a full-screen, centered, oversized flipboard treatment. Fades out at 0
+     and falls back to the layout countdown when the operator extends the
+     timer. */
+  .ss-final-cd {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(ellipse at center,
+      rgba(10,14,26,0.55) 0%,
+      rgba(10,14,26,0.86) 60%,
+      rgba(0,0,0,0.94) 100%);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    transition: opacity 0.6s ease;
+  }
+  .ss-final-cd.visible { opacity: 1; }
+  .ss-final-cd.entering {
+    animation: ssFinalEnter 0.9s cubic-bezier(0.22,1,0.36,1) both;
+  }
+  @keyframes ssFinalEnter {
+    0%   { opacity: 0; transform: scale(0.92); filter: blur(8px); }
+    100% { opacity: 1; transform: scale(1.0);  filter: blur(0); }
+  }
+  .ss-final-cd-label {
+    color: #ef4444;
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    font-weight: 800;
+    font-size: 22px;
+    margin-bottom: 22px;
+    text-shadow: 0 0 16px rgba(239,68,68,0.55);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .ss-final-cd-label::before, .ss-final-cd-label::after {
+    content: '';
+    display: inline-block;
+    width: 60px; height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(239,68,68,0.85), transparent);
+  }
+  .ss-final-cd-digits {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    font-weight: 900;
+    text-shadow: 0 12px 60px rgba(0,0,0,0.7);
+  }
+  /* Cell sizing scales with viewport so 1080p / 2160p both look right */
+  .ss-final-cd-digits .ss-cd-digit-cell {
+    font-size: clamp(160px, 22vw, 360px);
+    padding: 0.05em 0.18em;
+    border-radius: 18px;
+    background: linear-gradient(180deg,
+      rgba(20,24,44,0.95) 0%,
+      rgba(20,24,44,0.95) 49%,
+      rgba(0,0,0,0.98) 50%,
+      rgba(20,24,44,0.95) 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.15),
+      inset 0 -2px 0 rgba(0,0,0,0.65),
+      0 24px 60px rgba(0,0,0,0.6),
+      0 0 80px rgba(164,179,255,0.18);
+  }
+  .ss-final-cd-digits .ss-cd-sep {
+    font-size: clamp(120px, 16vw, 280px);
+    color: #c5cae9;
+    opacity: 0.75;
+    animation: ssColonBlink 1.0s ease-in-out infinite;
+  }
+  .ss-final-cd-sub {
+    margin-top: 26px;
+    color: #c5cae9;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    font-weight: 600;
+    font-size: 16px;
+    opacity: 0.75;
+  }
+  /* Halo pulse on each digit-change tick — adds a brief brand-tinted glow */
+  .ss-final-cd-digits .ss-cd-digit-cell.flash {
+    animation: ssFinalFlash 0.55s ease-out both;
+  }
+  @keyframes ssFinalFlash {
+    0%   { box-shadow:
+            inset 0 2px 0 rgba(255,255,255,0.15),
+            inset 0 -2px 0 rgba(0,0,0,0.65),
+            0 24px 60px rgba(0,0,0,0.6),
+            0 0 0 rgba(164,179,255,0); }
+    35%  { box-shadow:
+            inset 0 2px 0 rgba(255,255,255,0.20),
+            inset 0 -2px 0 rgba(0,0,0,0.65),
+            0 24px 60px rgba(0,0,0,0.6),
+            0 0 120px rgba(164,179,255,0.65); }
+    100% { box-shadow:
+            inset 0 2px 0 rgba(255,255,255,0.15),
+            inset 0 -2px 0 rgba(0,0,0,0.65),
+            0 24px 60px rgba(0,0,0,0.6),
+            0 0 80px rgba(164,179,255,0.18); }
+  }
+  /* Last-5 escalation — digits go red at ≤ 5s for the stadium-buzz feel */
+  .ss-final-cd.escalate .ss-final-cd-digits .ss-cd-digit-cell {
+    background: linear-gradient(180deg,
+      rgba(40,12,12,0.98) 0%,
+      rgba(40,12,12,0.98) 49%,
+      rgba(0,0,0,1) 50%,
+      rgba(40,12,12,0.98) 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,80,80,0.20),
+      inset 0 -2px 0 rgba(0,0,0,0.7),
+      0 24px 80px rgba(0,0,0,0.7),
+      0 0 100px rgba(239,68,68,0.50);
+  }
+  .ss-final-cd.escalate .ss-final-cd-label { color: #ff6b6b; }
+  /* Drop-out at zero — radial flash + fade */
+  .ss-final-cd.drop {
+    animation: ssFinalDrop 1.2s cubic-bezier(0.22,1,0.36,1) forwards;
+  }
+  @keyframes ssFinalDrop {
+    0%   { opacity: 1; transform: scale(1.0); filter: brightness(1); }
+    20%  { opacity: 1; transform: scale(1.10); filter: brightness(2.2); }
+    100% { opacity: 0; transform: scale(1.18); filter: brightness(1); }
+  }
+
+  /* Independent SSE ticker rail (not the main overlay ticker).
+     Lives inside .ss-ticker-block which carries the absolute positioning;
+     the rail is a flex child that takes the full block width. */
+  .ss-ticker-rail {
+    position: relative;
+    overflow: hidden;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    /* Edge-fade gradient mask so text fades into bg instead of hard-clipping */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+    /* Brand-tinted gradient bg (was passed via inline style; keep that as override) */
+    backdrop-filter: blur(6px);
+  }
   .ss-ticker-rail-inner {
     display: inline-block;
     white-space: nowrap;
@@ -1116,6 +2332,9 @@ function buildOverlayHTML(): string {
     display: none;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    color: #b8b8d0; /* Dimmed from #fff to read as secondary, not competing */
+    letter-spacing: 0.04em;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
   }
 
   /* ── Gradient Background ── */
@@ -1427,32 +2646,62 @@ function buildOverlayHTML(): string {
     z-index: 100;
   }
   .chat-fire.visible { opacity: 1; }
-  /* Reuse the same animation variants as .lower-third — mirror classes */
-  .chat-fire.anim-slide { transform: translateX(calc(-50% - 100px)); }
-  .chat-fire.anim-slide.visible { transform: translateX(-50%); transition: opacity calc(var(--anim-dur) * 0.6) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
+  /* Reuse the LT animation variants — mirrored 2026-05-03 to match the
+     "dramatized 2026-05-02" travel/scale/blur/sparkle values for parity.
+     Centering baseline is translateX(-50%); every variant adds its delta on top. */
+
+  /* Slide — 240px travel + skewX(-4deg), snappier overshoot bezier */
+  .chat-fire.anim-slide { transform: translateX(calc(-50% - 240px)) skewX(-4deg); }
+  .chat-fire.anim-slide.visible { transform: translateX(-50%) skewX(0deg); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform calc(var(--anim-dur) * 1.15) cubic-bezier(0.18, 1.7, 0.32, 1); }
+
+  /* Fade */
   .chat-fire.anim-fade { transform: translateX(-50%); }
-  .chat-fire.anim-zoom { transform: translateX(-50%) scale(0.3); }
-  .chat-fire.anim-zoom.visible { transform: translateX(-50%) scale(1); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1); }
-  .chat-fire.anim-rise { transform: translateX(-50%) translateY(60px); }
-  .chat-fire.anim-rise.visible { transform: translateX(-50%) translateY(0); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
-  .chat-fire.anim-bounce { transform: translateX(-50%) translateY(-80px); }
-  .chat-fire.anim-bounce.visible { transform: translateX(-50%) translateY(0); transition: opacity calc(var(--anim-dur) * 0.3) ease, transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1); }
-  .chat-fire.anim-split { transform: translateX(-50%) scaleX(0); transform-origin: center; }
-  .chat-fire.anim-split.visible { transform: translateX(-50%) scaleX(1); transition: opacity calc(var(--anim-dur) * 0.4) ease, transform var(--anim-dur) cubic-bezier(0.22, 1, 0.36, 1); }
-  .chat-fire.anim-blur { filter: blur(20px); transform: translateX(-50%) scale(1.1); }
-  .chat-fire.anim-blur.visible { filter: blur(0px); transform: translateX(-50%) scale(1); }
+
+  /* Zoom — 0.12 start with overshoot and shadow inflation */
+  .chat-fire.anim-zoom { transform: translateX(-50%) scale(0.12); }
+  .chat-fire.anim-zoom.visible { transform: translateX(-50%) scale(1); transition: opacity calc(var(--anim-dur) * 0.45) ease, transform calc(var(--anim-dur) * 1.2) cubic-bezier(0.22, 1.85, 0.42, 1); }
+
+  /* Rise — 160px lift + 0.92 squish with harder spring */
+  .chat-fire.anim-rise { transform: translateX(-50%) translateY(160px) scale(0.92); }
+  .chat-fire.anim-rise.visible { transform: translateX(-50%) translateY(0) scale(1); transition: opacity calc(var(--anim-dur) * 0.45) ease, transform calc(var(--anim-dur) * 1.15) cubic-bezier(0.18, 1.75, 0.4, 1); }
+
+  /* Bounce — -200px drop + 0.88 squish */
+  .chat-fire.anim-bounce { transform: translateX(-50%) translateY(-200px) scale(0.88); }
+  .chat-fire.anim-bounce.visible { transform: translateX(-50%) translateY(0) scale(1); transition: opacity calc(var(--anim-dur) * 0.28) ease, transform calc(var(--anim-dur) * 1.2) cubic-bezier(0.2, 1.95, 0.42, 1); }
+
+  /* Split — scaleX 0 + scaleY 0.6 squash on rebound */
+  .chat-fire.anim-split { transform: translateX(-50%) scaleX(0) scaleY(0.6); transform-origin: center; }
+  .chat-fire.anim-split.visible { transform: translateX(-50%) scaleX(1) scaleY(1); transition: opacity calc(var(--anim-dur) * 0.35) ease, transform calc(var(--anim-dur) * 1.15) cubic-bezier(0.2, 1.7, 0.4, 1); }
+
+  /* Blur — 44px blur + 1.18 scale punch */
+  .chat-fire.anim-blur { filter: blur(44px); transform: translateX(-50%) scale(1.18); }
+  .chat-fire.anim-blur.visible { filter: blur(0px); transform: translateX(-50%) scale(1); transition: opacity calc(var(--anim-dur) * 0.5) ease, transform calc(var(--anim-dur) * 1.1) cubic-bezier(0.22, 1.4, 0.4, 1), filter calc(var(--anim-dur) * 1.3) ease-out; }
+
+  /* Sparkle — brand-tinted glow, brighter punch */
   .chat-fire.anim-sparkle {
-    transform: translateX(-50%) scale(0.9);
-    filter: brightness(1.8) drop-shadow(0 0 0px rgba(255,215,0,0));
+    transform: translateX(-50%) scale(0.84);
+    filter: brightness(2.4) drop-shadow(0 0 0px var(--brand-accent));
   }
   .chat-fire.anim-sparkle.visible {
     transform: translateX(-50%) scale(1);
-    filter: brightness(1) drop-shadow(0 0 12px rgba(255,215,0,0.35));
-    transition: opacity calc(var(--anim-dur) * 0.5) ease,
-                transform var(--anim-dur) cubic-bezier(0.34, 1.56, 0.64, 1),
-                filter calc(var(--anim-dur) * 1.2) ease;
+    filter: brightness(1) drop-shadow(0 0 28px var(--brand-accent));
+    transition: opacity calc(var(--anim-dur) * 0.45) ease,
+                transform calc(var(--anim-dur) * 1.2) cubic-bezier(0.22, 1.7, 0.42, 1),
+                filter calc(var(--anim-dur) * 1.4) ease;
   }
+
+  /* Typewriter — JS-driven character reveal of cf-name + cf-text. Cursor
+     uses .cf-cursor (not .lt-cursor) to keep clearTypewriter scoped. */
   .chat-fire.anim-typewriter { transform: translateX(-50%); }
+  .chat-fire.anim-typewriter .cf-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--brand-accent);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: cursor-blink 0.6s step-end infinite;
+  }
   .cf-card {
     background: rgba(30, 30, 46, 0.92);
     border: 1px solid rgba(102, 126, 234, 0.55);
@@ -1477,6 +2726,315 @@ function buildOverlayHTML(): string {
     line-height: 1.35;
     word-wrap: break-word;
   }
+
+  /* ── Feature Card (2026-05-04) ────────────────────────────────────────
+     Full-bleed broadcast graphic with TWO modes (upNext / thatWas). Slides
+     in from a random direction per fire with bounce ease-in-out + motion
+     blur. Surface is fully opaque (no backdrop-blur, no transparency).
+     Bottom-right corner is intentionally left empty (no content) so the
+     operator's OBS-side PIP camera (separate source in the FEATURE CARD
+     scene) sits cleanly behind it.
+  */
+  .feature-card {
+    position: absolute; inset: 0;
+    width: 1920px; height: 1080px;
+    color: #ffffff;
+    pointer-events: none;
+    visibility: hidden;
+    transform: translateY(100%);
+    filter: blur(0px);
+    opacity: 0;
+  }
+  .feature-card.visible { visibility: visible; opacity: 1; }
+  .feature-card.slide-up   { --fc-from: translateY( 100%); }
+  .feature-card.slide-down { --fc-from: translateY(-100%); }
+  .feature-card.slide-left { --fc-from: translateX( 100%); }
+  .feature-card.slide-right{ --fc-from: translateX(-100%); }
+  .feature-card.entering {
+    animation: fcEnter 0.85s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  .feature-card.exiting {
+    animation: fcExit 0.65s cubic-bezier(0.55, 0.05, 0.6, 0.05) forwards;
+  }
+  @keyframes fcEnter {
+    0%   { transform: var(--fc-from); filter: blur(14px); opacity: 0; }
+    35%  { filter: blur(8px); opacity: 1; }
+    72%  { transform: translate(0,0); filter: blur(2px); }
+    100% { transform: translate(0,0); filter: blur(0px); opacity: 1; }
+  }
+  @keyframes fcExit {
+    0%   { transform: translate(0,0); filter: blur(0px); opacity: 1; }
+    100% { transform: var(--fc-from); filter: blur(14px); opacity: 0; }
+  }
+  .fc-bg {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse at 18% 22%, rgba(102,126,234,0.42) 0%, transparent 55%),
+      radial-gradient(ellipse at 82% 78%, rgba(var(--brand-accent-rgb, 156 109 255) / 0.30) 0%, transparent 60%),
+      linear-gradient(135deg, #0d0f1d 0%, #14172a 45%, #1c1f3a 100%);
+  }
+  .fc-bg::before {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(135deg, rgba(255,255,255,0.018) 0 2px, transparent 2px 6px),
+      radial-gradient(circle at 50% 50%, transparent 60%, rgba(0,0,0,0.55) 100%);
+    pointer-events: none;
+  }
+  .fc-bg::after {
+    /* brand-accent stripe — subtle top diagonal slash */
+    content: '';
+    position: absolute; left: 0; top: 0; right: 0; height: 6px;
+    background: linear-gradient(90deg, transparent 0%, var(--brand-accent) 50%, transparent 100%);
+    opacity: 0.85;
+    box-shadow: 0 0 24px var(--brand-accent);
+  }
+  .fc-content {
+    position: absolute; inset: 56px 64px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 28px;
+    /* Reserve bottom-right corner (PIP zone) at 540×304 px (16:9 quarter) */
+    grid-template-columns: 1fr;
+    z-index: 3;  /* above bg/sparkles/glow-ring */
+  }
+  .fc-header-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+  }
+  .fc-header {
+    font-family: 'Bebas Neue', 'Anton', 'Arial Black', sans-serif;
+    font-size: 64px; letter-spacing: 0.08em;
+    color: var(--brand-accent);
+    line-height: 1;
+    text-align: center;
+    text-shadow:
+      0 0 28px rgba(0,0,0,0.5),
+      0 0 18px color-mix(in srgb, var(--brand-accent) 60%, transparent);
+    animation: fcHeaderGlow 3.4s ease-in-out infinite;
+  }
+  @keyframes fcHeaderGlow {
+    0%, 100% { text-shadow: 0 0 28px rgba(0,0,0,0.5), 0 0 14px color-mix(in srgb, var(--brand-accent) 35%, transparent); }
+    50%      { text-shadow: 0 0 28px rgba(0,0,0,0.5), 0 0 38px color-mix(in srgb, var(--brand-accent) 80%, transparent); }
+  }
+  /* Tenant brand-logo lockup, top-left of card. Source: /brand-logo HTTP route
+     (settings.branding.brandLogoUrl). Hidden if route 404s. */
+  .fc-brand-lockup {
+    position: relative;
+    width: 240px; height: 130px;
+    display: flex; align-items: center; justify-content: flex-start;
+    overflow: hidden;
+    justify-self: start;
+    filter: drop-shadow(0 0 14px rgba(255,255,255,0.18));
+  }
+  .fc-brand-lockup img {
+    max-width: 100%; max-height: 100%; object-fit: contain;
+    display: block;
+  }
+  .fc-brand-lockup::after {
+    /* shimmer sweep — left-to-right gloss every 4.5s */
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 38%,
+      rgba(255,255,255,0.45) 50%,
+      transparent 62%
+    );
+    animation: fcShimmer 4.5s ease-in-out infinite;
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+  @keyframes fcShimmer {
+    0%   { transform: translateX(-130%); opacity: 0; }
+    35%  { opacity: 1; }
+    65%  { opacity: 1; }
+    100% { transform: translateX( 130%); opacity: 0; }
+  }
+  .fc-brand-lockup.empty { visibility: hidden; }
+  /* Studio logo (per-routine), top-right corner, de-emphasized. */
+  .fc-studio-logo {
+    width: 96px; height: 96px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    justify-self: end;
+    opacity: 0.88;
+    filter: drop-shadow(0 0 14px rgba(0,0,0,0.6));
+  }
+  .fc-studio-logo img,
+  .fc-studio-logo video {
+    max-width: 100%; max-height: 100%; object-fit: contain;
+  }
+  .fc-studio-logo.empty { visibility: hidden; }
+  /* Sparkle field — 14 SVG stars (3 sizes) at random positions, twinkling. */
+  .fc-sparkles {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 0;
+  }
+  .fc-sparkle {
+    position: absolute;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><radialGradient id='g' cx='50%25' cy='50%25' r='50%25'><stop offset='0%25' stop-color='%23fff' stop-opacity='1'/><stop offset='40%25' stop-color='%23fff' stop-opacity='0.85'/><stop offset='100%25' stop-color='%23fff' stop-opacity='0'/></radialGradient></defs><path d='M12 0 L13.5 10.5 L24 12 L13.5 13.5 L12 24 L10.5 13.5 L0 12 L10.5 10.5 Z' fill='url(%23g)'/></svg>");
+    background-size: contain; background-repeat: no-repeat;
+    opacity: 0;
+    filter: drop-shadow(0 0 6px rgba(255,255,255,0.85));
+    animation: fcSparkle 3s ease-in-out infinite;
+    will-change: opacity, transform;
+  }
+  .fc-sparkle.fc-sparkle-sm { width: 10px;  height: 10px; }
+  .fc-sparkle.fc-sparkle-md { width: 18px;  height: 18px; }
+  .fc-sparkle.fc-sparkle-lg { width: 28px;  height: 28px; }
+  @keyframes fcSparkle {
+    0%, 100% { opacity: 0;    transform: scale(0.4) rotate(0deg); }
+    45%      { opacity: 0.95; transform: scale(1.05) rotate(45deg); }
+    60%      { opacity: 0.95; transform: scale(1.05) rotate(45deg); }
+  }
+  /* Conic-gradient ring border — slow rotation, brand-accent → gold cycle.
+     @property requires Chromium 99+ (OBS CEF supports it). */
+  @property --fc-ring-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+  }
+  .fc-glow-ring {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    padding: 5px;
+    background: conic-gradient(
+      from var(--fc-ring-angle, 0deg),
+      var(--brand-accent) 0deg,
+      #ffd700 90deg,
+      var(--brand-accent) 180deg,
+      #ffd700 270deg,
+      var(--brand-accent) 360deg
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite: exclude;
+    animation: fcRingSpin 8s linear infinite;
+    opacity: 0.75;
+    z-index: 1;
+  }
+  @keyframes fcRingSpin {
+    to { --fc-ring-angle: 360deg; }
+  }
+  /* Title glow pulse — 2.4s soft halo synced to brand accent. */
+  .fc-title {
+    animation: fcTitlePulse 2.4s ease-in-out infinite;
+  }
+  @keyframes fcTitlePulse {
+    0%, 100% {
+      text-shadow:
+        0 4px 16px rgba(0,0,0,0.55),
+        0 0 18px color-mix(in srgb, var(--brand-accent) 0%, transparent);
+    }
+    50% {
+      text-shadow:
+        0 4px 16px rgba(0,0,0,0.55),
+        0 0 42px color-mix(in srgb, var(--brand-accent) 65%, transparent),
+        0 0 12px rgba(255,255,255,0.18);
+    }
+  }
+  /* Keep .fc-content above the bg/sparkle/ring layers (without overriding
+     position:absolute set in the original .fc-content rule above). */
+  .fc-main {
+    display: flex; flex-direction: column; gap: 18px;
+    padding-right: 580px;  /* PIP zone reserve on the right */
+    align-self: start;
+  }
+  .fc-entry {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 168px;
+    color: var(--brand-accent);
+    line-height: 0.92;
+    letter-spacing: 0.02em;
+  }
+  .fc-entry::before { content: '#'; opacity: 0.55; margin-right: 4px; font-size: 0.6em; vertical-align: 0.35em; }
+  .fc-title {
+    font-family: 'Playfair Display', 'Georgia', serif;
+    font-weight: 700;
+    font-size: 88px;
+    line-height: 1.04;
+    text-shadow: 0 4px 16px rgba(0,0,0,0.55);
+  }
+  .fc-dancers {
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-weight: 500;
+    font-size: 30px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.93);
+    /* Multi-column auto-fit so 12-30 names spread evenly without overflow. */
+    column-count: 2;
+    column-gap: 56px;
+    column-fill: balance;
+    max-height: 360px;
+    overflow: hidden;
+  }
+  .fc-dancers .fc-dancer-sep { color: var(--brand-accent); margin: 0 0.45em; opacity: 0.75; }
+  .fc-meta {
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-weight: 600;
+    font-size: 28px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.78);
+  }
+  .fc-meta .fc-meta-sep { color: var(--brand-accent); margin: 0 0.6em; }
+  /* Bottom UP NEXT strip — only rendered in thatWas mode. */
+  .fc-next-strip {
+    align-self: end;
+    padding: 18px 24px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.18) 80%, transparent 100%);
+    border-left: 4px solid var(--brand-accent);
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    /* Don't overlap PIP zone */
+    margin-right: 580px;
+  }
+  .fc-next-header {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 32px;
+    letter-spacing: 0.12em;
+    color: var(--brand-accent);
+  }
+  .fc-next-entry {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 56px;
+    color: rgba(255,255,255,0.95);
+    line-height: 1;
+  }
+  .fc-next-entry::before { content: '#'; opacity: 0.5; }
+  .fc-next-title {
+    font-family: 'Playfair Display', serif;
+    font-weight: 700;
+    font-size: 36px;
+    color: rgba(255,255,255,0.92);
+  }
+  .fc-next-studio {
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: 0.04em;
+    color: rgba(255,255,255,0.7);
+    text-transform: uppercase;
+  }
+  /* Hide bottom strip in upNext mode */
+  .feature-card[data-mode="upNext"] .fc-next-strip { display: none; }
+  /* Suppress all other overlay elements while featureCard is visible. They
+     fight for screen real estate; the card is the takeover surface. */
+  body.fc-active .counter,
+  body.fc-active .logo,
+  body.fc-active .clock,
+  body.fc-active .lower-third,
+  body.fc-active #ticker,
+  body.fc-active #starting-soon,
+  body.fc-active .chat-fire { opacity: 0 !important; visibility: hidden !important; }
+
 </style>
 </head>
 <body>
@@ -1496,8 +3054,9 @@ function buildOverlayHTML(): string {
 <div class="lower-third" id="lt">
   <div class="lt-card">
     <div class="lt-top">
+      <div class="lt-brand-glyph empty" id="ltBrandGlyph"><img id="ltBrandImg" src="" alt="" /></div>
       <div class="lt-number" id="ltNumber"></div>
-      <div>
+      <div class="lt-stack">
         <div class="lt-title" id="ltTitle"></div>
         <div class="lt-dancers" id="ltDancers"></div>
       </div>
@@ -1508,7 +3067,12 @@ function buildOverlayHTML(): string {
 
 <div id="starting-soon" class="starting-soon">
   <div class="ss-gradient-bg" id="ss-gradient"></div>
-  <div class="ss-logo" id="ss-logo"><img id="ss-logo-img" src="" alt="" /></div>
+  <div class="ss-bloom" id="ss-bloom"></div>
+  <div class="ss-grain" id="ss-grain"></div>
+  <div class="ss-vignette" id="ss-vignette"></div>
+  <div class="ss-venue-id" id="ss-venue-id"></div>
+  <div class="ss-section-badge" id="ss-section-badge"></div>
+  <div class="ss-logo" id="ss-logo"><div class="ss-logo-plate" id="ss-logo-plate"></div><div class="ss-logo-halo" id="ss-logo-halo"></div><div class="ss-logo-img-wrap"><img id="ss-logo-img" src="" alt="" /></div></div>
   <div class="ss-title" id="ss-title"></div>
   <div class="ss-accent-line" id="ss-accent"></div>
   <div class="ss-subtitle" id="ss-subtitle"></div>
@@ -1535,7 +3099,18 @@ function buildOverlayHTML(): string {
   <div class="ss-up-next" id="ss-up-next"></div>
   <div class="ss-visualizer" id="ss-visualizer" style="display:none"></div>
   <div class="ss-pinned-chat" id="ss-pinned-chat"></div>
-  <div class="ss-ticker-rail" id="ss-ticker-rail"><div class="ss-ticker-rail-inner" id="ss-ticker-rail-inner"></div></div>
+  <div class="ss-ticker-block" id="ss-ticker-block">
+    <div class="ss-ticker-accent" id="ss-ticker-accent">
+      <span class="ss-ticker-cat" id="ss-ticker-cat"></span>
+      <span class="ss-ticker-live" id="ss-ticker-live" style="display:none">LIVE</span>
+    </div>
+    <div class="ss-ticker-rail" id="ss-ticker-rail"><div class="ss-ticker-rail-inner" id="ss-ticker-rail-inner"></div></div>
+  </div>
+  <div class="ss-final-cd" id="ss-final-cd">
+    <div class="ss-final-cd-label" id="ss-final-cd-label">FINAL 30 SECONDS</div>
+    <div class="ss-final-cd-digits" id="ss-final-cd-digits"></div>
+    <div class="ss-final-cd-sub" id="ss-final-cd-sub">Show begins shortly</div>
+  </div>
 </div>
 
 <!-- Chat fire (commit 6) — transient LT-style broadcast when operator pins a chat message -->
@@ -1546,20 +3121,72 @@ function buildOverlayHTML(): string {
   </div>
 </div>
 
+<!-- Feature Card (2026-05-04, beauty pass 2026-05-05) — full-screen broadcast graphic, two modes -->
+<div class="feature-card" id="featureCard" data-mode="upNext">
+  <div class="fc-bg"></div>
+  <div class="fc-sparkles" id="fc-sparkles"></div>
+  <div class="fc-glow-ring"></div>
+  <div class="fc-content">
+    <div class="fc-header-row">
+      <div class="fc-brand-lockup empty" id="fc-brand-lockup">
+        <img id="fc-brand-img" src="" alt="" />
+      </div>
+      <div class="fc-header" id="fc-header">UP NEXT</div>
+      <div class="fc-studio-logo empty" id="fc-studio-logo"></div>
+    </div>
+    <div class="fc-main">
+      <div class="fc-entry" id="fc-entry"></div>
+      <div class="fc-title" id="fc-title"></div>
+      <div class="fc-dancers" id="fc-dancers"></div>
+      <div class="fc-meta" id="fc-meta"></div>
+    </div>
+    <div class="fc-next-strip" id="fc-next-strip">
+      <div class="fc-next-header">UP NEXT</div>
+      <div class="fc-next-entry" id="fc-next-entry"></div>
+      <div class="fc-next-title" id="fc-next-title"></div>
+      <div class="fc-next-studio" id="fc-next-studio"></div>
+    </div>
+  </div>
+</div>
+
 <script>
   const WS_URL = 'ws://localhost:9877';
   const LT_ANIMS = ['anim-slide','anim-zoom','anim-fade','anim-rise','anim-sparkle','anim-typewriter','anim-bounce','anim-split','anim-blur'];
   let ws = null;
   let reconnectDelay = 1000;
   let lastCounterEntry = '';
+  // Counter advance — premium animation pack. Pick a random variant per
+  // advance, no-repeat with prior so consecutive advances always look fresh.
+  const COUNTER_VARIANTS = ['v1','v2','v3','v4','v5','v6'];
+  let lastCounterVariant = '';
+  function pickCounterVariant() {
+    if (COUNTER_VARIANTS.length === 1) return COUNTER_VARIANTS[0];
+    let pick;
+    let guard = 0;
+    do {
+      pick = COUNTER_VARIANTS[Math.floor(Math.random() * COUNTER_VARIANTS.length)];
+      guard++;
+    } while (pick === lastCounterVariant && guard < 6);
+    lastCounterVariant = pick;
+    return pick;
+  }
   let currentAnim = '';
   let currentChatFireAnim = '';
   let lastChatFireId = '';
   let typewriterTimer = null;
+  let cfTypewriterTimer = null;
   let lastLtFingerprint = '';
   let lastLtAnimConfigPrint = '';
+  let lastFeatureCardFiredAt = 0;
+  let lastFeatureCardVisible = false;
+  let fcExitTimer = null;
   let countdownInterval = null;
   let timeDateInterval = null;
+  // SS scene-entry orchestration. The first-show class drives staggered
+  // enter animations on each child; remove after entry so subsequent state
+  // pings dont re-fire it.
+  let lastSsVisible = false;
+  let ssFirstShowTimer = null;
 
   function hexToRgb(hex) {
     var result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex);
@@ -1590,6 +3217,112 @@ function buildOverlayHTML(): string {
     if (typewriterTimer) { clearInterval(typewriterTimer); typewriterTimer = null; }
     var cursors = document.querySelectorAll('.lt-cursor');
     cursors.forEach(function(c) { c.remove(); });
+  }
+
+  // 2026-05-04 unified depth — apply card / sub-element style overlays. Idle
+  // values (fontSize=0, color='', fontWeight=0, borderWidth=-1) skip the
+  // assignment so the existing CSS default wins. backgroundColor='' similarly
+  // leaves the gradient untouched. backgroundOpacity != 1 multiplies into
+  // an rgba override only when backgroundColor is set (otherwise the existing
+  // gradient stays in charge).
+  function applyElementCard(rootEl, card) {
+    if (!rootEl || !card) return;
+    if (card.backgroundColor) {
+      // Convert hex+opacity to rgba so existing card background is overridden.
+      var hex = card.backgroundColor.replace('#','');
+      var op = (typeof card.backgroundOpacity === 'number') ? card.backgroundOpacity : 1;
+      if (hex.length === 6) {
+        var r = parseInt(hex.substr(0,2),16);
+        var g = parseInt(hex.substr(2,2),16);
+        var b = parseInt(hex.substr(4,2),16);
+        rootEl.style.background = 'rgba(' + r + ',' + g + ',' + b + ',' + op + ')';
+      } else {
+        rootEl.style.background = card.backgroundColor;
+      }
+    }
+    if (typeof card.backdropBlur === 'number' && card.backdropBlur > 0) {
+      rootEl.style.backdropFilter = 'blur(' + card.backdropBlur + 'px)';
+      rootEl.style.webkitBackdropFilter = 'blur(' + card.backdropBlur + 'px)';
+    }
+    if (typeof card.paddingX === 'number' && card.paddingX > 0 &&
+        typeof card.paddingY === 'number' && card.paddingY > 0) {
+      rootEl.style.padding = card.paddingY + 'px ' + card.paddingX + 'px';
+    } else if (typeof card.paddingX === 'number' && card.paddingX > 0) {
+      rootEl.style.paddingLeft = card.paddingX + 'px';
+      rootEl.style.paddingRight = card.paddingX + 'px';
+    } else if (typeof card.paddingY === 'number' && card.paddingY > 0) {
+      rootEl.style.paddingTop = card.paddingY + 'px';
+      rootEl.style.paddingBottom = card.paddingY + 'px';
+    }
+    if (typeof card.innerGap === 'number' && card.innerGap > 0) {
+      rootEl.style.gap = card.innerGap + 'px';
+    }
+    if (typeof card.borderRadius === 'number' && card.borderRadius > 0) {
+      rootEl.style.borderRadius = card.borderRadius + 'px';
+    }
+    if (typeof card.borderWidth === 'number' && card.borderWidth >= 0) {
+      var bc = card.borderColor || 'rgba(255,255,255,0.4)';
+      rootEl.style.border = card.borderWidth + 'px solid ' + bc;
+    } else if (card.borderColor) {
+      rootEl.style.borderColor = card.borderColor;
+    }
+  }
+
+  function applySubElementStyle(el, sub) {
+    if (!el || !sub) return;
+    if (typeof sub.fontSize === 'number' && sub.fontSize > 0) el.style.fontSize = sub.fontSize + 'px';
+    if (sub.color) el.style.color = sub.color;
+    if (typeof sub.fontWeight === 'number' && sub.fontWeight > 0) el.style.fontWeight = String(sub.fontWeight);
+    if (typeof sub.order === 'number') el.style.order = String(sub.order);
+    if (sub.show === false) el.style.display = 'none';
+  }
+
+  // Swap an asset host container's inner element to <video> or <img> based on
+  // assetUrl extension. assetUrl is empty by default — we then leave the
+  // existing /brand-logo <img> chain alone (back-compat). When set: we mount
+  // either a video tag (mp4/webm/mov/m4v with autoplay/loop/muted/playsinline)
+  // or an img tag (png/jpg/svg/webp/gif/apng/avif). 'none' = clear container.
+  function mountElementAsset(containerEl, key, assetUrl) {
+    if (!containerEl) return;
+    if (!assetUrl) {
+      // No override — leave whatever's already in the container intact (the
+      // legacy /brand-logo img path keeps working unchanged).
+      return;
+    }
+    var lower = String(assetUrl).toLowerCase().split('?')[0].split('#')[0];
+    var isVideo = /\\.(mp4|webm|mov|m4v)$/.test(lower);
+    var bust = 0;
+    for (var i = 0; i < assetUrl.length; i++) { bust = ((bust << 5) - bust) + assetUrl.charCodeAt(i); bust |= 0; }
+    var src = '/element-asset?key=' + encodeURIComponent(key) + '&v=' + Math.abs(bust);
+    var existing = containerEl.firstElementChild;
+    var wantTag = isVideo ? 'VIDEO' : 'IMG';
+    if (existing && existing.tagName === wantTag && existing.dataset.assetSrc === src) {
+      return; // already correct
+    }
+    // Replace inner element.
+    while (containerEl.firstChild) containerEl.removeChild(containerEl.firstChild);
+    var node;
+    if (isVideo) {
+      node = document.createElement('video');
+      node.autoplay = true;
+      node.loop = true;
+      node.muted = true;
+      node.setAttribute('playsinline', '');
+      node.setAttribute('muted', '');
+      node.setAttribute('autoplay', '');
+      node.setAttribute('loop', '');
+      node.style.maxWidth = '100%';
+      node.style.maxHeight = '100%';
+      node.style.objectFit = 'contain';
+    } else {
+      node = document.createElement('img');
+      node.style.maxWidth = '100%';
+      node.style.maxHeight = '100%';
+      node.style.objectFit = 'contain';
+    }
+    node.dataset.assetSrc = src;
+    node.src = src;
+    containerEl.appendChild(node);
   }
 
   function applyState(state) {
@@ -1629,9 +3362,9 @@ function buildOverlayHTML(): string {
     if (o.counter.visible) {
       counterEl.classList.add('visible');
       if (o.counter.entryNumber !== lastCounterEntry && lastCounterEntry !== '') {
-        counterEl.classList.remove('advance');
+        counterEl.classList.remove('advance', 'v1','v2','v3','v4','v5','v6');
         void counterEl.offsetWidth;
-        counterEl.classList.add('advance');
+        counterEl.classList.add('advance', pickCounterVariant());
       }
       lastCounterEntry = o.counter.entryNumber;
       counterNum.textContent = o.counter.entryNumber;
@@ -1671,6 +3404,19 @@ function buildOverlayHTML(): string {
 
     const ltEl = document.getElementById('lt');
 
+    // 2026-05-02 (Burlington UDC Day 2): brand glyph mounted on the LT card.
+    // Loaded once and cached by the browser; .empty class hides it when the
+    // tenant has no brand logo configured. Source is the same /brand-logo
+    // route used by the legacy logo overlay and ss-logo.
+    var ltBrandImg = document.getElementById('ltBrandImg');
+    var ltBrandGlyph = document.getElementById('ltBrandGlyph');
+    if (ltBrandImg && ltBrandGlyph && !ltBrandImg.dataset.loaded) {
+      ltBrandImg.dataset.loaded = '1';
+      ltBrandImg.onload = function () { ltBrandGlyph.classList.remove('empty'); };
+      ltBrandImg.onerror = function () { ltBrandGlyph.classList.add('empty'); };
+      ltBrandImg.src = '/brand-logo?v=lt';
+    }
+
     // Idempotency guard: the recording-timer broadcasts state ~1Hz while
     // recording. Without this guard every broadcast re-ran the LT setup
     // (text wipe, typewriter restart, RAF add-visible). Typewriter then
@@ -1687,6 +3433,7 @@ function buildOverlayHTML(): string {
           o.lowerThird.studioName,
           o.lowerThird.category,
           o.lowerThird.animation || 'random',
+          o.lowerThird.showBrandGlyph === false ? 0 : 1,
           o.lowerThird.showEntryNumber === false ? 0 : 1,
           o.lowerThird.showRoutineTitle === false ? 0 : 1,
           o.lowerThird.showDancers === false ? 0 : 1,
@@ -1694,6 +3441,12 @@ function buildOverlayHTML(): string {
           o.lowerThird.showCategory === false ? 0 : 1,
         ].join('|')
       : 'hidden';
+
+    // showBrandGlyph: hide the LT brand-logo capsule independently of whether
+    // the brand logo URL loads. Operator can opt out from the VisualEditor.
+    if (ltBrandGlyph) {
+      ltBrandGlyph.style.display = o.lowerThird.showBrandGlyph === false ? 'none' : '';
+    }
     var ltAnimConfigPrint = dur + '|' + ease;
 
     if (ltAnimConfigPrint !== lastLtAnimConfigPrint) {
@@ -1811,6 +3564,80 @@ function buildOverlayHTML(): string {
       applyStartingSoon(o.startingSoon, state.ssConfig, o.logo ? o.logo.url : '', state);
     }
 
+    // 2026-05-04 unified depth — apply per-element card / sub-element styles.
+    // Defaults are no-op (fontSize=0, color='', borderWidth=-1) so this branch
+    // is invisible to the operator until they tweak something in VisualEditor.
+    try {
+      // Counter — root .counter-box gets card; sub-elements: number + label.
+      if (o.counter && o.counter.card) {
+        var counterBox = document.querySelector('#counter .counter-box');
+        if (counterBox) applyElementCard(counterBox, o.counter.card);
+        var subC = o.counter.subElements || {};
+        applySubElementStyle(document.getElementById('counterNumber'), subC.number);
+        applySubElementStyle(document.getElementById('counterLabel'), subC.label);
+      }
+      // Clock — root .clock-box; sub-elements: time + date.
+      if (o.clock && o.clock.card) {
+        var clockBox = document.querySelector('#clock .clock-box');
+        if (clockBox) applyElementCard(clockBox, o.clock.card);
+        var subK = o.clock.subElements || {};
+        applySubElementStyle(document.getElementById('clockTime'), subK.time);
+        applySubElementStyle(document.getElementById('clockDate'), subK.date);
+      }
+      // Logo — assetUrl override + card on root .logo container.
+      if (o.logo) {
+        var logoContainer = document.getElementById('logo');
+        if (o.logo.card) applyElementCard(logoContainer, o.logo.card);
+        if (o.logo.assetUrl) {
+          mountElementAsset(logoContainer, 'logo', o.logo.assetUrl);
+        }
+        var subL = (o.logo.subElements) || {};
+        if (subL.image) {
+          var inner = logoContainer && logoContainer.firstElementChild;
+          if (inner) applySubElementStyle(inner, subL.image);
+        }
+      }
+      // Lower Third — card on .lt-card; sub-elements include brandGlyph,
+      // entryNumber, routineTitle, dancers, studioName, category. Asset
+      // override is brandGlyphUrl (mounted into #ltBrandGlyph container).
+      if (o.lowerThird) {
+        var ltCard = document.querySelector('#lt .lt-card');
+        if (o.lowerThird.card) applyElementCard(ltCard, o.lowerThird.card);
+        if (o.lowerThird.brandGlyphUrl) {
+          mountElementAsset(document.getElementById('ltBrandGlyph'), 'lowerthird', o.lowerThird.brandGlyphUrl);
+        }
+        var subLT = o.lowerThird.subElements || {};
+        applySubElementStyle(document.getElementById('ltBrandGlyph'), subLT.brandGlyph);
+        applySubElementStyle(document.getElementById('ltNumber'), subLT.entryNumber);
+        applySubElementStyle(document.getElementById('ltTitle'), subLT.routineTitle);
+        applySubElementStyle(document.getElementById('ltDancers'), subLT.dancers);
+        // Meta is studio + category combined; partial sub-element styling
+        // applies to the meta line as a whole (use studioName slot).
+        applySubElementStyle(document.getElementById('ltMeta'), subLT.studioName || subLT.category);
+      }
+      // Ticker — card on root #ticker bar; sub-element 'text' on the scrolling text.
+      if (o.ticker) {
+        var tickerEl2 = document.getElementById('ticker');
+        if (o.ticker.card) applyElementCard(tickerEl2, o.ticker.card);
+        var subT = o.ticker.subElements || {};
+        applySubElementStyle(document.getElementById('ticker-text'), subT.text);
+      }
+      // Starting Soon — assetUrl override on #ss-logo + card on .starting-soon root.
+      if (o.startingSoon) {
+        var ssRoot = document.getElementById('starting-soon');
+        if (o.startingSoon.card) applyElementCard(ssRoot, o.startingSoon.card);
+        if (o.startingSoon.assetUrl) {
+          mountElementAsset(document.getElementById('ss-logo'), 'startingsoon', o.startingSoon.assetUrl);
+        }
+        var subSS = o.startingSoon.subElements || {};
+        applySubElementStyle(document.getElementById('ss-logo'), subSS.logo);
+        applySubElementStyle(document.getElementById('ss-title'), subSS.title);
+        applySubElementStyle(document.getElementById('ss-accent'), subSS.accent);
+        applySubElementStyle(document.getElementById('ss-subtitle'), subSS.subtitle);
+        applySubElementStyle(document.getElementById('ss-countdown'), subSS.countdown);
+      }
+    } catch (e) { console.warn('[overlay] per-element style apply failed: ' + e); }
+
     // --- Chat Fire (commit 6) ---
     // Transient LT-style broadcast when operator pins a chat message.
     // Inherits animation from lowerThird + autoHideSeconds from animConfig.
@@ -1839,13 +3666,55 @@ function buildOverlayHTML(): string {
           cfEl.classList.add(currentChatFireAnim);
           var cfName = document.getElementById('cf-name');
           var cfText = document.getElementById('cf-text');
-          if (cfName) cfName.textContent = cfState.username || 'Anonymous';
-          if (cfText) cfText.textContent = cfState.message || '';
+          // Cancel any prior typewriter run + remove leftover cursors
+          if (cfTypewriterTimer) { clearInterval(cfTypewriterTimer); cfTypewriterTimer = null; }
+          var oldCursors = cfEl.querySelectorAll('.cf-cursor');
+          for (var ci = 0; ci < oldCursors.length; ci++) oldCursors[ci].remove();
+          var cfFullName = cfState.username || 'Anonymous';
+          var cfFullText = cfState.message || '';
+          if (currentChatFireAnim === 'anim-typewriter') {
+            if (cfName) cfName.textContent = '';
+            if (cfText) cfText.textContent = '';
+          } else {
+            if (cfName) cfName.textContent = cfFullName;
+            if (cfText) cfText.textContent = cfFullText;
+          }
           requestAnimationFrame(function() {
             cfEl.classList.add('visible');
             cfEl.style.opacity = '1';
             cfEl.style.display = 'block';
             cfEl.style.visibility = 'visible';
+
+            if (currentChatFireAnim === 'anim-typewriter' && cfName && cfText) {
+              var totalCf = cfFullName.length + cfFullText.length;
+              if (totalCf > 0) {
+                var charDelayCf = Math.max(20, (durVal * 1000) / totalCf);
+                var idxCf = 0;
+                var cursorCf = document.createElement('span');
+                cursorCf.className = 'cf-cursor';
+                cfName.appendChild(cursorCf);
+                cfTypewriterTimer = setInterval(function () {
+                  if (idxCf < cfFullName.length) {
+                    cfName.textContent = cfFullName.substring(0, idxCf + 1);
+                    cfName.appendChild(cursorCf);
+                  } else {
+                    cfName.textContent = cfFullName;
+                    var siCf = idxCf - cfFullName.length;
+                    cfText.textContent = cfFullText.substring(0, siCf + 1);
+                    cfText.appendChild(cursorCf);
+                  }
+                  idxCf++;
+                  if (idxCf >= totalCf) {
+                    clearInterval(cfTypewriterTimer);
+                    cfTypewriterTimer = null;
+                    cfName.textContent = cfFullName;
+                    cfText.textContent = cfFullText;
+                    setTimeout(function () { cursorCf.remove(); }, 800);
+                  }
+                }, charDelayCf);
+              }
+            }
+
             var rect = cfEl.getBoundingClientRect();
             var cs = getComputedStyle(cfEl);
             console.warn('[chat-fire] visible class added — rect=' + JSON.stringify({ x: rect.x, y: rect.y, w: rect.width, h: rect.height }) + ' opacity=' + cs.opacity + ' display=' + cs.display + ' visibility=' + cs.visibility + ' position=' + cs.position + ' zIndex=' + cs.zIndex + ' classes=' + cfEl.className);
@@ -1858,6 +3727,10 @@ function buildOverlayHTML(): string {
           console.warn('[chat-fire] HIDE — removing visible class');
           cfEl.classList.remove('visible');
           cfEl.style.opacity = '0';
+          // Cancel any in-flight typewriter run + strip leftover cursor.
+          if (cfTypewriterTimer) { clearInterval(cfTypewriterTimer); cfTypewriterTimer = null; }
+          var leftoverCursors = cfEl.querySelectorAll('.cf-cursor');
+          for (var lci = 0; lci < leftoverCursors.length; lci++) leftoverCursors[lci].remove();
           var clearAnim = currentChatFireAnim;
           setTimeout(function() {
             if (clearAnim) cfEl.classList.remove(clearAnim);
@@ -1875,6 +3748,152 @@ function buildOverlayHTML(): string {
         console.error('[chat-fire] element #chat-fire NOT FOUND in DOM but state says visible=true');
       }
     }
+
+    // ── Feature Card ──
+    var fc = o && o.featureCard;
+    var fcEl = document.getElementById('featureCard');
+    if (fcEl && fc) {
+      var fcMode = fc.mode || 'upNext';
+      var fcDir = fc.slideDirection || 'up';
+      var fcShouldShow = !!fc.visible;
+      var fcRetrigger = (fc.firedAt && fc.firedAt !== lastFeatureCardFiredAt);
+
+      // Body class flips overlay-element suppression on/off in one CSS rule.
+      if (fcShouldShow) document.body.classList.add('fc-active');
+      else document.body.classList.remove('fc-active');
+
+      // (Re)populate text. Idempotent on every state push — cheap.
+      fcEl.setAttribute('data-mode', fcMode);
+      var fcHeader = document.getElementById('fc-header');
+      if (fcHeader) fcHeader.textContent = (fcMode === 'thatWas') ? 'THAT WAS' : 'UP NEXT';
+      var fcEntry = document.getElementById('fc-entry');
+      if (fcEntry) fcEntry.textContent = fc.entryNumber || '';
+      var fcTitle = document.getElementById('fc-title');
+      if (fcTitle) fcTitle.textContent = fc.routineTitle || '';
+      var fcDancers = document.getElementById('fc-dancers');
+      if (fcDancers) {
+        // Dot-separated rendering with brand-accent separators between names.
+        var fcRaw = (fc.dancers || '').split(/\s*[,·]\s*/).filter(function(s){ return s.length > 0; });
+        var fcOut = '';
+        for (var di = 0; di < fcRaw.length; di++) {
+          if (di > 0) fcOut += '<span class="fc-dancer-sep">·</span>';
+          fcOut += fcRaw[di].replace(/[<>&]/g, function(c){ return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;'; });
+        }
+        fcDancers.innerHTML = fcOut;
+      }
+      var fcMeta = document.getElementById('fc-meta');
+      if (fcMeta) {
+        var fcMetaParts = [];
+        if (fc.studioName) fcMetaParts.push(fc.studioName);
+        if (fc.category) fcMetaParts.push(fc.category);
+        var fcMetaHtml = '';
+        for (var mi = 0; mi < fcMetaParts.length; mi++) {
+          if (mi > 0) fcMetaHtml += '<span class="fc-meta-sep">/</span>';
+          fcMetaHtml += fcMetaParts[mi].replace(/[<>&]/g, function(c){ return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;'; });
+        }
+        fcMeta.innerHTML = fcMetaHtml;
+      }
+      // Bottom strip (thatWas mode only — CSS hides in upNext)
+      var fcNextEntry = document.getElementById('fc-next-entry');
+      if (fcNextEntry) fcNextEntry.textContent = fc.nextEntryNumber || '';
+      var fcNextTitle = document.getElementById('fc-next-title');
+      if (fcNextTitle) fcNextTitle.textContent = fc.nextRoutineTitle || '';
+      var fcNextStudio = document.getElementById('fc-next-studio');
+      if (fcNextStudio) fcNextStudio.textContent = fc.nextStudioName || '';
+      // Studio logo (assetUrl override or hidden if empty)
+      var fcLogoEl = document.getElementById('fc-studio-logo');
+      if (fcLogoEl) {
+        if (fc.assetUrl && fc.assetUrl.length > 0) {
+          // Pick img vs video based on extension. Reuses /element-asset route
+          // pattern used by the existing element editor for operator-browsed
+          // local files (avoids file:// CORS in iframe).
+          var url = fc.assetUrl;
+          var lower = url.toLowerCase().split('?')[0];
+          var isVideo = /\.(mp4|webm|mov|m4v)$/.test(lower);
+          var bust = 0;
+          for (var ui = 0; ui < url.length; ui++) { bust = ((bust << 5) - bust) + url.charCodeAt(ui); bust |= 0; }
+          var src = '/element-asset?key=featureCard&v=' + Math.abs(bust);
+          if (isVideo) {
+            if (fcLogoEl.firstChild && fcLogoEl.firstChild.tagName !== 'VIDEO') fcLogoEl.innerHTML = '';
+            if (!fcLogoEl.firstChild) {
+              var v = document.createElement('video');
+              v.autoplay = true; v.loop = true; v.muted = true; v.playsInline = true;
+              v.src = src;
+              fcLogoEl.appendChild(v);
+            }
+          } else {
+            if (fcLogoEl.firstChild && fcLogoEl.firstChild.tagName !== 'IMG') fcLogoEl.innerHTML = '';
+            if (!fcLogoEl.firstChild) {
+              var img = document.createElement('img');
+              img.src = src;
+              fcLogoEl.appendChild(img);
+            }
+          }
+          fcLogoEl.classList.remove('empty');
+        } else {
+          fcLogoEl.classList.add('empty');
+          fcLogoEl.innerHTML = '';
+        }
+      }
+
+      // Tenant brand-logo lockup (top-left of card). Loads from /brand-logo HTTP
+      // route — falls back to hidden if no logo configured (route 404s).
+      var fcBrandLockup = document.getElementById('fc-brand-lockup');
+      var fcBrandImg = document.getElementById('fc-brand-img');
+      if (fcBrandLockup && fcBrandImg) {
+        // Cache-bust per fire so logo updates pick up without iframe reload.
+        if (fcRetrigger || !fcBrandImg.src || fcBrandImg.src.indexOf('/brand-logo') < 0) {
+          fcBrandImg.onload  = function() { fcBrandLockup.classList.remove('empty'); };
+          fcBrandImg.onerror = function() { fcBrandLockup.classList.add('empty'); };
+          fcBrandImg.src = '/brand-logo?v=fc' + (fc.firedAt || Date.now());
+        }
+      }
+
+      // Direction class — clear all then add the chosen one.
+      ['slide-up','slide-down','slide-left','slide-right'].forEach(function(d){ fcEl.classList.remove(d); });
+      fcEl.classList.add('slide-' + fcDir);
+
+      if (fcShouldShow && (fcRetrigger || !lastFeatureCardVisible)) {
+        // Slide IN — restart the entering animation cleanly.
+        if (fcExitTimer) { clearTimeout(fcExitTimer); fcExitTimer = null; }
+        fcEl.classList.remove('exiting');
+        fcEl.classList.remove('entering');
+        fcEl.classList.remove('visible');
+        // Re-seed sparkle field with fresh random positions/delays per fire.
+        var fcSparkleContainer = document.getElementById('fc-sparkles');
+        if (fcSparkleContainer) {
+          fcSparkleContainer.innerHTML = '';
+          var fcSparkleSizes = ['fc-sparkle-sm','fc-sparkle-md','fc-sparkle-lg'];
+          for (var fsi = 0; fsi < 14; fsi++) {
+            var sp = document.createElement('div');
+            sp.className = 'fc-sparkle ' + fcSparkleSizes[fsi % 3];
+            sp.style.left = (Math.random() * 92 + 4) + '%';
+            sp.style.top  = (Math.random() * 92 + 4) + '%';
+            sp.style.animationDelay    = (Math.random() * 3).toFixed(2) + 's';
+            sp.style.animationDuration = (2.4 + Math.random() * 1.6).toFixed(2) + 's';
+            fcSparkleContainer.appendChild(sp);
+          }
+        }
+        // Force reflow so the animation restarts.
+        void fcEl.offsetWidth;
+        fcEl.classList.add('visible');
+        fcEl.classList.add('entering');
+        lastFeatureCardFiredAt = fc.firedAt;
+        lastFeatureCardVisible = true;
+      } else if (!fcShouldShow && lastFeatureCardVisible) {
+        // Slide OUT — exit animation, then drop visibility once it ends.
+        fcEl.classList.remove('entering');
+        fcEl.classList.add('exiting');
+        if (fcExitTimer) clearTimeout(fcExitTimer);
+        fcExitTimer = setTimeout(function() {
+          fcEl.classList.remove('visible');
+          fcEl.classList.remove('exiting');
+          fcExitTimer = null;
+        }, 700);
+        lastFeatureCardVisible = false;
+        lastFeatureCardFiredAt = fc.firedAt || 0;
+      }
+    }
   }
 
   function applyStartingSoon(ss, ssCfg, logoUrl, state) {
@@ -1885,6 +3904,14 @@ function buildOverlayHTML(): string {
     var ssLogoEl = document.getElementById('ss-logo');
     var ssLogoImg = document.getElementById('ss-logo-img');
     var ssTimeDateEl = document.getElementById('ss-time-date');
+
+    // Hoisted HTML escape for venue/badge/etc. The countdown's local
+    // escHtml shadows this within its closure (kept for backcompat).
+    function escHtmlGlobal(s) {
+      return String(s).replace(/[&<>"']/g, function(c) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+      });
+    }
 
     if (!ss) { ssEl.classList.remove('visible'); return; }
 
@@ -1915,6 +3942,7 @@ function buildOverlayHTML(): string {
     }
 
     // --- Title layout + styling ---
+    var ssAccentEl = document.getElementById('ss-accent');
     if (ssCfg && ssCfg.layout && ssCfg.layout.title && ssCfg.layout.title.visible) {
       var tLayout = ssCfg.layout.title;
       ssTitleEl.style.display = 'block';
@@ -1922,8 +3950,20 @@ function buildOverlayHTML(): string {
       ssTitleEl.style.top = (tLayout.y + tLayout.height / 2) + '%';
       if (ssCfg.titleFontSize) ssTitleEl.style.fontSize = ssCfg.titleFontSize + 'px';
       if (ssCfg.titleColor) ssTitleEl.style.color = ssCfg.titleColor;
+      // Accent line — sits just below title center, scaled to ~50% of title width
+      if (ssAccentEl) {
+        ssAccentEl.style.display = 'block';
+        ssAccentEl.style.left = (tLayout.x + tLayout.width / 2) + '%';
+        ssAccentEl.style.top = (tLayout.y + tLayout.height + 1.4) + '%';
+        ssAccentEl.style.width = (tLayout.width * 0.5) + '%';
+        ssAccentEl.classList.add('visible');
+      }
     } else {
       ssTitleEl.style.display = 'none';
+      if (ssAccentEl) {
+        ssAccentEl.style.display = 'none';
+        ssAccentEl.classList.remove('visible');
+      }
     }
 
     // --- Subtitle layout + styling ---
@@ -1953,11 +3993,27 @@ function buildOverlayHTML(): string {
     // Without this, the wrap at applyState race-loses and the scene fades to black
     // ~0.8s after the first state broadcast arrives. Guard at source, not after.
     var ssForcePreview = (typeof isPreview !== 'undefined') && isPreview && sceneParam === 'startingsoon';
-    if (ss.visible || ssForcePreview) {
+    var nowVisible = !!(ss.visible || ssForcePreview);
+    if (nowVisible) {
       ssEl.classList.add('visible');
+      // First-show orchestration: trigger entry animations only on the
+      // invisible→visible flip, never on subsequent state pings while shown.
+      if (!lastSsVisible) {
+        ssEl.classList.remove('first-show');
+        // Force reflow so animation restarts cleanly
+        void ssEl.offsetWidth;
+        ssEl.classList.add('first-show');
+        if (ssFirstShowTimer) clearTimeout(ssFirstShowTimer);
+        ssFirstShowTimer = setTimeout(function() {
+          ssEl.classList.remove('first-show');
+          ssFirstShowTimer = null;
+        }, 2800);
+      }
     } else {
-      ssEl.classList.remove('visible');
+      ssEl.classList.remove('visible', 'first-show');
+      if (ssFirstShowTimer) { clearTimeout(ssFirstShowTimer); ssFirstShowTimer = null; }
     }
+    lastSsVisible = nowVisible;
 
     // --- Gradient Background ---
     var gradientEl = document.getElementById('ss-gradient');
@@ -1972,6 +4028,12 @@ function buildOverlayHTML(): string {
         'monochrome-shift': ['#0a0a0a','#2d2d2d','#4a4a4a','#1a1a1a'],
         'neon-cyber': ['#ff006e','#8338ec','#3a86ff','#ffbe0b'],
         'forest-mist': ['#0b3d0b','#1a7a1a','#2d6a4f','#40916c'],
+        // Design-pro pack 2026-05-05 — broadcast-grade palettes
+        'slate-aurora': ['#0a0e2a','#1f1947','#3b3585','#4f4a9b'],
+        'velvet-night': ['#0a0a0f','#2a0a1f','#4a0e2f','#1a0a14'],
+        'champagne-light': ['#f5f0e1','#e8c87a','#d4b48a','#f0e8d5'],
+        'cinematic-teal': ['#0a3344','#1a6b8e','#0a3344','#0e1d2a'],
+        'neutral-studio': ['#1a1a1f','#2d2d35','#3a3a44','#1a1a1f'],
       };
       var colors;
       if (g.preset === 'brand' && state && state.branding && state.branding.brandColors && state.branding.brandColors.length >= 2) {
@@ -2012,8 +4074,36 @@ function buildOverlayHTML(): string {
       ssLogoEl.style.width = logoLayout.width + '%';
       ssLogoEl.style.height = logoLayout.height + '%';
       ssLogoEl.style.opacity = (logoCfg.opacity != null ? logoCfg.opacity : 1);
+      // Bloom follows logo center so the off-screen halo lands behind the
+      // brand mark wherever the operator places it via SSE.
+      ssEl.style.setProperty('--ss-bloom-x', (logoLayout.x + logoLayout.width / 2) + '%');
+      ssEl.style.setProperty('--ss-bloom-y', (logoLayout.y + logoLayout.height / 2) + '%');
       if (ssLogoImg) {
         ssLogoImg.style.objectFit = logoCfg.fit || 'contain';
+      }
+      // Premium pass — trophy plinth + rotating conic halo. Opt-in via SSE.
+      var haloEnabled = (logoCfg.haloEnabled !== false);
+      var haloColor = logoCfg.haloColor || '#a4b3ff';
+      var ssHaloEl = document.getElementById('ss-logo-halo');
+      var ssPlateEl = document.getElementById('ss-logo-plate');
+      if (haloEnabled) {
+        ssLogoEl.classList.add('has-halo');
+        if (ssHaloEl) {
+          ssHaloEl.style.display = '';
+          // hex → rgba(.55) so blur+conic doesn't blow out
+          var hex = String(haloColor).replace('#','');
+          if (hex.length === 6) {
+            var hr = parseInt(hex.substr(0,2),16);
+            var hg = parseInt(hex.substr(2,2),16);
+            var hb = parseInt(hex.substr(4,2),16);
+            ssLogoEl.style.setProperty('--ss-halo', 'rgba(' + hr + ',' + hg + ',' + hb + ',0.55)');
+          }
+        }
+        if (ssPlateEl) ssPlateEl.style.display = '';
+      } else {
+        ssLogoEl.classList.remove('has-halo');
+        if (ssHaloEl) ssHaloEl.style.display = 'none';
+        if (ssPlateEl) ssPlateEl.style.display = 'none';
       }
       var anim = logoCfg.animation || 'none';
       if (anim && anim !== 'none') {
@@ -2036,25 +4126,174 @@ function buildOverlayHTML(): string {
     }
 
     // --- Countdown styling ---
+    var cdStyleMode = 'soft';
     if (ssCfg && ssCfg.countdownStyle) {
       var cs = ssCfg.countdownStyle;
       ssCountEl.style.fontSize = cs.fontSize + 'px';
       ssCountEl.style.color = cs.color;
       ssCountEl.style.fontWeight = String(cs.fontWeight);
+      cdStyleMode = cs.style || 'soft';
     }
+    // Toggle the flipboard layout class on the countdown root so CSS can
+    // switch from a plain text node to digit-cell flex layout.
+    ssCountEl.classList.remove('style-flipboard', 'style-sevenSeg');
+    if (cdStyleMode === 'flipboard') ssCountEl.classList.add('style-flipboard');
+    else if (cdStyleMode === 'sevenSeg') ssCountEl.classList.add('style-sevenSeg');
 
     // Countdown timer
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+    // Reset the final-30 takeover layer on every applyStartingSoon — countdown
+    // may have been disabled, or the operator extended the target. The interval
+    // closure below re-engages it if the new target is within threshold.
+    var ssFinalReset = document.getElementById('ss-final-cd');
+    if (ssFinalReset) {
+      ssFinalReset.classList.remove('visible', 'entering', 'escalate', 'drop');
+    }
+    if (ssCountEl) ssCountEl.style.opacity = '';
     if (ss.showCountdown && ss.countdownTarget) {
       var showLabels = (ssCfg && ssCfg.countdownStyle) ? ssCfg.countdownStyle.showLabels : false;
       var expiredText = (ssCfg && ssCfg.countdownStyle && ssCfg.countdownStyle.expiredText) ? ssCfg.countdownStyle.expiredText : 'SOON';
       var prefixText = (ssCfg && ssCfg.countdownStyle && ssCfg.countdownStyle.prefixText) ? ssCfg.countdownStyle.prefixText : '';
+      function escHtml(s) {
+        return String(s).replace(/[&<>"']/g, function(c) {
+          return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+        });
+      }
+      // Renders body as flipboard cells: each digit gets its own cell with a
+      // flip animation that re-fires whenever the cell's digit changes.
+      function renderFlipboard(body) {
+        var html = '';
+        for (var ci = 0; ci < body.length; ci++) {
+          var ch = body.charAt(ci);
+          if (ch === ':') {
+            html += '<span class="ss-cd-sep">:</span>';
+          } else if (ch === ' ') {
+            html += '<span style="display:inline-block;width:0.25em"></span>';
+          } else if (/[0-9]/.test(ch)) {
+            html += '<span class="ss-cd-digit-cell"><span class="ss-cd-digit">' + ch + '</span></span>';
+          } else {
+            // labels like "h"/"m"/"s" — don't wrap, just inline
+            html += '<span style="padding:0 0.06em;color:#c5cae9;opacity:0.85">' + escHtml(ch) + '</span>';
+          }
+        }
+        return html;
+      }
+      var lastBody = '';
+      // Final-N takeover state. Tracked across ticks so we only animate the
+      // entry once when crossing the threshold and the drop once at zero.
+      var finalCfg = (ssCfg && ssCfg.countdownStyle) || {};
+      var takeoverOn = (finalCfg.finalSecondsTakeover !== false);
+      var takeoverThresholdSec = (typeof finalCfg.finalSecondsThreshold === 'number' && finalCfg.finalSecondsThreshold > 0)
+        ? finalCfg.finalSecondsThreshold : 30;
+      var takeoverLabel = finalCfg.finalLabel || 'FINAL 30 SECONDS';
+      var takeoverSub = finalCfg.finalSubLabel || 'Show begins shortly';
+      var ssFinalEl = document.getElementById('ss-final-cd');
+      var ssFinalDigitsEl = document.getElementById('ss-final-cd-digits');
+      var ssFinalLabelEl = document.getElementById('ss-final-cd-label');
+      var ssFinalSubEl = document.getElementById('ss-final-cd-sub');
+      var lastFinalActive = !!(ssFinalEl && ssFinalEl.classList.contains('visible'));
+      var lastFinalSec = -1;
+      var droppedAtZero = false;
+
+      function fmtFinalDigits(secs) {
+        // 00:00 layout for sub-minute final stretch — clear at a glance.
+        var mm = Math.floor(secs / 60);
+        var ss2 = secs % 60;
+        return String(mm).padStart(2,'0') + ':' + String(ss2).padStart(2,'0');
+      }
+      function renderFinalCountdown(secs) {
+        if (!ssFinalDigitsEl) return;
+        var body = fmtFinalDigits(secs);
+        // Build cells fresh on first reveal, otherwise update only changed digits.
+        var existing = ssFinalDigitsEl.children.length;
+        if (existing === 0 || ssFinalDigitsEl.dataset.fcdLayout !== String(body.length)) {
+          var html = '';
+          for (var fi = 0; fi < body.length; fi++) {
+            var fch = body.charAt(fi);
+            if (fch === ':') html += '<span class="ss-cd-sep">:</span>';
+            else html += '<span class="ss-cd-digit-cell"><span class="ss-cd-digit">' + fch + '</span></span>';
+          }
+          ssFinalDigitsEl.innerHTML = html;
+          ssFinalDigitsEl.dataset.fcdLayout = String(body.length);
+          ssFinalDigitsEl.dataset.fcdBody = body;
+        } else {
+          // Per-digit diff. Flash any cell whose digit changed.
+          var prevBody = ssFinalDigitsEl.dataset.fcdBody || '';
+          var cells = ssFinalDigitsEl.querySelectorAll('.ss-cd-digit-cell');
+          var cellIdx = -1;
+          for (var bi = 0; bi < body.length; bi++) {
+            var bch = body.charAt(bi);
+            if (bch === ':') continue;
+            cellIdx++;
+            if (prevBody.charAt(bi) === bch) continue;
+            if (cells[cellIdx]) {
+              cells[cellIdx].innerHTML = '<span class="ss-cd-digit">' + bch + '</span>';
+              // Re-trigger the flash class
+              cells[cellIdx].classList.remove('flash');
+              void cells[cellIdx].offsetWidth;
+              cells[cellIdx].classList.add('flash');
+            }
+          }
+          ssFinalDigitsEl.dataset.fcdBody = body;
+        }
+      }
+
       function updateCountdown() {
         var target = new Date(ss.countdownTarget).getTime();
         var now = Date.now();
         var diff = Math.max(0, target - now);
+        var totalSec = Math.ceil(diff / 1000);
+
+        // ── Final-N takeover ──
+        var inFinal = takeoverOn && totalSec > 0 && totalSec <= takeoverThresholdSec;
+        if (ssFinalEl) {
+          if (inFinal) {
+            // Enter the takeover layer
+            if (!lastFinalActive) {
+              if (ssFinalLabelEl) ssFinalLabelEl.textContent = takeoverLabel;
+              if (ssFinalSubEl) ssFinalSubEl.textContent = takeoverSub;
+              ssFinalEl.classList.remove('drop');
+              ssFinalEl.classList.add('visible', 'entering');
+              setTimeout(function() {
+                if (ssFinalEl) ssFinalEl.classList.remove('entering');
+              }, 950);
+              // Dim the layout countdown while takeover is up.
+              if (ssCountEl) ssCountEl.style.opacity = '0.0';
+            }
+            if (totalSec !== lastFinalSec) {
+              renderFinalCountdown(totalSec);
+              lastFinalSec = totalSec;
+            }
+            // Last-5 escalation
+            if (totalSec <= 5) ssFinalEl.classList.add('escalate');
+            else ssFinalEl.classList.remove('escalate');
+          } else {
+            // Exit takeover (reset countdown extended past threshold)
+            if (lastFinalActive && totalSec > takeoverThresholdSec) {
+              ssFinalEl.classList.remove('visible', 'entering', 'escalate', 'drop');
+              if (ssCountEl) ssCountEl.style.opacity = '';
+              lastFinalSec = -1;
+            }
+          }
+          lastFinalActive = inFinal;
+        }
+
         if (diff <= 0) {
-          ssCountEl.textContent = expiredText;
+          if (cdStyleMode === 'flipboard') {
+            ssCountEl.innerHTML = renderFlipboard(expiredText);
+          } else {
+            ssCountEl.textContent = expiredText;
+          }
+          // Drop-out flash on the takeover layer if it was active.
+          if (ssFinalEl && lastFinalActive && !droppedAtZero) {
+            droppedAtZero = true;
+            ssFinalEl.classList.add('drop');
+            setTimeout(function() {
+              if (!ssFinalEl) return;
+              ssFinalEl.classList.remove('visible', 'drop', 'escalate');
+              if (ssCountEl) ssCountEl.style.opacity = '';
+            }, 1200);
+          }
           if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
           return;
         }
@@ -2075,13 +4314,49 @@ function buildOverlayHTML(): string {
             body = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
           }
         }
-        ssCountEl.textContent = prefixText ? (prefixText + ' ' + body) : body;
+        if (body === lastBody) return;
+        lastBody = body;
+        if (cdStyleMode === 'flipboard') {
+          // Per-digit flip — only re-render cells whose digit changed so the
+          // unchanged hours/minutes don't flap each second.
+          if (ssCountEl.children.length === 0 || ssCountEl.dataset.cdLayout !== body.length + '|' + body.replace(/[0-9]/g,'#')) {
+            // Layout changed (digit count or position of separators) — full rebuild.
+            ssCountEl.innerHTML = (prefixText ? '<span style="margin-right:0.4em;color:#c5cae9">' + escHtml(prefixText) + '</span>' : '') + renderFlipboard(body);
+            ssCountEl.dataset.cdLayout = body.length + '|' + body.replace(/[0-9]/g,'#');
+            ssCountEl.dataset.cdBody = body;
+          } else {
+            // Diff per-cell. Walk children and update only changed digits.
+            var prevBody = ssCountEl.dataset.cdBody || '';
+            var cellIdx = -1;
+            for (var bi = 0; bi < body.length; bi++) {
+              var bch = body.charAt(bi);
+              if (!/[0-9]/.test(bch)) continue;
+              cellIdx++;
+              if (prevBody.charAt(bi) === bch) continue;
+              // Find the cellIdx-th digit cell among children
+              var cells = ssCountEl.querySelectorAll('.ss-cd-digit-cell');
+              if (cells[cellIdx]) {
+                cells[cellIdx].innerHTML = '<span class="ss-cd-digit">' + bch + '</span>';
+              }
+            }
+            ssCountEl.dataset.cdBody = body;
+          }
+        } else {
+          // Wrap colons in spans so the .ss-cd-colon blink animation hits them.
+          // Prefix is HTML-escaped first since it's operator-controlled.
+          var bodyHtml = escHtml(body).replace(/:/g, '<span class="ss-cd-colon">:</span>');
+          ssCountEl.innerHTML = prefixText ? (escHtml(prefixText) + ' ' + bodyHtml) : bodyHtml;
+        }
       }
       updateCountdown();
       countdownInterval = setInterval(updateCountdown, 1000);
     } else if (countdownLayoutVisible) {
       // Layout visible but no active timer — show placeholder text
-      ssCountEl.textContent = '00:00';
+      if (cdStyleMode === 'flipboard') {
+        ssCountEl.innerHTML = '<span class="ss-cd-digit-cell"><span class="ss-cd-digit">0</span></span><span class="ss-cd-digit-cell"><span class="ss-cd-digit">0</span></span><span class="ss-cd-sep">:</span><span class="ss-cd-digit-cell"><span class="ss-cd-digit">0</span></span><span class="ss-cd-digit-cell"><span class="ss-cd-digit">0</span></span>';
+      } else {
+        ssCountEl.textContent = '00:00';
+      }
     } else {
       ssCountEl.textContent = '';
     }
@@ -2579,26 +4854,31 @@ function buildOverlayHTML(): string {
     // (Replaces the legacy "share the main overlay ticker" hack. The SSE ticker
     // is its own DOM element with its own text/speed/color/bg, and lives inside
     // #starting-soon so it only shows when the SSE scene is up.)
+    var ssTickerBlock = document.getElementById('ss-ticker-block');
     var ssTickerRail = document.getElementById('ss-ticker-rail');
     var ssTickerInner = document.getElementById('ss-ticker-rail-inner');
+    var ssTickerAccent = document.getElementById('ss-ticker-accent');
+    var ssTickerCat = document.getElementById('ss-ticker-cat');
+    var ssTickerLive = document.getElementById('ss-ticker-live');
     var ticker = (ssCfg && ssCfg.ticker) || null;
     var tickerLayoutVisible = !!(ssCfg && ssCfg.layout && ssCfg.layout.ticker && ssCfg.layout.ticker.visible);
     // Diagnostic — use console.error since main.log only forwards error level.
     if (!window._ssTickerLogged) {
       window._ssTickerLogged = true;
-      console.error('[SSE-ticker-diag] rail=' + !!ssTickerRail + ' inner=' + !!ssTickerInner +
+      console.error('[SSE-ticker-diag] block=' + !!ssTickerBlock + ' rail=' + !!ssTickerRail + ' inner=' + !!ssTickerInner +
         ' tickerEnabled=' + (ticker && ticker.enabled) +
         ' tickerText=' + (ticker && ticker.text ? '"' + String(ticker.text).slice(0,40) + '"' : 'NONE') +
         ' layoutVisible=' + tickerLayoutVisible +
+        ' twoRow=' + (ticker && ticker.twoRow) +
         ' ssCfgKeys=' + (ssCfg ? Object.keys(ssCfg).join(',') : 'NULL'));
     }
-    if (ssTickerRail && ssTickerInner && ticker && ticker.enabled && tickerLayoutVisible && ticker.text) {
+    if (ssTickerBlock && ssTickerRail && ssTickerInner && ticker && ticker.enabled && tickerLayoutVisible && ticker.text) {
       var tLayout = ssCfg.layout.ticker;
-      ssTickerRail.classList.add('visible');
-      ssTickerRail.style.left = tLayout.x + '%';
-      ssTickerRail.style.top = tLayout.y + '%';
-      ssTickerRail.style.width = tLayout.width + '%';
-      ssTickerRail.style.height = tLayout.height + '%';
+      ssTickerBlock.classList.add('visible');
+      ssTickerBlock.style.left = tLayout.x + '%';
+      ssTickerBlock.style.top = tLayout.y + '%';
+      ssTickerBlock.style.width = tLayout.width + '%';
+      ssTickerBlock.style.height = tLayout.height + '%';
       ssTickerRail.style.background = ticker.bgColor || 'rgba(0,0,0,0.55)';
       ssTickerInner.style.color = ticker.color || '#ffffff';
       ssTickerInner.style.fontSize = (ticker.fontSize || 22) + 'px';
@@ -2607,9 +4887,64 @@ function buildOverlayHTML(): string {
       // speed (px/s) → keyframe duration: estimate text width via 1920px reference frame
       var speed = Math.max(20, ticker.speed || 60);
       var dur = Math.max(8, Math.round(2400 / speed));
-      ssTickerRail.style.setProperty('--ss-ticker-dur', dur + 's');
-    } else if (ssTickerRail) {
-      ssTickerRail.classList.remove('visible');
+      ssTickerBlock.style.setProperty('--ss-ticker-dur', dur + 's');
+      // Premium pass — two-row treatment
+      var twoRow = !!ticker.twoRow;
+      if (ssTickerAccent) {
+        ssTickerAccent.style.display = twoRow ? 'flex' : 'none';
+        if (twoRow && ssTickerCat) ssTickerCat.textContent = ticker.categoryLabel || '';
+        if (twoRow && ssTickerLive) ssTickerLive.style.display = ticker.liveIndicator ? 'inline-flex' : 'none';
+      }
+    } else if (ssTickerBlock) {
+      ssTickerBlock.classList.remove('visible');
+    }
+
+    // --- Venue identifier strip (premium pass) ---
+    var ssVenueEl = document.getElementById('ss-venue-id');
+    var venue = (ssCfg && ssCfg.venueIdentifier) || null;
+    var venueLayout = (ssCfg && ssCfg.layout && ssCfg.layout.venueId) || null;
+    if (ssVenueEl && venue && venue.enabled && venueLayout && venueLayout.visible) {
+      // Build segments from the three free-text fields. Only render non-empty
+      // segments so the strip doesn't show stray pipes for unset fields.
+      var segs = [];
+      if (venue.eventLabel) segs.push({ cls: 'ss-vid-event', text: venue.eventLabel });
+      if (venue.venueName) segs.push({ cls: '', text: venue.venueName });
+      if (venue.dayLabel) segs.push({ cls: '', text: venue.dayLabel });
+      if (segs.length > 0) {
+        var vidHtml = '';
+        for (var vi = 0; vi < segs.length; vi++) {
+          if (vi > 0) vidHtml += '<span class="ss-vid-pipe"></span>';
+          vidHtml += '<span class="ss-vid-seg ' + segs[vi].cls + '">' + escHtmlGlobal(segs[vi].text) + '</span>';
+        }
+        ssVenueEl.innerHTML = vidHtml;
+        ssVenueEl.style.left = venueLayout.x + '%';
+        ssVenueEl.style.top = venueLayout.y + '%';
+        ssVenueEl.style.fontSize = (venue.fontSize || 14) + 'px';
+        ssVenueEl.style.color = venue.color || '#c5cae9';
+        ssVenueEl.classList.add('visible');
+      } else {
+        ssVenueEl.classList.remove('visible');
+      }
+    } else if (ssVenueEl) {
+      ssVenueEl.classList.remove('visible');
+    }
+
+    // --- Section identifier badge (premium pass) ---
+    var ssBadgeEl = document.getElementById('ss-section-badge');
+    var badge = (ssCfg && ssCfg.sectionBadge) || null;
+    var badgeLayout = (ssCfg && ssCfg.layout && ssCfg.layout.sectionBadge) || null;
+    if (ssBadgeEl && badge && badge.enabled && badgeLayout && badgeLayout.visible && badge.label) {
+      ssBadgeEl.innerHTML = '<span class="ss-sb-dot"></span><span class="ss-sb-label">' + escHtmlGlobal(badge.label) + '</span>';
+      // Position via right-edge so the pill hugs the configured x as its left
+      // anchor (operator-friendly: drag the x to slide it across the corner).
+      ssBadgeEl.style.left = badgeLayout.x + '%';
+      ssBadgeEl.style.top = badgeLayout.y + '%';
+      ssBadgeEl.style.fontSize = (badge.fontSize || 12) + 'px';
+      ssBadgeEl.style.color = badge.color || '#ffffff';
+      ssBadgeEl.style.setProperty('--ss-sb-dot', badge.dotColor || '#ef4444');
+      ssBadgeEl.classList.add('visible');
+    } else if (ssBadgeEl) {
+      ssBadgeEl.classList.remove('visible');
     }
     // Backward-compat: also turn OFF the legacy main-overlay ticker hijack.
     var legacyTickerEl = document.getElementById('ticker');

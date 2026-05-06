@@ -11,6 +11,7 @@ import {
   type ObsStats,
   type ChatMessage,
   type PinnedChatMessage,
+  type LivestreamPinnedMessage,
   type AudioMeterData,
   type AudioLevel,
   type JobRecord,
@@ -19,7 +20,36 @@ import {
   type RecoveryState,
   type TetherState,
   type WifiDisplayState,
+  type EventRecord,
 } from '../../shared/types'
+
+const EVENT_LOG_RING_SIZE = 500
+
+/**
+ * Filter buckets for the EventLogPanel chips. Each event is mapped to a
+ * bucket via kindToBucket(). The Errors bucket is non-suppressible — events
+ * matching the error pattern always render even if the chip is off.
+ */
+export type EventBucket = 'imports' | 'drives' | 'encode' | 'upload' | 'audio' | 'recording' | 'chat' | 'other' | 'errors'
+
+const ERROR_KIND_RE = /\.(failed|warning|error|divergence|rejected|mismatch)(\..*)?$/
+
+export function kindToBucket(kind: string): EventBucket {
+  if (kind.startsWith('import.') || kind.startsWith('photos.')) return 'imports'
+  if (kind.startsWith('drive.')) return 'drives'
+  if (kind.startsWith('encode.') || kind.startsWith('ffmpeg.') || kind.startsWith('queue.')) return 'encode'
+  if (kind.startsWith('upload.') || kind.startsWith('reconcile.')) return 'upload'
+  if (kind.startsWith('audio.')) return 'audio'
+  if (kind.startsWith('recording.')) return 'recording'
+  if (kind.startsWith('chat.')) return 'chat'
+  return 'other'
+}
+
+export function kindIsError(kind: string): boolean {
+  return ERROR_KIND_RE.test(kind)
+}
+
+const ALL_BUCKETS: EventBucket[] = ['imports', 'drives', 'encode', 'upload', 'audio', 'recording', 'chat', 'other', 'errors']
 
 interface FFmpegProgressMap {
   [routineId: string]: FFmpegProgress
@@ -57,6 +87,8 @@ interface AppStore {
   chat: {
     messages: ChatMessage[]
     pinned: PinnedChatMessage[]
+    // build9o (Item #11) — livestream-only pins (no OBS burn)
+    livestreamPinned: LivestreamPinnedMessage[]
     visible: boolean
   }
 
@@ -96,6 +128,11 @@ interface AppStore {
   completeCount: number
   photosPendingCount: number
 
+  // Build #9 item #4: unified event log
+  events: EventRecord[]
+  eventLogActiveBuckets: Set<EventBucket>
+  eventLogDismissedIds: Set<string>
+
   // Actions
   setCompetition: (comp: Competition) => void
   setCurrentRoutine: (routine: Routine | null) => void
@@ -115,6 +152,7 @@ interface AppStore {
   setChatMessages: (messages: ChatMessage[]) => void
   addChatMessage: (msg: ChatMessage) => void
   setChatPinned: (pinned: PinnedChatMessage[]) => void
+  setChatLivestreamPinned: (pinned: LivestreamPinnedMessage[]) => void
   setChatVisible: (visible: boolean) => void
   updateRoutine: (routineId: string, update: Partial<Routine>) => void
   updateFFmpegProgress: (progress: FFmpegProgress) => void
@@ -135,6 +173,13 @@ interface AppStore {
   setTetherState: (state: TetherState) => void
   setWifiDisplayState: (state: WifiDisplayState) => void
   recalcCounts: () => void
+
+  // Build #9 item #4
+  appendEvent: (record: EventRecord) => void
+  setEvents: (records: EventRecord[]) => void
+  toggleEventBucket: (bucket: EventBucket) => void
+  dismissEvent: (id: string) => void
+  clearEventDismissals: () => void
 }
 
 export const useStore = create<AppStore>((set, get) => ({
@@ -165,7 +210,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   systemStats: null,
   obsStats: null,
-  chat: { messages: [], pinned: [], visible: false },
+  chat: { messages: [], pinned: [], livestreamPinned: [], visible: false },
 
   photoSort: {
     status: 'idle',
@@ -212,6 +257,10 @@ export const useStore = create<AppStore>((set, get) => ({
   completeCount: 0,
   photosPendingCount: 0,
 
+  events: [],
+  eventLogActiveBuckets: new Set<EventBucket>(ALL_BUCKETS),
+  eventLogDismissedIds: new Set<string>(),
+
   setCompetition: (competition) => {
     set({ competition })
     get().recalcCounts()
@@ -243,6 +292,8 @@ export const useStore = create<AppStore>((set, get) => ({
     return { chat: { ...s.chat, messages: next.length > 50 ? next.slice(-50) : next } }
   }),
   setChatPinned: (pinned) => set((s) => ({ chat: { ...s.chat, pinned } })),
+  setChatLivestreamPinned: (livestreamPinned) =>
+    set((s) => ({ chat: { ...s.chat, livestreamPinned } })),
   setChatVisible: (visible) => set((s) => ({ chat: { ...s.chat, visible } })),
 
   updateRoutine: (routineId, update) => {
@@ -310,6 +361,27 @@ export const useStore = create<AppStore>((set, get) => ({
       })
     }
   },
+
+  appendEvent: (record) => set((s) => {
+    const next = s.events.length >= EVENT_LOG_RING_SIZE
+      ? s.events.slice(-(EVENT_LOG_RING_SIZE - 1))
+      : s.events.slice()
+    next.push(record)
+    return { events: next }
+  }),
+  setEvents: (records) => set({ events: records.slice(-EVENT_LOG_RING_SIZE) }),
+  toggleEventBucket: (bucket) => set((s) => {
+    const next = new Set(s.eventLogActiveBuckets)
+    if (next.has(bucket)) next.delete(bucket)
+    else next.add(bucket)
+    return { eventLogActiveBuckets: next }
+  }),
+  dismissEvent: (id) => set((s) => {
+    const next = new Set(s.eventLogDismissedIds)
+    next.add(id)
+    return { eventLogDismissedIds: next }
+  }),
+  clearEventDismissals: () => set({ eventLogDismissedIds: new Set<string>() }),
 }))
 
 // Initialize IPC listeners
@@ -385,6 +457,10 @@ export function initIPCListeners(): () => void {
   window.api.on(IPC_CHANNELS.CHAT_MESSAGE_NEW, (data: unknown) => {
     store().addChatMessage(data as ChatMessage)
   })
+  window.api.on(IPC_CHANNELS.CHAT_LIVESTREAM_PIN_CHANGED, (data: unknown) => {
+    store().setChatLivestreamPinned(data as LivestreamPinnedMessage[])
+  })
+
   window.api.on(IPC_CHANNELS.CHAT_PINNED_CHANGED, (data: unknown) => {
     store().setChatPinned(data as PinnedChatMessage[])
   })

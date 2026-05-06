@@ -196,8 +196,64 @@ export default function OverlayControls({ compact = false, noChat = false }: { c
         </div>
       </div>
 
+      {/* === Graphics — Feature Card (UP NEXT / THAT WAS) === */}
+      <GraphicsSection currentRoutineExists={!!currentRoutine} />
+
       {/* === Inline Chat Strip — latest 3, click-to-pin, scrollable history === */}
       {!noChat && <InlineChatStrip />}
+    </div>
+  )
+}
+
+/**
+ * GRAPHICS section — Feature Card buttons (UP NEXT / THAT WAS). Cuts to the
+ * "FEATURE CARD" OBS scene with a slide-on broadcast graphic, mirroring the
+ * Stream Deck buttons. No auto-hide — operator owns timing.
+ */
+function GraphicsSection({ currentRoutineExists }: { currentRoutineExists: boolean }): React.ReactElement {
+  const [active, setActive] = useState<'upNext' | 'thatWas' | null>(null)
+  const fire = useCallback(async (mode: 'upNext' | 'thatWas') => {
+    if (active === mode) {
+      await window.api.overlayHideFeatureCard()
+      setActive(null)
+    } else {
+      await window.api.overlayFireFeatureCard(mode)
+      setActive(mode)
+    }
+  }, [active])
+  return (
+    <div className="oc-section oc-graphics-section">
+      <div className="oc-section-title">GRAPHICS</div>
+      <div className="oc-graphics-row">
+        <button
+          className={`oc-graphics-btn${active === 'upNext' ? ' is-live' : ''}`}
+          disabled={!currentRoutineExists && active !== 'upNext'}
+          onClick={() => fire('upNext')}
+          title={
+            active === 'upNext'
+              ? 'Feature Card UP NEXT is live — click to hide'
+              : !currentRoutineExists
+                ? 'Select a routine first'
+                : 'Cut to Feature Card — UP NEXT'
+          }
+        >
+          {active === 'upNext' ? 'Hide UP NEXT' : 'UP NEXT'}
+        </button>
+        <button
+          className={`oc-graphics-btn${active === 'thatWas' ? ' is-live' : ''}`}
+          disabled={!currentRoutineExists && active !== 'thatWas'}
+          onClick={() => fire('thatWas')}
+          title={
+            active === 'thatWas'
+              ? 'Feature Card THAT WAS is live — click to hide'
+              : !currentRoutineExists
+                ? 'Select a routine first'
+                : 'Cut to Feature Card — THAT WAS'
+          }
+        >
+          {active === 'thatWas' ? 'Hide THAT WAS' : 'THAT WAS'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -295,7 +351,18 @@ export function OverlayLayerToggles(): React.ReactElement {
 
 const ADMIN_NAME_KEY = 'cse:chatAdminName'
 
+function chatRelTime(ts: number): string {
+  const delta = Date.now() - ts
+  if (delta < 10_000) return 'now'
+  if (delta < 60_000) return `${Math.floor(delta / 1000)}s`
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`
+  return `${Math.floor(delta / 86_400_000)}d`
+}
+
 export function InlineChatStrip(): React.ReactElement {
+  const competition = useStore((s) => s.competition)
+  const currentRoutine = useStore((s) => s.currentRoutine)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -370,8 +437,75 @@ export function InlineChatStrip(): React.ReactElement {
     fetchData()
   }
 
+  async function handleHide(id: string, name: string): Promise<void> {
+    if (!window.confirm(`Hide message from "${name}"? Already-broadcast viewers won't see it removed, but reloads will be clean.`)) return
+    try { await (window.api as any)?.chatHideMessage?.(id) } catch { /* ignore */ }
+    fetchData()
+  }
+  async function handleBan(name: string, fingerprint: string | undefined): Promise<void> {
+    if (!window.confirm(`Ban "${name}"? All future messages from this author will be silently rejected, and existing messages from them will be hidden.`)) return
+    try {
+      await (window.api as any)?.chatBanAuthor?.({
+        authorName: name,
+        fingerprint: fingerprint ?? null,
+        hideExisting: true,
+      })
+    } catch { /* ignore */ }
+    fetchData()
+  }
+
   // Latest 3 messages, newest at bottom (scrolling-feed style)
   const latest3 = messages.slice(-3)
+
+  // Burlington UDC 2026-05-02: routine link map — `routineIdAtPost` (entry uuid)
+  // → entry_number for "R{n}" badge per chat row. Falls back to currentRoutine
+  // entry# as estimation when message lacks routineIdAtPost (legacy / direct ws).
+  const routineEntryById = new Map<string, string>()
+  for (const r of (competition?.routines ?? [])) routineEntryById.set(r.id, r.entryNumber)
+  const fallbackEntry = currentRoutine?.entryNumber
+
+  function renderMsgRow(msg: ChatMessage): React.ReactElement {
+    const pinState = isPinned(msg.id)
+    const entryNum = (msg.routineIdAtPost && routineEntryById.get(msg.routineIdAtPost)) || fallbackEntry
+    const entryEstimated = !msg.routineIdAtPost
+    return (
+      <div
+        key={msg.id}
+        className={`ic-strip-msg${pinState ? ' pinned' : ''}`}
+        onClick={() => togglePin(msg.id)}
+        title={pinState ? 'Click to unpin' : 'Click to pin (fires on overlay)'}
+      >
+        <span className="ic-strip-name">{msg.name}:</span>
+        <span className="ic-strip-text">{msg.text}</span>
+        {entryNum && (
+          <span
+            className={`ic-strip-entry${entryEstimated ? ' estimated' : ''}`}
+            title={entryEstimated ? `Estimated — current routine at fetch time` : `During routine R${entryNum}`}
+          >
+            R{entryNum}{entryEstimated ? '?' : ''}
+          </span>
+        )}
+        <span className="ic-strip-time" title={new Date(msg.timestamp).toLocaleString()}>
+          {chatRelTime(msg.timestamp)}
+        </span>
+        {pinState && <span className="ic-strip-pin-tag">PINNED</span>}
+        <button
+          className="ic-strip-hide-btn"
+          onClick={(e) => { e.stopPropagation(); void handleHide(msg.id, msg.name || 'anon') }}
+          title="Hide message (soft delete)"
+        >
+          {'\u{1F5D1}'}
+        </button>
+        <button
+          className="ic-strip-ban-btn"
+          onClick={(e) => { e.stopPropagation(); void handleBan(msg.name || 'anon', (msg as any).fingerprint) }}
+          title="Ban author (hide all + block future)"
+        >
+          {'\u{1F6AB}'}
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="oc-section ic-strip-wrap">
@@ -395,21 +529,7 @@ export function InlineChatStrip(): React.ReactElement {
           {latest3.length === 0 ? (
             <div className="ic-strip-empty">No messages yet</div>
           ) : (
-            latest3.map((msg) => {
-              const pinState = isPinned(msg.id)
-              return (
-                <div
-                  key={msg.id}
-                  className={`ic-strip-msg${pinState ? ' pinned' : ''}`}
-                  onClick={() => togglePin(msg.id)}
-                  title={pinState ? 'Click to unpin' : 'Click to pin (fires on overlay)'}
-                >
-                  <span className="ic-strip-name">{msg.name}:</span>
-                  <span className="ic-strip-text">{msg.text}</span>
-                  {pinState && <span className="ic-strip-pin-tag">PINNED</span>}
-                </div>
-              )
-            })
+            latest3.map(renderMsgRow)
           )}
         </div>
       )}
@@ -419,21 +539,7 @@ export function InlineChatStrip(): React.ReactElement {
           {messages.length === 0 ? (
             <div className="ic-strip-empty">No messages yet</div>
           ) : (
-            messages.map((msg) => {
-              const pinState = isPinned(msg.id)
-              return (
-                <div
-                  key={msg.id}
-                  className={`ic-strip-msg${pinState ? ' pinned' : ''}`}
-                  onClick={() => togglePin(msg.id)}
-                  title={pinState ? 'Click to unpin' : 'Click to pin (fires on overlay)'}
-                >
-                  <span className="ic-strip-name">{msg.name}:</span>
-                  <span className="ic-strip-text">{msg.text}</span>
-                  {pinState && <span className="ic-strip-pin-tag">PINNED</span>}
-                </div>
-              )
-            })
+            messages.map(renderMsgRow)
           )}
         </div>
       )}
@@ -486,19 +592,41 @@ export function OverlayModules(): React.ReactElement {
   const [ssVisible, setSsVisible] = useState(false)
   const [ssEditorOpen, setSsEditorOpen] = useState(false)
 
+  // 2026-05-04: previously this only ran once on mount, so Stream Deck ticker
+  // toggles never reflected in the app's "ON/OFF" badge — the renderer's local
+  // tickerVisible state stayed stale. Now polls every 2s like the parent
+  // OverlayControls does for counter/clock/logo/LT. SD→app sync restored.
   useEffect(() => {
-    window.api.overlayGetState().then((state: any) => {
-      if (state) {
+    const sync = (): void => {
+      window.api.overlayGetState().then((state: any) => {
+        if (!state) return
         if (state.ticker) {
-          setTickerText(state.ticker.text ?? '')
-          setTickerSpeed(state.ticker.speed ?? 60)
+          // Don't overwrite text/speed while operator is typing in the
+          // expanded editor — only sync the visibility from external sources.
+          // Text/speed updates flow renderer→main on blur/Enter; pulling them
+          // back from main mid-edit would clobber the in-progress input.
           setTickerVisible(state.ticker.visible ?? false)
         }
         if (state.startingSoon) {
           setSsVisible(state.startingSoon.visible ?? false)
         }
+      })
+    }
+    // Initial fetch also pulls text + speed (only the initial sync should set
+    // these so the editor opens with current persisted values).
+    window.api.overlayGetState().then((state: any) => {
+      if (!state) return
+      if (state.ticker) {
+        setTickerText(state.ticker.text ?? '')
+        setTickerSpeed(state.ticker.speed ?? 60)
+        setTickerVisible(state.ticker.visible ?? false)
+      }
+      if (state.startingSoon) {
+        setSsVisible(state.startingSoon.visible ?? false)
       }
     })
+    const poll = setInterval(sync, 2000)
+    return () => clearInterval(poll)
   }, [])
 
   function handleTickerToggle(): void {

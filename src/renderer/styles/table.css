@@ -1,7 +1,12 @@
 .table-scroll {
   flex: 1;
   overflow-y: auto;
-  overflow-x: auto;
+  /* 2026-05-02 (Burlington UDC Day 2): operator preferred no horizontal scroll
+     — the small scrollbar at the bottom was just visual noise. Hidden here so
+     content sits within the available width. Combined with dropping
+     `.upload-table { min-width: 460px }` below, the table now flexes to its
+     container; long cells truncate via existing td-level overflow rules. */
+  overflow-x: hidden;
   padding: 0 14px 14px;
 }
 
@@ -45,13 +50,32 @@
 .upload-table tbody tr:hover td { background: rgba(255,255,255,0.04); }
 .upload-table tbody tr.current-row:hover td { background: rgba(99,102,241,0.12); }
 
+/* 2026-05-02 (Burlington UDC Day 2): search highlights replace the prior
+   filter-on-search behavior. Matches stay in-place so operator can resume
+   nav after jumping to one. First match pulses briefly so the eye lands. */
+.upload-table tbody tr.search-match td {
+  background: rgba(251, 191, 36, 0.10);
+  box-shadow: inset 2px 0 0 rgba(251, 191, 36, 0.7);
+}
+.upload-table tbody tr.search-match:hover td {
+  background: rgba(251, 191, 36, 0.16);
+}
+.upload-table tbody tr.search-first td {
+  animation: search-first-pulse 1.4s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+@keyframes search-first-pulse {
+  0%   { background: rgba(251, 191, 36, 0.45); box-shadow: inset 4px 0 0 #fbbf24, 0 0 24px rgba(251, 191, 36, 0.4); }
+  60%  { background: rgba(251, 191, 36, 0.22); box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.85), 0 0 12px rgba(251, 191, 36, 0.2); }
+  100% { background: rgba(251, 191, 36, 0.10); box-shadow: inset 2px 0 0 rgba(251, 191, 36, 0.7); }
+}
+
 .entry-num { font-weight: 700; color: var(--accent); font-size: 11px; }
 .entry-time { font-weight: 600; color: #b5b5d0; font-size: 10px; font-variant-numeric: tabular-nums; }
 .th-num { width: 34px; min-width: 34px; white-space: nowrap; }
 .td-num { width: 34px; min-width: 34px; white-space: nowrap; overflow: hidden; }
 .th-time { width: 52px; white-space: nowrap; }
 .td-time { white-space: nowrap; overflow: hidden; }
-.upload-table { min-width: 460px; }
+.upload-table { min-width: 0; }
 .r-name {
   font-weight: 600;
   color: #ffffff;
@@ -353,6 +377,46 @@
 .sd-swap-detail {
   font-style: italic;
   color: rgba(255, 220, 160, 0.75);
+}
+
+/* Judge backup audio reminder — inert in-table row marker, mirrors the SD
+ * swap heads-up pattern but in cyan ("audio" cue color). Sits before the
+ * first routine of every session so the operator catches it scrolling past
+ * any session boundary. No buttons, nothing to click. 2026-05-04 operator
+ * spec: "just like the SD card swap reminder". */
+.judge-audio-reminder-row td {
+  background: rgba(14, 165, 233, 0.15);
+  border-top: 2px solid rgba(14, 165, 233, 0.6);
+  border-bottom: 2px solid rgba(14, 165, 233, 0.6);
+  padding: 8px 14px !important;
+}
+.judge-audio-reminder-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: rgba(176, 224, 250, 0.95);
+}
+.judge-audio-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #38bdf8;
+}
+.judge-audio-label {
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: #cdeafd;
+  background: rgba(14, 165, 233, 0.35);
+  padding: 3px 10px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.judge-audio-detail {
+  font-style: italic;
+  color: rgba(176, 224, 250, 0.75);
 }
 
 /* Inline search box in the Routine column header */

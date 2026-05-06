@@ -71,9 +71,28 @@ interface PersistedState {
   savedAt: string
   cameraOffsets?: Record<string, CameraOffsetEntry>
   sdWatermarks?: Record<string, SdWatermarkEntry>
+  // build9o (2026-05-06) — Item #2 photo dedup simplification.
+  // Per-volume EXIF cursor replaces source-hash compute as the primary dedup
+  // authority. Keyed by Windows volume serial number (uppercase, no dash).
+  sdCardCursors?: Record<string, SdCardCursorEntry>
   // Phase 2.8 Take entity architecture (2026-04-29). First-class takes
   // collection — see Take type docs in shared/types.ts.
   takes?: Take[]
+}
+
+// build9o (2026-05-06) — per-SD-card EXIF watermark for volume-keyed dedup.
+// Survives card swaps: same physical card has the same volume serial across
+// readers / sessions. Different cards distinct. Cursors are advanced after
+// every successful import for the volume(s) that contributed photos.
+export interface SdCardCursorEntry {
+  volumeSerial: string         // uppercase hex no dash, e.g., "AB12CD34"
+  volumeLabel?: string         // human label captured at first sight (e.g., "CANON_EOS")
+  lastCaptureTime: string      // ISO of latest EXIF DateTimeOriginal imported from this card
+  setAt: string                // ISO when last advanced
+  // Migration provenance — true when seeded from existing routine.photos[]
+  // on first launch post-upgrade rather than from a real import. Operator
+  // can clear via settings if they suspect a false-positive.
+  seededFromRoutines?: boolean
 }
 
 let currentCompetition: Competition | null = null
@@ -82,6 +101,8 @@ let saveTimer: NodeJS.Timeout | null = null
 let savePending = false
 let cameraOffsets: Record<string, CameraOffsetEntry> = {}
 let sdWatermarks: Record<string, SdWatermarkEntry> = {}
+// build9o — per-volume EXIF cursors for dedup (Item #2)
+let sdCardCursors: Record<string, SdCardCursorEntry> = {}
 let takes: Take[] = []
 
 // Fix 8: Cached counts for WS broadcasts — updated incrementally
@@ -141,6 +162,7 @@ function doSave(): void {
     savedAt: new Date().toISOString(),
     cameraOffsets,
     sdWatermarks,
+    sdCardCursors,
     takes,
   }
 
@@ -202,6 +224,14 @@ function applyLoadedState(data: PersistedState): void {
   if (wmCount > 0) {
     logger.app.info(`Hydrated ${wmCount} SD watermark(s): ` +
       Object.entries(sdWatermarks).map(([k, v]) => `${k}=${v.lastCaptureTime}`).join(', '))
+  }
+  // build9o (Item #2) — hydrate per-volume EXIF cursors. Like watermarks
+  // these never expire with the day boundary; operator must clear explicitly.
+  sdCardCursors = { ...(data.sdCardCursors ?? {}) }
+  const cursorCount = Object.keys(sdCardCursors).length
+  if (cursorCount > 0) {
+    logger.app.info(`Hydrated ${cursorCount} SD-card cursor(s): ` +
+      Object.entries(sdCardCursors).map(([k, v]) => `${k}=${v.lastCaptureTime}`).join(', '))
   }
   // Phase 2.8: hydrate takes + boot migration. For any routine with a
   // recordingStartedAt+stoppedAt that has no corresponding take row yet,
@@ -1436,6 +1466,73 @@ export function clearSdWatermarks(): void {
 
 export function listSdWatermarks(): Record<string, SdWatermarkEntry> {
   return { ...sdWatermarks }
+}
+
+// --- build9o (Item #2): per-volume EXIF cursor API ---
+
+/**
+ * Read the cursor for a given Windows volume serial number.
+ * Returns null when no entry exists (first time seeing this card).
+ */
+export function getSdCardCursor(volumeSerial: string): SdCardCursorEntry | null {
+  if (!volumeSerial) return null
+  return sdCardCursors[volumeSerial.toUpperCase()] ?? null
+}
+
+/**
+ * Advance (or seed) the cursor for a volume. Caller passes the new
+ * lastCaptureTime; we only persist if it's strictly newer than the existing
+ * entry, so out-of-order recovery imports never roll the watermark backward.
+ *
+ * Returns true if the cursor was written, false if a newer existing cursor
+ * was preserved.
+ */
+export function setSdCardCursor(
+  volumeSerial: string,
+  entry: { lastCaptureTime: string; volumeLabel?: string; seededFromRoutines?: boolean },
+): boolean {
+  if (!volumeSerial) return false
+  const key = volumeSerial.toUpperCase()
+  const existing = sdCardCursors[key]
+  if (existing && existing.lastCaptureTime > entry.lastCaptureTime) {
+    return false
+  }
+  sdCardCursors[key] = {
+    volumeSerial: key,
+    volumeLabel: entry.volumeLabel ?? existing?.volumeLabel,
+    lastCaptureTime: entry.lastCaptureTime,
+    setAt: new Date().toISOString(),
+    seededFromRoutines: entry.seededFromRoutines ?? false,
+  }
+  logger.app.info(`SD-card cursor advanced: serial=${key} lastCaptureTime=${entry.lastCaptureTime}` +
+    (entry.seededFromRoutines ? ' (SEEDED FROM ROUTINES)' : ''))
+  saveState()
+  return true
+}
+
+/**
+ * Drop a single cursor (operator override after a card reformat or false
+ * dedup). Called rarely.
+ */
+export function clearSdCardCursor(volumeSerial: string): boolean {
+  if (!volumeSerial) return false
+  const key = volumeSerial.toUpperCase()
+  if (!sdCardCursors[key]) return false
+  delete sdCardCursors[key]
+  logger.app.info(`SD-card cursor cleared: serial=${key}`)
+  saveState()
+  return true
+}
+
+export function listSdCardCursors(): Record<string, SdCardCursorEntry> {
+  return { ...sdCardCursors }
+}
+
+export function clearAllSdCardCursors(): void {
+  const count = Object.keys(sdCardCursors).length
+  sdCardCursors = {}
+  logger.app.info(`Cleared ${count} SD-card cursor(s)`)
+  saveState()
 }
 
 // --- Phase 2.8 Take entity API ---

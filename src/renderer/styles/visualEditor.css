@@ -490,3 +490,147 @@
   color: #9090b0;
   line-height: 1.4;
 }
+
+/* LT sub-element show/hide toggles (added 2026-05-04). Lives below the
+ * standard X/Y/W/H fields when Lower Third is selected. Each row is a
+ * checkbox + label that flips one of the showXxx flags on the LT state. */
+.ve-props-section-divider {
+  height: 1px;
+  margin: 12px 0 10px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.18) 50%, transparent 100%);
+}
+.ve-props-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #b8b8d0;
+  margin-bottom: 8px;
+}
+.ve-props-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #d4d4e8;
+  cursor: pointer;
+  user-select: none;
+}
+.ve-props-checkbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent, #6c8eff);
+}
+.ve-props-checkbox span {
+  flex: 1;
+}
+.ve-props-checkbox:hover {
+  color: #fff;
+}
+
+/* 2026-05-04 unified-depth properties (card / sub-elements / asset / presets).
+   The properties panel widens to fit since these add many rows. */
+.ve-props {
+  width: 240px;
+  overflow-y: auto;
+  max-height: calc(100vh - 60px);
+}
+.ve-props-color {
+  width: 28px;
+  height: 24px;
+  border: 1px solid rgba(102, 126, 234, 0.25);
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.ve-props-color::-webkit-color-swatch-wrapper { padding: 0; }
+.ve-props-color::-webkit-color-swatch { border: none; border-radius: 3px; }
+.ve-props-color-row {
+  display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9090b0;
+}
+.ve-props-color-row > span { min-width: 28px; }
+.ve-props-clear-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #9090b0;
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.ve-props-clear-btn:hover { color: #fff; background: rgba(255, 80, 80, 0.18); }
+.ve-props-number {
+  width: 64px;
+  padding: 4px 6px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #e0e0f0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ve-props-row2 { display: flex; gap: 6px; }
+.ve-props-sub {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+.ve-props-sub-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b8b8d0;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ve-props-asset {
+  display: flex; gap: 4px; align-items: center;
+}
+.ve-props-asset-url {
+  flex: 1; min-width: 0;
+  padding: 4px 6px;
+  background: rgba(30, 30, 46, 0.8);
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  border-radius: 6px;
+  color: #e0e0f0;
+  font-size: 11px;
+}
+.ve-props-asset-browse {
+  background: rgba(102, 126, 234, 0.18);
+  border: 1px solid rgba(102, 126, 234, 0.4);
+  color: #d4d4e8;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ve-props-asset-browse:hover { background: rgba(102, 126, 234, 0.32); color: #fff; }
+.ve-props-asset-browse:disabled { opacity: 0.4; cursor: not-allowed; }
+.ve-props-presets { display: flex; flex-direction: column; gap: 4px; }
+.ve-props-preset-row { display: flex; gap: 4px; align-items: center; }
+.ve-props-preset-load {
+  flex: 1;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(102, 126, 234, 0.18);
+  color: #d4d4e8;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ve-props-preset-load.active {
+  background: rgba(102, 126, 234, 0.28);
+  border-color: rgba(102, 126, 234, 0.55);
+  color: #fff;
+}
+.ve-props-preset-load:hover { background: rgba(102, 126, 234, 0.18); }
+.ve-props-preset-save { display: flex; gap: 4px; align-items: center; margin-top: 6px; }

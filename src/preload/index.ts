@@ -111,13 +111,26 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_TOGGLE, element),
   overlayFireLT: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_FIRE_LT),
   overlayHideLT: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_HIDE_LT),
+  overlayFireFeatureCard: (mode: 'upNext' | 'thatWas') =>
+    ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_FIRE_FEATURE_CARD, mode),
+  overlayHideFeatureCard: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_HIDE_FEATURE_CARD),
   overlayGetState: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_GET_STATE),
   overlayAutoFireToggle: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_AUTO_FIRE_TOGGLE),
   overlayUpdateLayout: (layout: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_UPDATE_LAYOUT, layout),
   overlaySetTicker: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_TICKER, updates),
+  overlaySetLowerThird: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_LOWER_THIRD, updates),
   overlaySetStartingSoon: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_STARTING_SOON, updates),
   overlaySetAnimationConfig: (updates: any) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_ANIMATION_CONFIG, updates),
   overlaySetLogo: () => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_LOGO),
+  // 2026-05-04 unified depth — per-element styling + named preset ops.
+  overlaySetElementStyle: (elementKey: string, partial: any) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_ELEMENT_STYLE, { elementKey, partial }),
+  overlaySavePreset: (elementKey: string, name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SAVE_PRESET, { elementKey, name }),
+  overlayLoadPreset: (elementKey: string, name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_LOAD_PRESET, { elementKey, name }),
+  overlayDeletePreset: (elementKey: string, name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_DELETE_PRESET, { elementKey, name }),
   overlayFireChatMessage: (msg: unknown) => ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_FIRE_CHAT_MESSAGE, msg),
 
   // System info
@@ -156,6 +169,10 @@ const api = {
   // Drag/drop ordering (item 5)
   stateSetDisplayOrder: (routineIds: string[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATE_SET_DISPLAY_ORDER, routineIds),
+
+  // Build #9 item #4: unified event log
+  eventsGetRecent: (limit?: number, kind?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.EVENTS_GET_RECENT, limit, kind),
   // OBS transitions (Stream Deck plugin uses these via WS, app exposes for tests)
   obsTransitionList: () => ipcRenderer.invoke(IPC_CHANNELS.OBS_TRANSITION_LIST),
   obsTransitionGetCurrent: () => ipcRenderer.invoke(IPC_CHANNELS.OBS_TRANSITION_GET_CURRENT),
@@ -225,6 +242,10 @@ const api = {
   chatHideMessage: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_HIDE_MESSAGE, id),
   chatBanAuthor: (payload: { fingerprint?: string | null; authorName?: string | null; reason?: string; hideExisting?: boolean }) =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_BAN_AUTHOR, payload),
+  // build9o (Item #11) — livestream-only pin destination
+  chatLivestreamPin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_LIVESTREAM_PIN, id),
+  chatLivestreamUnpin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHAT_LIVESTREAM_UNPIN, id),
+  chatGetLivestreamPinned: () => ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_LIVESTREAM_PINNED),
   recordingStartEmpty: () => ipcRenderer.invoke(IPC_CHANNELS.RECORDING_START_EMPTY),
   recordingReassignTarget: (payload: { routineId?: string | null; emptyRoutineNumber?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_REASSIGN_TARGET, payload),

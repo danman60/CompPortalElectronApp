@@ -258,6 +258,32 @@
   flex-shrink: 0;
 }
 
+/* 2026-05-02 (Burlington UDC Day 2): operator reported the action-bar buttons
+   wrapping to a second line and the right-most stat tile (REM) clipping under
+   the meta row's tight horizontal budget. Compact the topband action buttons
+   to icon-only — labels (LOAD/PROCESS/UP/PHOTOS/SoD/EoD) are dropped here only;
+   tooltips already convey identity, and operator knows the icons by muscle.
+   Saves ~18px per button × ~6 buttons = ~108px reclaimed for the stat strip. */
+.topband-actions .ab-btn {
+  min-width: 30px;
+  padding: 4px 6px;
+}
+.topband-actions .ab-btn .ab-label,
+.topband-actions .daychk-header-btn .daychk-header-label {
+  display: none;
+}
+.topband-actions .ab-btn .ab-icon {
+  font-size: 14px;
+}
+.topband-actions .daychk-header-btn {
+  min-width: 28px;
+  padding: 4px 6px;
+}
+.topband-actions .daychk-header-btn .daychk-header-icon {
+  font-size: 14px;
+  margin: 0;
+}
+
 .topband-stats,
 .topband-current,
 .topband-meters {
@@ -277,6 +303,20 @@
   min-width: 0;
   display: flex;
   flex: 0 0 360px;
+}
+
+/* Build #9 item #4: Activity (event log) panel in the top band. Same fixed
+ * width as Record so Current Routine compresses from ~4/5 to ~3/5 of the row,
+ * with Activity + Record each taking ~1/5. Mirrors operator spec 2026-05-05.
+ */
+.topband-activity {
+  min-width: 0;
+  display: flex;
+  flex: 0 0 360px;
+}
+.topband-activity > * {
+  width: 100%;
+  height: 100%;
 }
 
 .topband-stats .section,

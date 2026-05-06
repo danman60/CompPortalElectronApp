@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { Routine, RoutineStatus } from '../../shared/types'
 import { requestReassign } from './ReassignPopover'
+import { requestMoveAfter } from './MoveAfterPopover'
 import '../styles/table.css'
 
 // ── Pipeline stage indicators ──────────────────────────────────────
@@ -347,6 +348,7 @@ type GroupedItem =
   | { type: 'day-header'; dayLabel: string; dayKey: string }
   | { type: 'session-divider'; sessionNumber: number; gapMinutes: number; idleStartTime: string; idleEndTime: string }
   | { type: 'sd-swap-heads-up'; sessionNumber: number; routinesRemaining: number; totalInSession: number; percentage: number }
+  | { type: 'judge-audio-reminder'; sessionNumber: number }
 
 // Operator-spec 2026-04-25: SD cards fill before the end of a long session and
 // the operators routinely forget to swap mid-session. Show visible heads-up
@@ -433,7 +435,10 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
   const out: GroupedItem[] = []
   let sessionStart = 0
   let currentSessionNumber = 1
-  const SD_SWAP_PERCENTAGES = [33, 55] as const
+  // Burlington UDC 2026-05-02: operator dialed back from [20, 40, 60, 80] to two
+  // mid-session thresholds [40, 65] — fewer heads-up rows in the table, both
+  // still positioned to catch operator attention before card fill.
+  const SD_SWAP_PERCENTAGES = [40, 65] as const
   function flushSessionWithHeadsUp(sessionItems: GroupedItem[], sessionNumber: number): void {
     const routineIdxs: number[] = []
     sessionItems.forEach((it, i) => { if (it.type === 'routine') routineIdxs.push(i) })
@@ -468,21 +473,41 @@ function buildGroupedList(routines: Routine[], options: { showDayHeaders: boolea
       out.push(sessionItems[i])
     }
   }
+  // 2026-05-04: judge backup audio reminder — inert in-table row marker that
+  // sits BEFORE the first routine of every session, so the operator's eye
+  // catches it as they scroll past each session boundary. Mirrors the SD-swap
+  // heads-up pattern; auto-derived from the same 15-min idle-gap session
+  // inference, no separate config.
+  let pendingJudgeAudio: GroupedItem | null = { type: 'judge-audio-reminder', sessionNumber: 1 }
+  function flushPendingJudgeAudio(): void {
+    if (pendingJudgeAudio) { out.push(pendingJudgeAudio); pendingJudgeAudio = null }
+  }
   for (let i = 0; i < result.length; i++) {
     const it = result[i]
     if (it.type === 'day-header') {
-      if (i > sessionStart) flushSessionWithHeadsUp(result.slice(sessionStart, i), currentSessionNumber)
+      if (i > sessionStart) {
+        flushPendingJudgeAudio()
+        flushSessionWithHeadsUp(result.slice(sessionStart, i), currentSessionNumber)
+      }
       out.push(it)
       sessionStart = i + 1
       currentSessionNumber = 1
+      pendingJudgeAudio = { type: 'judge-audio-reminder', sessionNumber: 1 }
     } else if (it.type === 'session-divider') {
-      if (i > sessionStart) flushSessionWithHeadsUp(result.slice(sessionStart, i), currentSessionNumber)
+      if (i > sessionStart) {
+        flushPendingJudgeAudio()
+        flushSessionWithHeadsUp(result.slice(sessionStart, i), currentSessionNumber)
+      }
       out.push(it)
       sessionStart = i + 1
       currentSessionNumber = it.sessionNumber
+      pendingJudgeAudio = { type: 'judge-audio-reminder', sessionNumber: it.sessionNumber }
     }
   }
-  if (sessionStart < result.length) flushSessionWithHeadsUp(result.slice(sessionStart), currentSessionNumber)
+  if (sessionStart < result.length) {
+    flushPendingJudgeAudio()
+    flushSessionWithHeadsUp(result.slice(sessionStart), currentSessionNumber)
+  }
 
   return out
 }
@@ -619,6 +644,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   // editor cleanly after close.
   const [noteOpenTarget, setNoteOpenTarget] = useState<NoteEditorExternalOpen | null>(null)
   const activeRowRef = useRef<HTMLTableRowElement | null>(null)
+  const searchMatchRowRef = useRef<HTMLTableRowElement | null>(null)
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
   const operatorScrolledAtRef = useRef<number>(0)
   const isWindowMode = windowMode != null
@@ -647,6 +673,30 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
     const delta = (rowRect.top - containerRect.top) - desiredOffsetFromTop
     scrollEl.scrollTo({ top: scrollEl.scrollTop + delta, behavior: 'smooth' })
   }, [currentRoutine?.id, isWindowMode])
+
+  // 2026-05-02 (Burlington UDC Day 2): when search query produces a match,
+  // scroll the FIRST match into view but do NOT filter the table — keeps the
+  // surrounding routines visible so the operator can resume nav after jumping.
+  // Always honors the user-initiated search; bypasses the manual-scroll grace
+  // period (typing a search IS the deliberate action).
+  //
+  // 2026-05-04 (post-Burlington): operator reported "type to jump does nothing".
+  // Two robustness fixes:
+  //   1. scrollIntoView({block:'center'}) replaces manual scrollTo(delta) math —
+  //      works reliably with sticky headers and zero-overflow edge cases where
+  //      the previous delta calc could compute a no-op or scroll under the head.
+  //   2. requestAnimationFrame defers the scroll one frame so the ref
+  //      attachment from the just-completed render has fully landed.
+  useEffect(() => {
+    if (isWindowMode) return
+    if (!searchQuery) return
+    const raf = requestAnimationFrame(() => {
+      const row = searchMatchRowRef.current
+      if (!row) return
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [searchQuery, isWindowMode])
 
   useEffect(() => {
     const el = tableScrollRef.current
@@ -695,15 +745,26 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
     routines = routines.filter((r) => r.scheduledDay === dayFilter)
   }
 
+  // 2026-05-02 (Burlington UDC Day 2): search no longer filters the visible
+  // routine list. Operator complaint was that filtering destroyed nav context
+  // — after jumping to a routine they had to clear the search and find their
+  // way back. New behavior: search matches are highlighted in-place and the
+  // first match is scrolled into view, keeping the rest of the schedule visible.
+  const searchMatchIds = new Set<string>()
+  let firstSearchMatchId: string | null = null
   if (!isWindowMode && searchQuery) {
     const q = searchQuery.toLowerCase()
-    routines = routines.filter(
-      (r) =>
+    for (const r of routines) {
+      if (
         r.routineTitle.toLowerCase().includes(q) ||
         r.entryNumber.includes(q) ||
         r.studioName.toLowerCase().includes(q) ||
-        r.dancers.toLowerCase().includes(q),
-    )
+        r.dancers.toLowerCase().includes(q)
+      ) {
+        searchMatchIds.add(r.id)
+        if (firstSearchMatchId === null) firstSearchMatchId = r.id
+      }
+    }
   }
 
   async function handleJumpTo(routine: Routine): Promise<void> {
@@ -873,6 +934,45 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                   </tr>
                 )
               }
+              if (item.type === 'judge-audio-reminder') {
+                return (
+                  <tr key={`judge-audio-${idx}`} className="judge-audio-reminder-row">
+                    <td colSpan={99}>
+                      <div className="judge-audio-reminder-inline">
+                        <svg
+                          className="judge-audio-icon"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"
+                            fill="currentColor"
+                          />
+                          <path
+                            d="M5 11a7 7 0 0 0 14 0"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            fill="none"
+                          />
+                          <path
+                            d="M12 18v3M9 21h6"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        <span className="judge-audio-label">JUDGE BACKUP AUDIO</span>
+                        <span className="judge-audio-detail">
+                          · Start the external recorder for Session {item.sessionNumber}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              }
               const routine = item.routine
               const isLive = routine.status === 'recording'
             const isNotRecorded = routine.status === 'pending' || routine.status === 'skipped' || routine.status === 'scratched'
@@ -883,11 +983,16 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             const pipeline = getPipeline(routine, judgeCount)
             const portalStatus = getPortalStatusMeta(routine, judgeCount)
 
+            const isSearchMatch = searchMatchIds.has(routine.id)
+            const isFirstSearchMatch = firstSearchMatchId === routine.id
             return (
               <tr
                 key={routine.id}
-                ref={routine.id === activeRowId ? activeRowRef : undefined}
-                className={`${isCurrent ? 'current-row' : ''}${dropTargetId === routine.id ? ' drop-target' : ''}`}
+                ref={(el) => {
+                  if (routine.id === activeRowId) activeRowRef.current = el
+                  if (isFirstSearchMatch) searchMatchRowRef.current = el
+                }}
+                className={`${isCurrent ? 'current-row' : ''}${dropTargetId === routine.id ? ' drop-target' : ''}${isSearchMatch ? ' search-match' : ''}${isFirstSearchMatch ? ' search-first' : ''}`}
                 draggable
                 onDragStart={(e) => handleRowDragStart(e, routine.id)}
                 onClick={() => handleJumpTo(routine)}
@@ -1062,6 +1167,16 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                         Unscratch
                       </button>
                     )}
+                    <button
+                      className="view-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        requestMoveAfter(routine)
+                      }}
+                      title="Move this routine after another routine in the schedule"
+                    >
+                      Move…
+                    </button>
                     {!isNotRecorded && (
                       <button
                         className="view-btn"
