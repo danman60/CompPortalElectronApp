@@ -1546,9 +1546,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoResumeOnBoot: true,
     reconcileCadenceMinutes: 15,
     reconcileSilent: true,
-    // build9r — default OFF; operator opts in via Settings to test the
-    // child-process path. Leaves prod on the proven main-process path.
-    uploadStrategy: 'main-process',
+    // build9r — operator-confirmed default ON 2026-05-07. Forces real
+    // exposure on tester during the pre-event week so the path is
+    // actually validated. Operator flips back to 'main-process' via
+    // Settings UI for instant rollback if anything misbehaves.
+    uploadStrategy: 'child-process',
   },
   hotkeys: {
     toggleRecording: 'F5',
