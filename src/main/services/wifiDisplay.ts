@@ -427,21 +427,22 @@ export async function start(): Promise<void> {
     // starved when the Windows scheduler favoured the (much busier) ffmpeg
     // workers.
     //
-    // 2026-05-07 build9q (operator-confirmed dual fix with HEVC NVENC):
-    // bumping from `abovenormal` to `high`. The original comment worried
-    // about OBS starvation at high; operator's stated priority is now
-    // explicit — wifi-display lag is the worse of the two pains, and the
-    // tablet "pretty much always needs to be high priority and not
-    // lagging." OBS runs at normal and can take the hit on rare scheduler
-    // ties; wifi-display cannot.
+    // 2026-05-07 build9r — operator-confirmed final hierarchy:
+    //   OBS HIGH > Wifi-display ABOVENORMAL > CSE main NORMAL >
+    //   ffmpeg BELOWNORMAL > uploads (when child-process strategy is on,
+    //   they're BELOWNORMAL too; otherwise they share CSE-main NORMAL).
+    // Earlier build9q briefly bumped wifi-display to HIGH; reverted here
+    // because OBS data-loss outranks tablet lag. OBS itself runs as a
+    // separate operator-managed process — set its priority via Task
+    // Manager / OBS launch shortcut (CSE does not auto-bump it).
     if (process.platform === 'win32') {
       try {
         const wmic = spawn('wmic', [
           'process', 'where', `ProcessId=${childProc.pid}`,
-          'CALL', 'setpriority', 'high',
+          'CALL', 'setpriority', 'abovenormal',
         ], { stdio: 'ignore', windowsHide: true })
         wmic.on('error', () => {})
-        logger.app.info(`Set wifi-display PID ${childProc.pid} priority to high`)
+        logger.app.info(`Set wifi-display PID ${childProc.pid} priority to abovenormal`)
       } catch (err) {
         logger.app.warn(`Failed to set wifi-display priority: ${err instanceof Error ? err.message : err}`)
       }
