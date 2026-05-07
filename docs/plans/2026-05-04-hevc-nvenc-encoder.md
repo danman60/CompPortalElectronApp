@@ -1,8 +1,22 @@
 # HEVC NVENC encoder for wifi-display-server
 
 Date: 2026-05-04
-Status: COMPILED (cross-compile from Linux to Windows x64 via mingw OK).
-Not deployed. Not committed.
+Status: **2026-05-07 (build9q): SHIPPED CSE-side, DEFAULT OFF.**
+- WifiDisplay Rust changes committed (`a7deaea` on master).
+- New `wifi-display-server.exe` (5,796,468 bytes) bundled in CSE
+  `resources/`. Pre-HEVC backup retained as
+  `wifi-display-server.exe.bak.20260429-pre-hevc`.
+- `settings.wifiDisplay.encoder` schema + flag plumbing in
+  `wifiDisplay.ts` already present; flag defaults to `'openh264'` so
+  zero behavior change unless operator opts in.
+- Wifi-display priority bumped from `abovenormal` to `high` per
+  operator dual-fix request — the second half of the lag fix
+  (operator: "It pretty much always needs to be high priority and
+  not lagging"). OBS at NORMAL takes the hit on rare scheduler ties.
+- Android decoder swap directive appended to
+  `~/projects/CSController/INBOX.md`. DO NOT flip the encoder flag
+  ON in production until that ships and the operator smoke-tests
+  on tester tenant.
 
 ## Problem
 
