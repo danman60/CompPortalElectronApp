@@ -836,6 +836,9 @@ export const IPC_CHANNELS = {
   OVERLAY_FIRE_LT: 'overlay:fire-lt',
   OVERLAY_HIDE_LT: 'overlay:hide-lt',
   OVERLAY_GET_STATE: 'overlay:get-state',
+  // build9p (Item #13 fix 2026-05-06) — push overlay state to renderer on
+  // every notifyChange. Replaces 2s setInterval poll → no SD↔app drift.
+  OVERLAY_STATE_CHANGED: 'overlay:state-changed',
   OVERLAY_AUTO_FIRE_TOGGLE: 'overlay:auto-fire-toggle',
   OVERLAY_UPDATE_LAYOUT: 'overlay:update-layout',
   OVERLAY_SET_TICKER: 'overlay:set-ticker',

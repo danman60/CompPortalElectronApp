@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { VisualEditor } from './VisualEditor'
 import { StartingSoonEditor } from './StartingSoonEditor'
-import type { OverlayAnimation, AnimationEasing, ChatMessage, PinnedChatMessage } from '../../shared/types'
+import { IPC_CHANNELS, type OverlayAnimation, type AnimationEasing, type ChatMessage, type PinnedChatMessage } from '../../shared/types'
 import '../styles/overlay-controls.css'
 
 interface OverlayToggles {
@@ -39,33 +39,39 @@ export default function OverlayControls({ compact = false, noChat = false }: { c
   const [selectedAnim, setSelectedAnim] = useState<OverlayAnimation>('random')
 
   useEffect(() => {
+    function applyState(state: any): void {
+      if (!state) return
+      setToggles({
+        counter: !!state.counter?.visible,
+        clock: !!state.clock?.visible,
+        logo: !!state.logo?.visible,
+        lowerThird: !!state.lowerThird?.visible,
+      })
+      if (state.animConfig) {
+        setAnimDuration(state.animConfig.animationDuration ?? 0.5)
+        setAnimEasing(state.animConfig.animationEasing ?? 'ease')
+        setAutoHideSec(state.animConfig.autoHideSeconds ?? 8)
+      }
+      if (state.lowerThird?.animation) {
+        setSelectedAnim(state.lowerThird.animation)
+      }
+    }
     const sync = (): void => {
-      window.api.overlayGetState().then((state: any) => {
-        if (state) {
-          setToggles({
-            counter: !!state.counter?.visible,
-            clock: !!state.clock?.visible,
-            logo: !!state.logo?.visible,
-            lowerThird: !!state.lowerThird?.visible,
-          })
-          if (state.animConfig) {
-            setAnimDuration(state.animConfig.animationDuration ?? 0.5)
-            setAnimEasing(state.animConfig.animationEasing ?? 'ease')
-            setAutoHideSec(state.animConfig.autoHideSeconds ?? 8)
-          }
-          if (state.lowerThird?.animation) {
-            setSelectedAnim(state.lowerThird.animation)
-          }
-        }
-      }).catch((err: unknown) => {
+      window.api.overlayGetState().then(applyState).catch((err: unknown) => {
         console.error('overlayGetState failed:', err)
       })
     }
     sync()
-    // Re-sync every 2s so Stream Deck toggles / auto-hide / external state
-    // changes reflect in the UI without requiring a refresh.
-    const poll = setInterval(sync, 2000)
-    return () => clearInterval(poll)
+    // build9p (Item #13 fix 2026-05-06) — main pushes OVERLAY_STATE_CHANGED on
+    // every overlay notifyChange (SD toggle, auto-hide, in-app toggle, etc.).
+    // Push lands within ~10ms vs the 2s setInterval lag that previously caused
+    // SD↔app drift. Keep a slow 10s backstop poll in case the push channel
+    // ever silently breaks (paranoia, defense-in-depth).
+    const offState = window.api.on(IPC_CHANNELS.OVERLAY_STATE_CHANGED, (data: unknown) => {
+      applyState(data)
+    })
+    const poll = setInterval(sync, 10000)
+    return () => { clearInterval(poll); offState?.() }
   }, [])
 
   async function handleToggle(element: keyof OverlayToggles): Promise<void> {
@@ -592,25 +598,24 @@ export function OverlayModules(): React.ReactElement {
   const [ssVisible, setSsVisible] = useState(false)
   const [ssEditorOpen, setSsEditorOpen] = useState(false)
 
-  // 2026-05-04: previously this only ran once on mount, so Stream Deck ticker
-  // toggles never reflected in the app's "ON/OFF" badge — the renderer's local
-  // tickerVisible state stayed stale. Now polls every 2s like the parent
-  // OverlayControls does for counter/clock/logo/LT. SD→app sync restored.
+  // build9p (Item #13 fix 2026-05-06) — push-based sync via OVERLAY_STATE_CHANGED.
+  // Was a 2s setInterval poll that caused SD-button-toggles-ticker → app UI lags
+  // up to 2s, plus race conditions if operator clicked the app toggle in that
+  // window (the operator's "drifts out of on/off state sync" complaint, fix-list
+  // item #13). Push lands within ~10ms. Slow 10s poll retained as defense-in-depth
+  // backstop.
   useEffect(() => {
-    const sync = (): void => {
-      window.api.overlayGetState().then((state: any) => {
-        if (!state) return
-        if (state.ticker) {
-          // Don't overwrite text/speed while operator is typing in the
-          // expanded editor — only sync the visibility from external sources.
-          // Text/speed updates flow renderer→main on blur/Enter; pulling them
-          // back from main mid-edit would clobber the in-progress input.
-          setTickerVisible(state.ticker.visible ?? false)
-        }
-        if (state.startingSoon) {
-          setSsVisible(state.startingSoon.visible ?? false)
-        }
-      })
+    function applyVisibility(state: any): void {
+      if (!state) return
+      if (state.ticker) {
+        // Don't overwrite text/speed while operator is typing in the expanded
+        // editor — visibility only from external sources. Text/speed flow
+        // renderer→main on blur/Enter.
+        setTickerVisible(state.ticker.visible ?? false)
+      }
+      if (state.startingSoon) {
+        setSsVisible(state.startingSoon.visible ?? false)
+      }
     }
     // Initial fetch also pulls text + speed (only the initial sync should set
     // these so the editor opens with current persisted values).
@@ -625,8 +630,13 @@ export function OverlayModules(): React.ReactElement {
         setSsVisible(state.startingSoon.visible ?? false)
       }
     })
-    const poll = setInterval(sync, 2000)
-    return () => clearInterval(poll)
+    const offState = window.api.on(IPC_CHANNELS.OVERLAY_STATE_CHANGED, (data: unknown) => {
+      applyVisibility(data)
+    })
+    const poll = setInterval(() => {
+      window.api.overlayGetState().then(applyVisibility).catch(() => {})
+    }, 10000)
+    return () => { clearInterval(poll); offState?.() }
   }, [])
 
   function handleTickerToggle(): void {

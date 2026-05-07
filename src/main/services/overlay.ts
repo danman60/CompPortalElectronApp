@@ -354,14 +354,42 @@ const defaultSSConfig: StartingSoonConfig = {
 let startingSoonConfig: StartingSoonConfig = { ...defaultSSConfig }
 let ssPresets: StartingSoonPreset[] = []
 
+// build9p (Item #13 fix 2026-05-06): multi-subscriber state-change broadcast.
+// Was a single-slot callback (wsHub overrode at startup; renderer never got
+// pushed → 2s setInterval poll caused SD↔app drift). Now a list of listeners
+// fan out on every notifyChange so wsHub broadcasts AND main/index.ts pushes
+// IPC to the renderer atomically. Back-compat: setOnStateChange still works
+// (single-slot replace semantic preserved for the FIRST caller — wsHub —
+// while addStateChangeListener stacks additional subscribers).
 let onStateChange: (() => void) | null = null
+const stateChangeListeners: Array<() => void> = []
 
 export function setOnStateChange(cb: () => void): void {
+  // Back-compat: original single-slot wsHub registration. Replaces only the
+  // primary slot; stacked listeners (addStateChangeListener) are unaffected.
+  if (onStateChange) {
+    const idx = stateChangeListeners.indexOf(onStateChange)
+    if (idx >= 0) stateChangeListeners.splice(idx, 1)
+  }
   onStateChange = cb
+  stateChangeListeners.push(cb)
+}
+
+/** Add an additional listener (does not replace the primary slot). */
+export function addStateChangeListener(cb: () => void): () => void {
+  stateChangeListeners.push(cb)
+  return () => {
+    const idx = stateChangeListeners.indexOf(cb)
+    if (idx >= 0) stateChangeListeners.splice(idx, 1)
+  }
 }
 
 function notifyChange(): void {
-  if (onStateChange) onStateChange()
+  for (const cb of stateChangeListeners) {
+    try { cb() } catch (err) {
+      logger.app.warn(`overlay state listener failed: ${err instanceof Error ? err.message : err}`)
+    }
+  }
 }
 
 // --- Starting Soon Config Persistence ---

@@ -401,6 +401,19 @@ app.whenReady().then(async () => {
   featureCard.init()
   wsHub.start()
 
+  // build9p (Item #13 fix 2026-05-06) — push overlay state to renderer on
+  // every notifyChange. Drops the 2s setInterval poll in OverlayControls /
+  // OverlayModules so SD button toggles + auto-hide + external state changes
+  // reflect in the app UI within ~10ms instead of up to 2s. Pairs with
+  // OVERLAY_STATE_CHANGED listener in the renderer.
+  overlay.addStateChangeListener(() => {
+    try {
+      mainWindow?.webContents.send(IPC_CHANNELS.OVERLAY_STATE_CHANGED, overlay.getOverlayState())
+    } catch (err) {
+      logger.app.warn(`OVERLAY_STATE_CHANGED push failed: ${err instanceof Error ? err.message : err}`)
+    }
+  })
+
   // Start chat bridge (connects to Supabase Realtime if share code already resolved)
   chatBridge.startChatBridge()
   // Wire push broadcasts (commit 4): new messages + pin changes → renderer
