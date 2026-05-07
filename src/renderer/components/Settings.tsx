@@ -529,6 +529,24 @@ export default function Settings(): React.ReactElement {
               <span className="hint">Limit upload speed to leave headroom for livestream. Applies to next file upload.</span>
             </div>
             <div className="field">
+              <label>Upload strategy</label>
+              <select
+                value={draft.upload?.uploadStrategy ?? 'main-process'}
+                onChange={(e) => update('upload', {
+                  uploadStrategy: e.target.value as 'main-process' | 'child-process',
+                })}
+              >
+                <option value="main-process">Main process (default, proven)</option>
+                <option value="child-process">Child process (lower CPU contention)</option>
+              </select>
+              <span className="hint">
+                Child process runs each PUT in its own OS process at below-normal priority,
+                so TLS encryption + file I/O can't compete with wifi-display or OBS. Flip
+                back to main-process anytime if uploads start misbehaving — applies to next
+                file upload, no restart needed.
+              </span>
+            </div>
+            <div className="field">
               <label>Photo upload priority</label>
               <select
                 value={draft.upload?.photoPriority ?? 'newest-first'}

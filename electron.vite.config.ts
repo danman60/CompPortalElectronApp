@@ -13,7 +13,11 @@ export default defineConfig({
           // so exifWorkerPool.ts / matcherWorkerPool.ts can resolve them relative
           // to __dirname at runtime.
           'workers/exifReader': resolve(__dirname, 'src/main/workers/exifReader.ts'),
-          'workers/matcher': resolve(__dirname, 'src/main/workers/matcher.ts')
+          'workers/matcher': resolve(__dirname, 'src/main/workers/matcher.ts'),
+          // build9r — child-process upload worker (feature-flagged, see
+          // settings.upload.uploadStrategy). Spawned via process.execPath
+          // with ELECTRON_RUN_AS_NODE=1 so wmic can priority-control it.
+          'workers/uploadWorker': resolve(__dirname, 'src/main/workers/uploadWorker.ts')
         },
         output: {
           entryFileNames: '[name].js'

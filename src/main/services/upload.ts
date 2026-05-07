@@ -17,6 +17,8 @@ import * as importManifest from './importManifest'
 import { generatePhotoThumbnail } from './ffmpeg'
 import * as events from './events'
 import os from 'os'
+import { spawn } from 'child_process'
+import { app } from 'electron'
 
 interface UploadPayload {
   routineId: string
@@ -1143,6 +1145,185 @@ async function getSignedUploadUrl(
 }
 
 function uploadFileToSignedUrl(
+  signedUrl: string,
+  payload: UploadPayload,
+): Promise<void> {
+  // build9r — feature-flagged dispatch. 'child-process' isolates TLS + file
+  // I/O in its own OS process so wmic can priority-control it (mirrors the
+  // ffmpeg pattern). Default 'main-process' = legacy inline fetch.PUT.
+  const strategy = (getSettings() as any).upload?.uploadStrategy ?? 'main-process'
+  if (strategy === 'child-process') {
+    return uploadFileViaChildProcess(signedUrl, payload)
+  }
+  return uploadFileToSignedUrlMainProcess(signedUrl, payload)
+}
+
+/**
+ * build9r — child-process upload PUT. Spawns out/main/workers/uploadWorker.js
+ * via process.execPath with ELECTRON_RUN_AS_NODE=1 so the binary acts as plain
+ * Node. The child runs at belownormal CPU priority (set via wmic right after
+ * spawn, mirroring the ffmpeg setPriority pattern) so TLS encryption +
+ * libuv file-read I/O never compete with wifi-display-server.exe (HIGH) or
+ * the CSE main process (NORMAL).
+ *
+ * Communication:
+ *   - Stdin: single JSON message with signedUrl + filePath + contentType +
+ *     timeoutMs + bandwidthCapBytesPerSec. Parent then closes stdin.
+ *   - Stdout: newline-delimited JSON {progress, done, error}.
+ *   - Abort: SIGTERM from parent → child cleans up + exits non-zero.
+ *
+ * Feature-flagged via settings.upload.uploadStrategy. Operator can flip to
+ * 'main-process' instantly via Settings UI for rollback if anything misbehaves.
+ */
+function uploadFileViaChildProcess(
+  signedUrl: string,
+  payload: UploadPayload,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let fileSize: number
+    try {
+      fileSize = fs.statSync(payload.filePath).size
+    } catch (err) {
+      reject(new Error(`Cannot read file: ${payload.filePath}`))
+      return
+    }
+
+    // Same timeout heuristic as the main-process path (5 min minimum, scales
+    // with file size at ~100 KB/s minimum).
+    const timeoutMs = Math.max(300000, Math.round(fileSize / 100000) * 1000)
+    const bwCap = (getSettings() as any).upload?.bandwidthCapBytesPerSec ?? 0
+
+    // Resolve worker path: out/main/workers/uploadWorker.js next to index.js.
+    // app.getAppPath() returns the asar root; out/main/ is bundled inside.
+    const workerPath = path.join(app.getAppPath(), 'out', 'main', 'workers', 'uploadWorker.js')
+    if (!fs.existsSync(workerPath)) {
+      reject(new Error(`Upload worker not found at ${workerPath}`))
+      return
+    }
+
+    // Spawn Electron exe in plain-node mode — same trick electron-vite uses.
+    const child = spawn(process.execPath, [workerPath], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+
+    if (!child.pid) {
+      reject(new Error('Upload child process failed to spawn (no PID)'))
+      return
+    }
+
+    // wmic priority — mirrors ffmpeg.setPriority. Below-normal so TLS +
+    // file I/O work yields to wifi-display-server.exe (above-normal) and
+    // OBS/CSE-main (normal).
+    if (process.platform === 'win32') {
+      try {
+        const wmic = spawn('wmic', [
+          'process', 'where', `ProcessId=${child.pid}`,
+          'CALL', 'setpriority', 'belownormal',
+        ], { stdio: 'ignore', windowsHide: true })
+        wmic.on('error', () => {})
+      } catch {
+        // best-effort; not fatal if wmic unavailable
+      }
+    }
+
+    let settled = false
+    let stdoutBuf = ''
+    let stderrBuf = ''
+
+    function settle(err?: Error): void {
+      if (settled) return
+      settled = true
+      if (err) reject(err)
+      else resolve()
+    }
+
+    // Cache job counts once for progress reporting (matches main-process path).
+    const cachedJobs = jobQueue.getByRoutine(payload.routineId).filter(j => j.type === 'upload')
+    const cachedCompleted = cachedJobs.filter(j => j.status === 'done').length
+    const cachedTotal = cachedJobs.length
+    let lastEmittedMilestone = 0
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBuf += chunk.toString('utf-8')
+      let nl: number
+      while ((nl = stdoutBuf.indexOf('\n')) !== -1) {
+        const line = stdoutBuf.slice(0, nl)
+        stdoutBuf = stdoutBuf.slice(nl + 1)
+        if (!line.trim()) continue
+        try {
+          const msg = JSON.parse(line) as { type: string; percent?: number; message?: string }
+          if (msg.type === 'progress' && typeof msg.percent === 'number') {
+            const milestone = Math.floor(msg.percent / 25) * 25
+            if (milestone > lastEmittedMilestone) {
+              lastEmittedMilestone = milestone
+              logger.upload.info(`Upload (child) ${payload.objectName}: ${msg.percent}%`)
+              const overallPercent = Math.round(((cachedCompleted + (msg.percent / 100)) / cachedTotal) * 100)
+              sendProgress(payload.routineId, {
+                state: 'uploading',
+                percent: overallPercent,
+                currentFile: path.basename(payload.filePath),
+                filesCompleted: cachedCompleted,
+                filesTotal: cachedTotal,
+              })
+            }
+          } else if (msg.type === 'done') {
+            settle()
+          } else if (msg.type === 'error') {
+            settle(new Error(`Upload worker error: ${msg.message || 'unknown'}`))
+          }
+        } catch {
+          // Ignore non-JSON lines; worker should only emit JSON.
+        }
+      }
+    })
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuf += chunk.toString('utf-8')
+    })
+
+    child.on('error', (err) => {
+      settle(new Error(`Upload child process error: ${err.message}`))
+    })
+
+    child.on('close', (code) => {
+      if (settled) return
+      if (code === 0) settle()
+      else settle(new Error(`Upload child exited with code ${code}${stderrBuf ? `: ${stderrBuf.slice(-200)}` : ''}`))
+    })
+
+    // Abort controller for pause/cancel — sends SIGTERM to child for clean
+    // cleanup. Same currentAbortController slot the main-process path uses.
+    currentAbortController = new AbortController()
+    currentAbortRoutineId = payload.routineId
+    currentAbortController.signal.addEventListener('abort', () => {
+      try { child.kill('SIGTERM') } catch {}
+      // If SIGTERM didn't take after 2s, force-kill.
+      setTimeout(() => {
+        try { if (!child.killed) child.kill('SIGKILL') } catch {}
+      }, 2000)
+      settle(new Error('Upload aborted'))
+    })
+
+    // Send the input JSON to the worker, then close stdin to signal "go".
+    try {
+      child.stdin?.write(JSON.stringify({
+        signedUrl,
+        filePath: payload.filePath,
+        contentType: payload.contentType,
+        timeoutMs,
+        bandwidthCapBytesPerSec: bwCap,
+      }))
+      child.stdin?.end()
+    } catch (err) {
+      try { child.kill('SIGTERM') } catch {}
+      settle(new Error(`Failed to write to upload worker stdin: ${err instanceof Error ? err.message : err}`))
+    }
+  })
+}
+
+function uploadFileToSignedUrlMainProcess(
   signedUrl: string,
   payload: UploadPayload,
 ): Promise<void> {

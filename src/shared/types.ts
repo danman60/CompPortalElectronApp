@@ -604,6 +604,14 @@ export interface AppSettings {
     // code is resolved. Self-heals state ↔ DB drift without operator clicks.
     reconcileCadenceMinutes?: number
     reconcileSilent?: boolean // default true — ambient ticks log only, no toast
+    // build9r (2026-05-07) — feature-flagged child-process upload PUTs.
+    // 'main-process' (default) keeps the legacy in-main-process fetch().PUT.
+    // 'child-process' spawns a Node child via process.execPath + ELECTRON_RUN_AS_NODE
+    // so wmic can priority-control the PUT (TLS encryption + file I/O leaves the
+    // CSE main libuv pool, which is what was lagging wifi-display in the field).
+    // Operator-toggleable via Settings UI for instant rollback if the new path
+    // misbehaves.
+    uploadStrategy?: 'main-process' | 'child-process'
   }
   hotkeys: {
     toggleRecording: string
@@ -1538,6 +1546,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoResumeOnBoot: true,
     reconcileCadenceMinutes: 15,
     reconcileSilent: true,
+    // build9r — default OFF; operator opts in via Settings to test the
+    // child-process path. Leaves prod on the proven main-process path.
+    uploadStrategy: 'main-process',
   },
   hotkeys: {
     toggleRecording: 'F5',
