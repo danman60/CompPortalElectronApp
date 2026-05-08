@@ -966,10 +966,10 @@ async function runFFmpeg(job: FFmpegJob): Promise<void> {
     args.push(...buildReencodeArgs(job, '1920:1080').slice(3))
   } else {
     const perfOutput = path.join(job.outputDir, perfFileName(job.filePrefix))
-    args.push('-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', perfOutput)
+    args.push('-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', '-movflags', '+faststart', perfOutput)
     for (let i = 1; i <= job.judgeCount; i++) {
       const judgeOutput = path.join(job.outputDir, judgeFileName(job.filePrefix, i))
-      args.push('-map', '0:v:0', '-map', `0:a:${i}`, '-c', 'copy', judgeOutput)
+      args.push('-map', '0:v:0', '-map', `0:a:${i}`, '-c', 'copy', '-movflags', '+faststart', judgeOutput)
     }
   }
 
@@ -1043,6 +1043,7 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
       '-y', '-i', tempVideo, '-i', job.inputPath,
       '-map', '0:v:0', '-map', '1:a:0',
       '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+      '-movflags', '+faststart',
       perfOutput,
     ])
 
@@ -1053,6 +1054,7 @@ async function runSmartEncode(job: FFmpegJob, ffmpegPath: string): Promise<void>
         '-y', '-i', judgeVideoSource, '-i', job.inputPath,
         '-map', '0:v:0', '-map', `1:a:${i}`,
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart',
         judgeOutput,
       ])
     }
@@ -1172,6 +1174,7 @@ function buildReencodeArgs(job: FFmpegJob, scale: string): string[] {
     '-vf', `scale=${scale}`,
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
     '-c:a', 'aac', '-b:a', '128k',
+    '-movflags', '+faststart',
     perfOutput,
   )
 
@@ -1182,6 +1185,7 @@ function buildReencodeArgs(job: FFmpegJob, scale: string): string[] {
       '-vf', `scale=${scale}`,
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
       '-c:a', 'aac', '-b:a', '128k',
+      '-movflags', '+faststart',
       judgeOutput,
     )
   }
