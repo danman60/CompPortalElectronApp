@@ -627,6 +627,10 @@ async function runAudioAudit(
       sendToRenderer(IPC_CHANNELS.AUDIO_IDENTICAL_TRACKS_DETECTED, {
         routineId, entryNumber, matchedPairs, byHash,
       })
+      events.emit('audio.audit.identicalTracks.warning', {
+        routineId, entryNumber,
+        pairs: matchedPairs.map(([a, b]) => `${a}=${b}`),
+      })
     }
   }
 
@@ -648,6 +652,11 @@ async function runAudioAudit(
             noiseFloorDb: cfg.silenceNoiseFloorDb,
             minDurationSec: cfg.silenceMinDurationSec,
           })
+          events.emit('audio.audit.silence.warning', {
+            routineId, entryNumber, role: ef.role,
+            silentFraction: frac,
+            noiseFloorDb: cfg.silenceNoiseFloorDb,
+          })
         }
       } catch (err) {
         logger.ffmpeg.warn(`A55 silence failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
@@ -662,6 +671,11 @@ async function runAudioAudit(
             `A55 loudness: routine ${entryNumber} ${ef.role} mean ${rms.toFixed(1)} dB < ${cfg.loudnessFloorDb} dB`,
           )
           sendToRenderer(IPC_CHANNELS.AUDIO_LOW_LOUDNESS_DETECTED, {
+            routineId, entryNumber, role: ef.role,
+            meanRmsDb: rms,
+            thresholdDb: cfg.loudnessFloorDb,
+          })
+          events.emit('audio.audit.lowLoudness.warning', {
             routineId, entryNumber, role: ef.role,
             meanRmsDb: rms,
             thresholdDb: cfg.loudnessFloorDb,
@@ -684,6 +698,11 @@ async function runAudioAudit(
             kbps,
             thresholdKbps: cfg.bitrateFloorKbps,
           })
+          events.emit('audio.audit.lowBitrate.warning', {
+            routineId, entryNumber, role: ef.role,
+            kbps,
+            thresholdKbps: cfg.bitrateFloorKbps,
+          })
         }
       } catch (err) {
         logger.ffmpeg.warn(`Phase 5.3.1 bitrate failed for ${ef.role}: ${err instanceof Error ? err.message : err}`)
@@ -694,6 +713,11 @@ async function runAudioAudit(
   if (!anyFinding) {
     sendToRenderer(IPC_CHANNELS.AUDIO_AUDIT_PASS, {
       routineId, entryNumber, trackCount: encodedFiles.length,
+    })
+    events.emit('audio.audit.summary', {
+      routineId, entryNumber,
+      trackCount: encodedFiles.length,
+      result: 'pass',
     })
   }
 }

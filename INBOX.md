@@ -639,3 +639,62 @@ R-1 / R-3 / R-7 are operator-facing UI changes — ship first, low risk.
 R-2 / R-9 are pipeline refactors — most leverage, more careful test.
 R-4 / R-5 / R-8 / R-10 require coordinated server-side endpoints in CompPortal — pair with CompPortal commits.
 R-6 needs design discussion (what's the "force advance" threshold? what does the freeze UX look like?).
+
+## From RemotionVideo / Build #9 #18 — 2026-05-06 19:45 EDT
+UDC logo loop shipped. Render: /mnt/firmament/REMOTION RENDERS/UDCLogoLoop-2026-05-06-1080p-vp9-alpha.webm
+Composition: UDCLogoLoop, 1920x1080@30fps, 6.0s seamless loop, treatment = breath (cosine 1.00→1.028→1.00) + diagonal gold shimmer sweep (2 passes/loop, masked to logo silhouette).
+Notes: VP9 webm w/ alpha via `alpha_mode=1` side-channel (same encoding the stinger uses, confirmed working in OBS/iframe). 13.2 MB, ~17.5 Mbps. Preview: `npm run preview` then pick "UDC — Logo Loop". Render script: `npm run render-udc-logo-loop` (port 4051). If operator wants a tweak (faster shimmer, dimmer breath, stronger gold) — easy parameter edits in `src/UDCLogoLoop.tsx`, no architecture changes needed.
+
+## From RemotionVideo / Build #9 #18 follow-up — 2026-05-06 20:02 EDT
+Second UDC logo variant shipped (companion to the gold-shimmer loop, both kept).
+Render: /mnt/firmament/REMOTION RENDERS/UDCLogoEntryWhite-2026-05-07-1080p-vp9-alpha.webm
+Composition: UDCLogoEntryWhite, 1920x1080@30fps, 17.0s = 2.0s graceful dancer-led entrance (buoyant float-up + soft scale + ≤4° pre-tilt resolving to plumb + glow bloom) followed by 15.0s perfectly-still hold.
+Asset: client-supplied white-on-alpha logo (from /tmp/udc-logo.png, copied to public/udc-logo-white.png).
+Notes: VP9 webm w/ alpha_mode=1 (4.4 MB, ~2 Mbps avg — low because 15s static, fine). Preview default paints a black backdrop so the white logo is visible (`previewBg: true` inputProp); render script overrides `previewBg=false` for true alpha. Pick "UDC — Logo Entry (white, 2s entrance + 15s hold)" in preview UI.
+
+## From RemotionVideo / Build #9 #18 (third variant) — 2026-05-06 20:22 EDT
+Perpetual broadcast bug variant shipped — multi-phase dancer-led choreography.
+Render: /mnt/firmament/REMOTION RENDERS/UDCLogoBug-2026-05-06-1080p-vp9-alpha.webm
+Composition: UDCLogoBug, 1920x1080@30fps, 19.0s seamless loop.
+Choreography: dancer enters tiny off-center → zooms huge to bug-center (heavy speed ramp, easeOutQuint) → jumps to TL home (easeInOutCubic) → wordmark pops in from the right with overshoot (easeOutBack) → 5.0s static hold → wordmark retracts (easeInBack) → dancer back to center → dancer zooms tiny + fades. Frame 0 == frame 570 → perfect head-to-tail loop.
+Asset: same client white-on-alpha logo, split into dancer-only + wordmark-only sprites via overflow:hidden + img offset (each sprite animates independently in x/y/scale/opacity).
+Notes: VP9 + alpha_mode=1 (12.3 MB, ~5.2 Mbps, all 570 frames). Bug is centered at (960, 540) at 720px wide on the 1920x1080 frame — OBS source transform handles final positioning/scale. Pick "UDC — Broadcast Bug (assemble + 5s hold + reverse, 19s loop)" in the preview UI. Render script: `npm run render-udc-logo-bug` (port 4053).
+All three UDC logo variants now coexist: UDCLogoLoop (gold shimmer 6s), UDCLogoEntryWhite (graceful 2s entrance + 15s hold), UDCLogoBug (full assemble/reverse 19s loop).
+
+## From CompPortal — Build #9 #11 endpoint shipped — 2026-05-06 22:55 EDT
+
+Endpoints live: POST/DELETE /api/plugin/chat/{id}/livestream-pin
+Backfill: GET /api/livestream/livestream-pinned?competitionId=X
+Player overlay: /livestream — `LivestreamPinOverlay` component inside the video wrapper
+Realtime channel: postgres_changes UPDATE on public.livestream_chat_messages (filtered by competition_id), channel name `livestream-pins:<competitionId>`. Table added to supabase_realtime publication.
+DB column: livestream_chat_messages.livestream_pinned_at (timestamptz NULL). Partial index `idx_livestream_chat_messages_livestream_pinned`.
+Cap: 10 active livestream pins per competition (independent of burn-into-video cap). POST returns 400 with `Livestream pin cap reached (10)` when full.
+Idempotency: pinning an already-pinned message returns 200 with `alreadyPinned: true` and the existing timestamp (no re-stamp). DELETE on an already-unpinned message returns `alreadyUnpinned: true`.
+Tenant scope: 404 (not 403) on cross-tenant; doesn't leak existence.
+Commit: 1fadb9ea on main. Vercel deploying.
+
+— CompPortal session
+
+## From CSController / Build #9 #9 — 2026-05-06 23:55 EDT
+
+Tablet button layout reorg shipped.
+
+- **APK (Drive):** https://drive.google.com/file/d/1B1bsWvruILJlgHdxTOaRW-JCB1WxLDbt/view (CSController-2026-05-06.apk, 9.2 MB, on shared APKs team drive)
+- **APK (SMB):** /mnt/firmament/CSController/CSController-2026-05-06.apk (existing CSController.apk left untouched)
+- **Build:** ./gradlew assembleDebug — clean, no warnings, 1m 53s
+
+### Layout changes (DisplayScreen.kt)
+- ButtonRow moved from bottom of screen to **top** of screen (above video) for thumb-reach during live shows
+- Dropped the **Lgo** overlay-toggle button to reclaim screen real estate (operator never used it)
+- Added **Trans** button in the slot vacated by Lgo — fires the existing `cycleTransition` verb (no CSE-side changes needed)
+- All other buttons (REC, Stream, Replay, L3, Cnt, Clk, NEXT) preserved, same handlers, same weights
+- InfoRow + AudioMetersRow + bottom-bezel spacer remain at the bottom of the screen (only the button row moved)
+
+### Cycle-transition verb used
+- `cycleTransition` — confirmed at `src/main/services/wsHub.ts:305`, accepted via the same `{type:'command', action:'cycleTransition'}` envelope WsController already builds. No element param.
+
+### Notes
+- No CSE-side modifications.
+- No git commit (per task constraints — user can commit when ready).
+- Operator should verify on the tablet on next install. If they want the L3/Cnt/Clk row to also grow for thumb-reach, that's a follow-up — task explicitly scoped to (a) move buttons up, (b) drop logo, (c) add cycle button.
+- Item #15 (ticker-edit / full-parity / program-preview) wasn't touched — would need a separate sweep to confirm what landed in CSController vs. CSE.

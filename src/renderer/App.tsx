@@ -13,7 +13,6 @@ import OrphanReview, { openOrphanReview } from './components/OrphanReview'
 import ClockSyncReminder from './components/ClockSyncReminder'
 import StartOfDayModal from './components/StartOfDayModal'
 import EndOfDayModal from './components/EndOfDayModal'
-import AudioAuditBanner from './components/AudioAuditBanner'
 import ReassignPopover from './components/ReassignPopover'
 import MoveAfterPopover from './components/MoveAfterPopover'
 import './styles/app.css'
@@ -1172,8 +1171,10 @@ export default function App(): React.ReactElement {
       <RecordingOverrunWarning />
       {/* Build #9 item #4: AutoToggleToast / ReconcileToast / StartupToast /
           ImportSummaryToast retired into EventLogPanel per operator decision
-          2026-05-05. Kept (interactive / modal-class): OffsetConfirmToast,
-          MissingPhotosToast, AudioAuditBanner (warn/error), DriveAlert. */}
+          2026-05-05. AudioAuditBanner retired 2026-05-07 — findings now flow
+          through events.emit('audio.audit.*') into EventLogPanel. Kept
+          (interactive / modal-class): OffsetConfirmToast, MissingPhotosToast,
+          DriveAlert. */}
       <ImportBusyBanner />
       <OffsetConfirmToast />
       <RerecordDecisionModal />
@@ -1183,7 +1184,6 @@ export default function App(): React.ReactElement {
       <ClockSyncReminder />
       <StartOfDayModal />
       <EndOfDayModal />
-      <AudioAuditBanner />
       <ReassignPopover />
       <MoveAfterPopover />
     </div>

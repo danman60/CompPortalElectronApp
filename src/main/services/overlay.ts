@@ -1284,6 +1284,13 @@ export function startServer(): void {
   // The iframe loads from http://localhost:9876/overlay so any <img src> must
   // also be http(s) or data:. Serve the configured logo file as a binary HTTP
   // response. Source priority: brand logo → legacy overlay logo url.
+  // 2026-05-07 (build9v): if the configured "logo" is actually a video file
+  // (mp4/webm/mov/m4v), serve a 1×1 transparent PNG instead of streaming the
+  // raw bytes. Legacy <img id="ltBrandImg" src="/brand-logo">, <img id="logoImg">
+  // etc. are <img> tags that can't render video; without this guard they show
+  // a broken-image icon. The actual video rendering happens via /element-asset
+  // and mountElementAsset which mounts a real <video>.
+  const TRANSPARENT_PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAUAAeImBZsAAAAASUVORK5CYII=', 'base64')
   app.get('/brand-logo', (_req, res) => {
     try {
       const settings = getSettings()
@@ -1295,6 +1302,15 @@ export function startServer(): void {
         return
       }
       const ext = path.extname(filePath).toLowerCase().slice(1)
+      // Video file in a brand-logo slot: return transparent pixel so <img>
+      // tags don't trip a broken-image icon. Real video rendering uses
+      // /element-asset + <video>.
+      if (ext === 'mp4' || ext === 'webm' || ext === 'mov' || ext === 'm4v') {
+        res.setHeader('Content-Type', 'image/png')
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+        res.send(TRANSPARENT_PIXEL)
+        return
+      }
       const mime = ext === 'png' ? 'image/png'
         : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
         : ext === 'svg' ? 'image/svg+xml'
@@ -3072,7 +3088,7 @@ function buildOverlayHTML(): string {
     <div class="counter-label" id="counterLabel" style="display:none"></div>
   </div>
 </div>
-<div class="logo" id="logo"><img id="logoImg" src="" alt="" /></div>
+<div class="logo" id="logo"><img id="logoImg" src="data:image/svg+xml;base64,PHN2Zy8+" alt="" /></div>
 <div class="clock" id="clock"><div class="clock-box"><div class="clock-time" id="clockTime"></div><div class="clock-date" id="clockDate"></div></div></div>
 
 <div id="ticker" class="ticker-bar">
@@ -3082,7 +3098,7 @@ function buildOverlayHTML(): string {
 <div class="lower-third" id="lt">
   <div class="lt-card">
     <div class="lt-top">
-      <div class="lt-brand-glyph empty" id="ltBrandGlyph"><img id="ltBrandImg" src="" alt="" /></div>
+      <div class="lt-brand-glyph empty" id="ltBrandGlyph"><img id="ltBrandImg" src="data:image/svg+xml;base64,PHN2Zy8+" alt="" /></div>
       <div class="lt-number" id="ltNumber"></div>
       <div class="lt-stack">
         <div class="lt-title" id="ltTitle"></div>
@@ -3100,7 +3116,7 @@ function buildOverlayHTML(): string {
   <div class="ss-vignette" id="ss-vignette"></div>
   <div class="ss-venue-id" id="ss-venue-id"></div>
   <div class="ss-section-badge" id="ss-section-badge"></div>
-  <div class="ss-logo" id="ss-logo"><div class="ss-logo-plate" id="ss-logo-plate"></div><div class="ss-logo-halo" id="ss-logo-halo"></div><div class="ss-logo-img-wrap"><img id="ss-logo-img" src="" alt="" /></div></div>
+  <div class="ss-logo" id="ss-logo"><div class="ss-logo-plate" id="ss-logo-plate"></div><div class="ss-logo-halo" id="ss-logo-halo"></div><div class="ss-logo-img-wrap"><img id="ss-logo-img" src="data:image/svg+xml;base64,PHN2Zy8+" alt="" /></div></div>
   <div class="ss-title" id="ss-title"></div>
   <div class="ss-accent-line" id="ss-accent"></div>
   <div class="ss-subtitle" id="ss-subtitle"></div>
@@ -3157,7 +3173,7 @@ function buildOverlayHTML(): string {
   <div class="fc-content">
     <div class="fc-header-row">
       <div class="fc-brand-lockup empty" id="fc-brand-lockup">
-        <img id="fc-brand-img" src="" alt="" />
+        <img id="fc-brand-img" src="data:image/svg+xml;base64,PHN2Zy8+" alt="" />
       </div>
       <div class="fc-header" id="fc-header">UP NEXT</div>
       <div class="fc-studio-logo empty" id="fc-studio-logo"></div>
@@ -3311,7 +3327,7 @@ function buildOverlayHTML(): string {
   // either a video tag (mp4/webm/mov/m4v with autoplay/loop/muted/playsinline)
   // or an img tag (png/jpg/svg/webp/gif/apng/avif). 'none' = clear container.
   function mountElementAsset(containerEl, key, assetUrl) {
-    if (!containerEl) return;
+    if (!containerEl) { console.log('[mountElementAsset]', key, 'no containerEl'); return; }
     if (!assetUrl) {
       // No override — leave whatever's already in the container intact (the
       // legacy /brand-logo img path keeps working unchanged).
@@ -3319,6 +3335,7 @@ function buildOverlayHTML(): string {
     }
     var lower = String(assetUrl).toLowerCase().split('?')[0].split('#')[0];
     var isVideo = /\\.(mp4|webm|mov|m4v)$/.test(lower);
+    console.log('[mountElementAsset]', key, 'assetUrl=' + assetUrl, 'isVideo=' + isVideo);
     var bust = 0;
     for (var i = 0; i < assetUrl.length; i++) { bust = ((bust << 5) - bust) + assetUrl.charCodeAt(i); bust |= 0; }
     var src = '/element-asset?key=' + encodeURIComponent(key) + '&v=' + Math.abs(bust);
@@ -3339,14 +3356,21 @@ function buildOverlayHTML(): string {
       node.setAttribute('muted', '');
       node.setAttribute('autoplay', '');
       node.setAttribute('loop', '');
-      node.style.maxWidth = '100%';
-      node.style.maxHeight = '100%';
-      node.style.objectFit = 'contain';
+      // Fill the container exactly so the VisualEditor bounding box matches
+      // the rendered area. object-fit:cover crops the asset to fill the box
+      // (vs contain which letterboxes inside, leaving empty space and making
+      // the bounding box larger than the visible asset). Operator resizes the
+      // box via the corner/edge handles to control aspect ratio.
+      node.style.width = '100%';
+      node.style.height = '100%';
+      node.style.objectFit = 'cover';
+      node.style.display = 'block';
     } else {
       node = document.createElement('img');
-      node.style.maxWidth = '100%';
-      node.style.maxHeight = '100%';
-      node.style.objectFit = 'contain';
+      node.style.width = '100%';
+      node.style.height = '100%';
+      node.style.objectFit = 'cover';
+      node.style.display = 'block';
     }
     node.dataset.assetSrc = src;
     node.src = src;
@@ -3410,13 +3434,18 @@ function buildOverlayHTML(): string {
     }
     const logoEl = document.getElementById('logo');
     const logoImg = document.getElementById('logoImg');
-    if (o.logo.visible && o.logo.url) {
+    if (o.logo.visible && (o.logo.url || o.logo.assetUrl)) {
       logoEl.classList.add('visible');
       // Chromium blocks file:// from http:// origin inside iframe preview. Serve
       // the logo via /brand-logo HTTP route (same pattern as ss-logo in r19 fix).
-      var logoBust = 0;
-      for (var i = 0; i < o.logo.url.length; i++) { logoBust = ((logoBust << 5) - logoBust) + o.logo.url.charCodeAt(i); logoBust |= 0; }
-      logoImg.src = '/brand-logo?v=' + Math.abs(logoBust);
+      // Only set logoImg.src when the legacy url path is configured. When
+      // assetUrl is set, mountElementAsset (below) replaces logoImg with a
+      // <video>/<img> for the asset override — leave that alone.
+      if (o.logo.url && logoImg) {
+        var logoBust = 0;
+        for (var i = 0; i < o.logo.url.length; i++) { logoBust = ((logoBust << 5) - logoBust) + o.logo.url.charCodeAt(i); logoBust |= 0; }
+        logoImg.src = '/brand-logo?v=' + Math.abs(logoBust);
+      }
     } else {
       logoEl.classList.remove('visible');
     }

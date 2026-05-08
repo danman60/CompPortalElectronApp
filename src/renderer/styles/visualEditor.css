@@ -215,7 +215,7 @@
 
 .ve-element.selected {
   outline: 2px solid #667eea;
-  outline-offset: 3px;
+  outline-offset: -1px;
   border-radius: 2px;
 }
 
@@ -268,7 +268,7 @@
 .ve-handle-right {
   width: 6px;
   height: 14px;
-  right: -8px;
+  right: 1px;
   top: 50%;
   transform: translateY(-50%);
   cursor: ew-resize;
@@ -277,7 +277,7 @@
 .ve-handle-bottom {
   width: 14px;
   height: 6px;
-  bottom: -8px;
+  bottom: 1px;
   left: 50%;
   transform: translateX(-50%);
   cursor: ns-resize;
@@ -286,8 +286,8 @@
 .ve-handle-bottom-right {
   width: 8px;
   height: 8px;
-  right: -8px;
-  bottom: -8px;
+  right: 1px;
+  bottom: 1px;
   cursor: nwse-resize;
   border-radius: 50%;
 }

@@ -150,19 +150,22 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
         const pos = { ...prev[drag.element] }
         const handle = drag.handle || ''
         if (handle.includes('right')) {
-          pos.width = Math.max(5, Math.min(100 - pos.x, (drag.startPos.width || 20) + dx))
+          // Allow oversize beyond canvas — operator wants partial off-screen
+          pos.width = Math.max(2, Math.min(200, (drag.startPos.width || 20) + dx))
         }
         if (handle.includes('bottom')) {
-          pos.height = Math.max(3, Math.min(100 - pos.y, (drag.startPos.height || 10) + dy))
+          pos.height = Math.max(2, Math.min(200, (drag.startPos.height || 10) + dy))
         }
         return { ...prev, [drag.element]: pos }
       })
       return
     }
 
-    // Move with snapping
-    let newX = Math.max(0, Math.min(95, drag.startPos.x + dx))
-    let newY = Math.max(0, Math.min(98, drag.startPos.y + dy))
+    // Move with snapping — clamps loosened to allow completely off-screen
+    // placement (operator request 2026-05-07). Range -100..+200 so a video
+    // logo can slide entirely off the canvas in any direction.
+    let newX = Math.max(-100, Math.min(200, drag.startPos.x + dx))
+    let newY = Math.max(-100, Math.min(200, drag.startPos.y + dy))
 
     const activeSnaps: SnapLine[] = []
     const snapX = findSnap(newX, SNAP_TARGETS)
@@ -219,16 +222,16 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
       const pos = { ...prev[selected] }
       switch (e.key) {
         case 'ArrowLeft':
-          pos.x = Math.max(0, pos.x - step)
+          pos.x = Math.max(-100, pos.x - step)
           break
         case 'ArrowRight':
-          pos.x = Math.min(95, pos.x + step)
+          pos.x = Math.min(200, pos.x + step)
           break
         case 'ArrowUp':
-          pos.y = Math.max(0, pos.y - step)
+          pos.y = Math.max(-100, pos.y - step)
           break
         case 'ArrowDown':
-          pos.y = Math.min(98, pos.y + step)
+          pos.y = Math.min(200, pos.y + step)
           break
         default:
           return prev
@@ -481,8 +484,20 @@ export function VisualEditor({ onClose }: { onClose: () => void }) {
               </div>
             )}
             <p className="ve-props-hint">
-              Arrows nudge. Shift+arrow = 2%. G = grid.
+              Arrows nudge. Shift+arrow = 2%. G = grid. Drag past edges allowed.
             </p>
+            <div style={{ display: 'flex', gap: 6, marginTop: 4, marginBottom: 8 }}>
+              <button
+                onClick={() => setLayout((prev) => ({
+                  ...prev,
+                  [selected]: { ...DEFAULT_LAYOUT[selected] },
+                }))}
+                title="Reset this element's position and size to default"
+                style={{ fontSize: 11, padding: '3px 10px' }}
+              >
+                Reset position
+              </button>
+            </div>
             <SelectedElementProperties elementKey={selected} />
           </div>
         )}
@@ -619,9 +634,11 @@ function SelectedElementProperties({ elementKey }: { elementKey: AnyElementKey }
     const result = await (window.api as any).settingsBrowseFile?.([
       { name: 'Image / Video', extensions: ['png','jpg','jpeg','svg','webp','gif','apng','avif','mp4','webm','mov','m4v'] },
     ])
-    if (!result || !result.length) return
-    const filePath = String(result[0])
-    pushAsset(filePath)
+    // settingsBrowseFile returns a single string path (or null on cancel),
+    // NOT an array. Previous code indexed result[0], which on a string gives
+    // the first CHARACTER ("D" for "D:\..."). Persist the full path.
+    if (typeof result !== 'string' || result.length === 0) return
+    pushAsset(result)
   }
 
   function savePreset(): void {

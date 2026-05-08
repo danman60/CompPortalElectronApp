@@ -25,7 +25,21 @@ const BUCKET_LABELS: Record<EventBucket, string> = {
   errors: 'Errors',
 }
 
-const VISIBLE_BUCKETS: EventBucket[] = ['imports', 'drives', 'encode', 'upload', 'audio', 'recording', 'chat', 'other', 'errors']
+const VISIBLE_BUCKETS: EventBucket[] = ['imports', 'drives', 'encode', 'upload', 'audio', 'other', 'errors']
+
+const HIDDEN_KINDS = new Set<string>([
+  'import.requested',
+  'import.match.summary',
+  'import.match.warning',
+  'recording.started',
+  'recording.stopped',
+  'encode.started',
+  'encode.completed',
+  'upload.started',
+  'upload.completed',
+  'chat.backfill.ok',
+  'chat.message.received',
+])
 
 interface RenderAPI {
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void
@@ -147,6 +161,27 @@ const FORMATTERS: Record<string, (data: Record<string, unknown>) => Formatted> =
   'audio.flatline.warning': (d) => ({
     label: 'Audio silence warning',
     summary: `${trunc(d.channel as string ?? 'aggregate')} silent ${num(d.silentMs)}ms`,
+  }),
+
+  'audio.audit.identicalTracks.warning': (d) => ({
+    label: 'Identical tracks detected',
+    summary: `R${d.entryNumber} · ${trunc(((d.pairs as string[] | undefined) ?? []).join(', '), 60)}`,
+  }),
+  'audio.audit.silence.warning': (d) => ({
+    label: 'Recording mostly silent',
+    summary: `R${d.entryNumber} · ${trunc(d.role as string)} ${(((d.silentFraction as number) ?? 0) * 100).toFixed(0)}% silent`,
+  }),
+  'audio.audit.lowLoudness.warning': (d) => ({
+    label: 'Low audio level',
+    summary: `R${d.entryNumber} · ${trunc(d.role as string)} mean ${((d.meanRmsDb as number) ?? 0).toFixed(1)} dBFS < ${d.thresholdDb} dBFS`,
+  }),
+  'audio.audit.lowBitrate.warning': (d) => ({
+    label: 'Broken audio stream',
+    summary: `R${d.entryNumber} · ${trunc(d.role as string)} ${num(d.kbps)} kbps < ${num(d.thresholdKbps)} kbps`,
+  }),
+  'audio.audit.summary': (d) => ({
+    label: 'Audio scan ✓',
+    summary: `R${d.entryNumber} · ${num(d.trackCount)} tracks captured, all distinct`,
   }),
 
   'queue.enqueued': (d) => ({
@@ -277,6 +312,7 @@ export default function EventLogPanel(): React.ReactElement {
         isError: kindIsError(e.kind),
       }))
       .filter((e) => {
+        if (HIDDEN_KINDS.has(e.kind)) return false
         if (dismissedIds.has(e.id)) return false
         if (e.isError && errorsOn) return true
         return activeBuckets.has(e.bucket)
