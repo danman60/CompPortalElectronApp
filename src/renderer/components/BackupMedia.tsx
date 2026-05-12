@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { IPC_CHANNELS, BackupProgress, BackupResult } from '../../shared/types'
+import { IPC_CHANNELS, BackupMode, BackupProgress, BackupResult } from '../../shared/types'
 
 declare global {
   interface Window {
     api: {
       backupBrowseTarget: () => Promise<string | null>
-      backupStart: (targetRoot: string) => Promise<BackupResult | { error: string }>
+      backupStart: (targetRoot: string, options?: { mode?: BackupMode }) => Promise<BackupResult | { error: string }>
       backupCancel: () => Promise<unknown>
       on: (channel: string, handler: (data: unknown) => void) => () => void
       [k: string]: unknown
@@ -33,6 +33,7 @@ function formatEta(sec: number): string {
 export default function BackupMedia(): React.ReactElement {
   const [target, setTarget] = useState('')
   const [running, setRunning] = useState(false)
+  const [mode, setMode] = useState<BackupMode>('competition')
   const [progress, setProgress] = useState<BackupProgress | null>(null)
   const [result, setResult] = useState<BackupResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -61,7 +62,7 @@ export default function BackupMedia(): React.ReactElement {
     setResult(null)
     setProgress(null)
     setRunning(true)
-    const res = await window.api.backupStart(target)
+    const res = await window.api.backupStart(target, { mode })
     if (res && 'error' in res) {
       setError((res as { error: string }).error)
       setRunning(false)
@@ -81,9 +82,36 @@ export default function BackupMedia(): React.ReactElement {
     <div className="settings-section">
       <div className="settings-section-title">Backup Media</div>
       <p className="section-desc">
-        Copy everything under the recording output folder and tether photo folder to an external drive.
+        Copy the current competition folder by default, then verify source and destination counts and bytes.
         Skip identical files (size + mtime match) so you can resume after a cancel. Blocked during active recording.
       </p>
+
+      <div className="field">
+        <label>Scope</label>
+        <div className="backup-mode-row">
+          <label className="backup-mode-option">
+            <input
+              type="radio"
+              checked={mode === 'competition'}
+              onChange={() => setMode('competition')}
+              disabled={running}
+            />
+            <span>Current competition</span>
+          </label>
+          <label className="backup-mode-option">
+            <input
+              type="radio"
+              checked={mode === 'all'}
+              onChange={() => setMode('all')}
+              disabled={running}
+            />
+            <span>All configured media roots</span>
+          </label>
+        </div>
+        <span className="hint">
+          Current competition creates <code>&lt;destination&gt;/&lt;competition name&gt;/</code>. All roots creates a dated CompSync backup folder.
+        </span>
+      </div>
 
       <div className="field">
         <label>Destination</label>
@@ -101,7 +129,7 @@ export default function BackupMedia(): React.ReactElement {
           </button>
         </div>
         <span className="hint">
-          A dated subfolder will be created: <code>&lt;destination&gt;/CompSync-Backup-&lt;competition&gt;-&lt;YYYY-MM-DD&gt;/</code>
+          A manifest is written under <code>.compsync-backup/</code> after verification.
         </span>
       </div>
 
@@ -137,13 +165,47 @@ export default function BackupMedia(): React.ReactElement {
               ? 'Cancelled'
               : result.failed.length > 0
                 ? 'Completed with errors'
-                : 'Backup complete'}
+                : result.verification.verified
+                  ? 'Backup verified'
+                  : 'Backup copied but verification failed'}
           </div>
           <div className="backup-result-meta">
             {result.succeeded} copied · {result.skipped} skipped · {result.failed.length} failed ·{' '}
             {formatBytes(result.totalBytes)} · {Math.round(result.elapsedSec)}s
           </div>
+          <div className="backup-result-meta">
+            Verify: {result.verification.sourceFiles} source files / {formatBytes(result.verification.sourceBytes)} ·{' '}
+            {result.verification.destinationFiles} destination files / {formatBytes(result.verification.destinationBytes)}
+          </div>
           <div className="backup-result-path">{result.targetDir}</div>
+          {result.verification.manifestPath && (
+            <div className="backup-result-path">{result.verification.manifestPath}</div>
+          )}
+          {!result.verification.verified && !result.cancelled && (
+            <details className="backup-failed" open>
+              <summary>Verification issues</summary>
+              <ul>
+                {result.verification.missing.slice(0, 25).map((f, i) => (
+                  <li key={`missing-${i}`}>
+                    <span className="backup-failed-path">{f.path}</span>
+                    <span className="backup-failed-err">{f.error}</span>
+                  </li>
+                ))}
+                {result.verification.sizeMismatched.slice(0, 25).map((f, i) => (
+                  <li key={`size-${i}`}>
+                    <span className="backup-failed-path">{f.path}</span>
+                    <span className="backup-failed-err">{f.error}</span>
+                  </li>
+                ))}
+                {result.verification.extraFiles.slice(0, 25).map((f, i) => (
+                  <li key={`extra-${i}`}>
+                    <span className="backup-failed-path">{f}</span>
+                    <span className="backup-failed-err">extra file in destination</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {result.failed.length > 0 && (
             <details className="backup-failed">
               <summary>Failed files ({result.failed.length})</summary>

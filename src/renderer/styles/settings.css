@@ -321,6 +321,25 @@
 }
 
 /* ── Backup Media ── */
+.backup-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.backup-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  font-size: 12px;
+  color: #d8d8ee;
+}
+
+.backup-mode-option input {
+  margin: 0;
+}
+
 .backup-actions {
   margin-top: 12px;
   display: flex;

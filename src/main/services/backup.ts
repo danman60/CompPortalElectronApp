@@ -2,12 +2,13 @@ import fs from 'fs'
 import path from 'path'
 import { pipeline } from 'stream/promises'
 import { PassThrough } from 'stream'
-import type { BackupProgress, BackupResult, BackupFailure } from '../../shared/types'
+import type { BackupMode, BackupProgress, BackupResult, BackupFailure, BackupStartOptions } from '../../shared/types'
 import { getSettings } from './settings'
 import { getCompetition } from './state'
 import { logger } from '../logger'
 
 interface FileEntry { src: string; rel: string; size: number; mtimeMs: number }
+interface SourceRoot { path: string; label: string }
 
 let running = false
 let cancelFlag = false
@@ -29,7 +30,7 @@ export function setProgressListener(cb: (p: BackupProgress) => void): void {
   onProgress = cb
 }
 
-async function walk(root: string, out: FileEntry[], rootLabel: string): Promise<void> {
+async function walk(root: string, out: FileEntry[], rootLabel: string, baseRoot = root, skipDirs = new Set<string>()): Promise<void> {
   let entries: fs.Dirent[]
   try {
     entries = await fs.promises.readdir(root, { withFileTypes: true })
@@ -40,13 +41,15 @@ async function walk(root: string, out: FileEntry[], rootLabel: string): Promise<
   for (const e of entries) {
     const abs = path.join(root, e.name)
     if (e.isDirectory()) {
-      await walk(abs, out, rootLabel)
+      if (root === baseRoot && skipDirs.has(e.name)) continue
+      await walk(abs, out, rootLabel, baseRoot, skipDirs)
     } else if (e.isFile()) {
       try {
         const st = await fs.promises.stat(abs)
+        const relPath = path.relative(baseRoot, abs)
         out.push({
           src: abs,
-          rel: path.join(rootLabel, path.relative(root, abs)),
+          rel: rootLabel ? path.join(rootLabel, relPath) : relPath,
           size: st.size,
           mtimeMs: st.mtimeMs,
         })
@@ -67,6 +70,17 @@ function todayStamp(): string {
   return `${y}-${m}-${day}`
 }
 
+function timestampForFile(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  const s = String(d.getSeconds()).padStart(2, '0')
+  return `${y}${m}${day}-${h}${min}${s}`
+}
+
 async function getFreeBytes(dir: string): Promise<number> {
   try {
     const probe = process.platform === 'win32' && /^[A-Za-z]:/.test(dir) ? dir.slice(0, 3) : dir
@@ -77,36 +91,44 @@ async function getFreeBytes(dir: string): Promise<number> {
   }
 }
 
-export async function startBackup(targetRoot: string): Promise<BackupResult> {
+export async function startBackup(targetRoot: string, options: BackupStartOptions = {}): Promise<BackupResult> {
   if (running) throw new Error('Backup already running')
   running = true
   cancelFlag = false
   const startTime = Date.now()
+  const mode: BackupMode = options.mode === 'all' ? 'all' : 'competition'
 
   const result: BackupResult = {
     targetDir: '',
+    mode,
     succeeded: 0,
     skipped: 0,
     failed: [],
     totalBytes: 0,
     elapsedSec: 0,
     cancelled: false,
+    verification: {
+      verified: false,
+      countsAndBytesMatch: false,
+      sourceFiles: 0,
+      sourceBytes: 0,
+      destinationFiles: 0,
+      destinationBytes: 0,
+      missing: [],
+      sizeMismatched: [],
+      extraFiles: [],
+    },
   }
 
   try {
     const settings = getSettings()
-    const srcRoots: Array<{ path: string; label: string }> = []
-    if (settings.fileNaming?.outputDirectory) {
-      srcRoots.push({ path: settings.fileNaming.outputDirectory, label: 'recordings' })
-    }
-    if (settings.tether?.autoWatchFolder) {
-      srcRoots.push({ path: settings.tether.autoWatchFolder, label: 'photos' })
-    }
-    if (srcRoots.length === 0) throw new Error('No source folders configured (recording output + tether)')
-
     const comp = getCompetition()
     const compName = sanitizeFolderName(comp?.name || 'CompSync')
-    const targetDir = path.join(targetRoot, `CompSync-Backup-${compName}-${todayStamp()}`)
+    const srcRoots = resolveSourceRoots(mode, settings.fileNaming?.outputDirectory || '', settings.tether?.autoWatchFolder || '', compName)
+    if (srcRoots.length === 0) throw new Error('No source folders configured (recording output + tether)')
+    const targetDir = mode === 'competition'
+      ? path.join(targetRoot, compName)
+      : path.join(targetRoot, `CompSync-Backup-${compName}-${todayStamp()}`)
     result.targetDir = targetDir
 
     // --- Scan phase ---
@@ -127,6 +149,7 @@ export async function startBackup(targetRoot: string): Promise<BackupResult> {
 
     const totalBytes = allFiles.reduce((s, f) => s + f.size, 0)
     const totalFiles = allFiles.length
+    if (totalFiles === 0) throw new Error('No files found in selected backup source folders')
 
     if (cancelFlag) {
       result.cancelled = true
@@ -194,6 +217,27 @@ export async function startBackup(targetRoot: string): Promise<BackupResult> {
 
     result.totalBytes = totalBytes
     result.elapsedSec = (Date.now() - startTime) / 1000
+    if (!result.cancelled) {
+      emitProgress({
+        phase: 'verifying',
+        bytesDone: totalBytes,
+        filesDone,
+        totalBytes,
+        totalFiles,
+        currentFile: '',
+        bytesPerSec: Math.round(bytesPerSec),
+        etaSec: 0,
+      }, true)
+      result.verification = await verifyBackup(allFiles, targetDir)
+      result.verification.manifestPath = await writeManifest(targetDir, {
+        mode,
+        targetDir,
+        sourceRoots: srcRoots,
+        result,
+        startedAt: new Date(startTime).toISOString(),
+        finishedAt: new Date().toISOString(),
+      })
+    }
     return result
 
     function maybeEmit(force = false, current?: string): void {
@@ -223,6 +267,66 @@ export async function startBackup(targetRoot: string): Promise<BackupResult> {
     running = false
     cancelFlag = false
   }
+}
+
+function resolveSourceRoots(mode: BackupMode, outputDirectory: string, tetherFolder: string, compName: string): SourceRoot[] {
+  if (mode === 'competition') {
+    if (!outputDirectory) return []
+    return [{ path: path.join(outputDirectory, compName), label: '' }]
+  }
+
+  const srcRoots: SourceRoot[] = []
+  if (outputDirectory) srcRoots.push({ path: outputDirectory, label: 'recordings' })
+  if (tetherFolder) srcRoots.push({ path: tetherFolder, label: 'photos' })
+  return srcRoots
+}
+
+async function verifyBackup(sourceFiles: FileEntry[], targetDir: string): Promise<BackupResult['verification']> {
+  const destinationFiles: FileEntry[] = []
+  if (fs.existsSync(targetDir)) {
+    await walk(targetDir, destinationFiles, '', targetDir, new Set(['.compsync-backup']))
+  }
+  const destinationByRel = new Map(destinationFiles.map((f) => [f.rel, f]))
+  const sourceByRel = new Map(sourceFiles.map((f) => [f.rel, f]))
+  const missing: BackupFailure[] = []
+  const sizeMismatched: BackupFailure[] = []
+
+  for (const f of sourceFiles) {
+    const dest = destinationByRel.get(f.rel)
+    if (!dest) {
+      missing.push({ path: f.rel, error: 'missing from destination' })
+    } else if (dest.size !== f.size) {
+      sizeMismatched.push({ path: f.rel, error: `source=${f.size} destination=${dest.size}` })
+    }
+  }
+
+  const extraFiles = destinationFiles
+    .filter((f) => !sourceByRel.has(f.rel))
+    .map((f) => f.rel)
+    .slice(0, 50)
+  const sourceBytes = sourceFiles.reduce((sum, f) => sum + f.size, 0)
+  const destinationBytes = destinationFiles.reduce((sum, f) => sum + f.size, 0)
+  const countsAndBytesMatch = sourceFiles.length === destinationFiles.length && sourceBytes === destinationBytes
+
+  return {
+    verified: missing.length === 0 && sizeMismatched.length === 0,
+    countsAndBytesMatch,
+    sourceFiles: sourceFiles.length,
+    sourceBytes,
+    destinationFiles: destinationFiles.length,
+    destinationBytes,
+    missing,
+    sizeMismatched,
+    extraFiles,
+  }
+}
+
+async function writeManifest(targetDir: string, payload: unknown): Promise<string> {
+  const manifestDir = path.join(targetDir, '.compsync-backup')
+  await fs.promises.mkdir(manifestDir, { recursive: true })
+  const manifestPath = path.join(manifestDir, `backup-summary-${timestampForFile()}.json`)
+  await fs.promises.writeFile(manifestPath, JSON.stringify(payload, null, 2), 'utf-8')
+  return manifestPath
 }
 
 function emitProgress(p: BackupProgress, force = false): void {

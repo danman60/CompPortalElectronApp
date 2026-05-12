@@ -259,7 +259,8 @@ const api = {
 
   // Media backup
   backupBrowseTarget: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_BROWSE_TARGET),
-  backupStart: (targetRoot: string) => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_START, targetRoot),
+  backupStart: (targetRoot: string, options?: { mode?: 'competition' | 'all' }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BACKUP_START, targetRoot, options),
   backupCancel: () => ipcRenderer.invoke(IPC_CHANNELS.BACKUP_CANCEL),
 
   // Stream Deck plugin

@@ -1092,8 +1092,14 @@ export interface DayChecklistShowEvent {
   source: 'auto' | 'manual'
 }
 
+export type BackupMode = 'competition' | 'all'
+
+export interface BackupStartOptions {
+  mode?: BackupMode
+}
+
 export interface BackupProgress {
-  phase: 'scanning' | 'copying'
+  phase: 'scanning' | 'copying' | 'verifying'
   bytesDone: number
   filesDone: number
   totalBytes: number
@@ -1110,12 +1116,25 @@ export interface BackupFailure {
 
 export interface BackupResult {
   targetDir: string
+  mode: BackupMode
   succeeded: number
   skipped: number
   failed: BackupFailure[]
   totalBytes: number
   elapsedSec: number
   cancelled: boolean
+  verification: {
+    verified: boolean
+    countsAndBytesMatch: boolean
+    sourceFiles: number
+    sourceBytes: number
+    destinationFiles: number
+    destinationBytes: number
+    missing: BackupFailure[]
+    sizeMismatched: BackupFailure[]
+    extraFiles: string[]
+    manifestPath?: string
+  }
 }
 
 // --- FFmpeg ---

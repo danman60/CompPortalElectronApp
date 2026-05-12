@@ -468,12 +468,13 @@ export function registerAllHandlers(): void {
     return result.filePaths[0]
   })
 
-  safeHandle(IPC_CHANNELS.BACKUP_START, async (targetRoot: unknown) => {
+  safeHandle(IPC_CHANNELS.BACKUP_START, async (targetRoot: unknown, options?: unknown) => {
     logIPC(IPC_CHANNELS.BACKUP_START, String(targetRoot))
     if (typeof targetRoot !== 'string' || !targetRoot) return { error: 'No target folder' }
     if (obs.getState().isRecording) return { error: 'Recording is active — stop recording first' }
     if (backup.isBackupRunning()) return { error: 'Backup already running' }
-    const result = await backup.startBackup(targetRoot)
+    const mode = options && typeof options === 'object' && (options as { mode?: unknown }).mode === 'all' ? 'all' : 'competition'
+    const result = await backup.startBackup(targetRoot, { mode })
     sendToRenderer(IPC_CHANNELS.BACKUP_DONE, result)
     return result
   })

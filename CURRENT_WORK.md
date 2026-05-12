@@ -1,6 +1,10 @@
 # Current Work — CompSyncElectronApp
 
-**Status: 2026-05-07 ~14:51 EDT. v2.8.0 (build9x) LIVE on DART (132,489,458 bytes, swapped 14:50 EDT). Operator was running Burlington comp during build9o → build9x iterative session.**
+**Status: 2026-05-12 01:37 EDT. Burlington cryo archive transfer DONE under pipeline task `task-1778550068006-c106` / `archive-udc-burlington-2026-dart-to-cryo`. Started 2026-05-11 21:46:23 EDT, finished 2026-05-12 01:32:22 EDT. Final summary `/mnt/firmament/CryoStorage/_transfer_logs/UDC_Burlington_2026_summary_20260511-214623.json` reports source_after = destination_after = 32,809 files / 436,868,649,223 bytes, `verified_counts_and_bytes=true`, `source_deleted=false`. Destination is `/mnt/firmament/CryoStorage/UDC Burlington 2026`; rclone log is `/mnt/firmament/CryoStorage/_transfer_logs/UDC_Burlington_2026_rclone_20260511-214623.log`. Duplicate pending task `task-1778550240857-ff42` remains disabled.**
+
+**Status: 2026-05-12. Backup Media feature hardened in code. `src/main/services/backup.ts` now defaults to current-competition backup scope, preserves nested folder structure during recursive copy, verifies source/destination file presence and byte counts, and writes `.compsync-backup/backup-summary-*.json` manifest after verification. `BackupMedia.tsx` exposes Current competition vs All configured media roots and shows verified vs copied-but-unverified results. `npm run build` passed.**
+
+**Status: 2026-05-11 12:22 EDT. Share-code input diagnostic asar swapped live on DART after operator reported empty-box typing still fails. New `app.asar` is 132,491,045 bytes, LastWriteTime 2026-05-11 12:22:51 EDT; backup of the previous share-code patch is `app.asar.bak.20260511-sharecode-input-pre-diagnostic` (132,490,210 bytes). 4 CompSync Media processes responding.**
 
 Branch: `feat/ui-redesign-pass1` — uncommitted work spans Activity panel migration + Visual Editor sizing/off-screen + webm logo support.
 
@@ -8,6 +12,11 @@ Branch: `feat/ui-redesign-pass1` — uncommitted work spans Activity panel migra
 Iterated build9o → build9x on top of v2.8.0. Major work: integrated post-record audio audit into the unified Activity (Event Log) panel, fixed broken-link icon for video/webm logo overrides via `/element-asset` route, fixed off-by-one in `browseAsset()` IPC return type, and unblocked Visual Editor element placement at canvas corners + off-screen.
 
 ## What Changed (uncommitted on `feat/ui-redesign-pass1`)
+
+### Share Code Input Focus Fix
+- `src/renderer/components/LoadCompetition.tsx` — stopped mouse/click events inside the Load popover from bubbling to outside-close handlers, so typing in the Live share-code box is not interrupted. First fix failed operator's empty-box path.
+- Diagnostic now live: share-code input logs `[share-code-input]` pointer/mouse/focus/key/change events with value lengths only. Waiting for operator to reproduce once, then read `C:\Users\User\AppData\Roaming\compsync-media\logs\main.log`.
+- Verification before diagnostic: `npm run build` passed; disposable Electron/xvfb run dismissed startup overlays, opened Load, clicked the input, typed `abc-123`, and confirmed input value `ABC-123` with active element `INPUT`. Packaged with `npx electron-builder --win --dir`, staged to DART, swapped live, and verified 4 responding processes.
 
 ### Activity (Event Log) Panel
 - `src/renderer/components/EventLogPanel.tsx` — added `HIDDEN_KINDS` set: 11 noisy event kinds filtered (`import.requested`, `import.match.summary`, `import.match.warning`, `recording.started`, `recording.stopped`, `encode.started`, `encode.completed`, `upload.started`, `upload.completed`, `chat.backfill.ok`, `chat.message.received`). Added 5 audio.audit.* formatters.
