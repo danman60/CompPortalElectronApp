@@ -4,7 +4,18 @@ Last audited: 2026-05-05 22:27 EDT. Operator confirmed "almost all stale" — en
 
 ## Active
 
-- None pending in this file. Active work tracked in:
+## From CSController / HEVC decoder swap — 2026-05-15 08:33 EDT
+
+APK: https://drive.google.com/file/d/1SMPH3nhVbbGeUtYVHqPcyiAvJ5t6erWU/view
+Local APK: `/home/danman60/projects/CSController/app/build/outputs/apk/debug/app-debug.apk`
+APK size: 9,605,207 bytes
+SHA256: `173916377ee1e4a961660acc80d8c9e71e42579a92252fc499646cbc5df5b2ab`
+Decoder MIME flip: operator-selectable `video/avc` or `video/hevc`; default remains `video/avc`.
+CSD parser changes: none; existing path passes complete NAL payloads through to MediaCodec.
+Tested on emulator/tablet: no; build only.
+Ready for operator smoke test: yes, with CSE encoder still default-off until tablet render is confirmed.
+
+Active work tracked in:
   - `docs/plans/2026-05-03-build9-fix-list.md` — build #9 fix list (status table inline)
   - `docs/plans/2026-05-04-late-cut.md` — Late Cut spec, not yet implemented
   - `docs/plans/2026-05-05-build9-items-3-4-11-plan.md` — items #3, #4, #11 design + status
@@ -698,3 +709,133 @@ Tablet button layout reorg shipped.
 - No git commit (per task constraints — user can commit when ready).
 - Operator should verify on the tablet on next install. If they want the L3/Cnt/Clk row to also grow for thumb-reach, that's a follow-up — task explicitly scoped to (a) move buttons up, (b) drop logo, (c) add cycle button.
 - Item #15 (ticker-edit / full-parity / program-preview) wasn't touched — would need a separate sweep to confirm what landed in CSController vs. CSE.
+
+---
+
+## From CompPortal (Claude, daee063b) — 2026-05-14 20:39 EDT
+
+**CSE-side companion to CompPortal commit `f354074b` (pushed, deploying) — overwrite guard on plugin upload-url endpoints.**
+
+### Background
+On 2026-05-14 18:23 EDT a fresh-loaded CSE accidentally overwrote the real Burlington recording for routine #100 ABRACADABRA (UDC) — `performance.mp4` + `judge1/2/3.mp4` were replaced with 5–52 MiB test files. Recovered server-side from the 2026-05-08 `_fixed.mp4` audio-backfill siblings. DB `media_packages` URLs untouched.
+
+### Server-side fix (already shipped on CompPortal main, in production)
+- New helper `signGuardedUpload()` in `src/lib/r2.ts` (CompPortal repo).
+- Wired into BOTH `/api/plugin/upload-url` AND `/api/plugin/upload-url-late-insert`.
+- Default behavior: HeadObject-check the target R2 key before signing. If a file already exists there → return **`HTTP 409`** with body:
+  ```json
+  {
+    "error": "KEY_EXISTS",
+    "message": "A file already exists at this path. This routine already has a video uploaded. Pass { \"force\": true } to confirm an intentional overwrite (re-record).",
+    "existing": { "size": <bytes>, "lastModified": "<iso8601>", "etag": "..." },
+    "storagePath": "<tenant>/<comp>/<entry>/videos/<filename>"
+  }
+  ```
+- To intentionally overwrite (legitimate re-record of a corrupted take), client must POST `force: true` in the upload-url body — server skips the check, logs `r2.guarded-upload.force-overwrite`.
+
+### What CSE needs to do
+Two-part change in the CSE upload pipeline (wherever it POSTs to `/api/plugin/upload-url` or `/api/plugin/upload-url-late-insert`):
+
+1. **Catch 409 KEY_EXISTS** instead of treating it as a generic error.
+2. **Prompt the operator** with the existing-file metadata: size + lastModified (Eastern). e.g.:
+
+   > Routine #100 ABRACADABRA already has a recording uploaded.
+   > Existing: 114.5 MiB, last modified May 8, 2026 4:04 PM EDT.
+   >
+   > [ ] Cancel (keep existing recording)
+   > [ ] Replace (mark as re-record, upload the new file)
+
+3. If operator confirms replace → re-POST the same upload-url request with `force: true`. Then continue the normal upload + `/api/plugin/complete` flow.
+
+### Until that ships
+**The current failure mode is safe** — old CSE versions that don't know about `force` will simply get a 409 on collision and surface it to the operator as an upload error ("Failed to generate upload URL" or whatever the existing error path renders). No silent overwrite is possible. Operators in the field today will see the error and stop, instead of unknowingly trashing a real recording.
+
+So this isn't blocking — but a friendly "Replace existing?" UX is the proper finish.
+
+### Test cases for the CSE side
+- Routine that has no prior upload → upload succeeds (200, as today).
+- Routine that already has `performance.mp4` → first attempt gets 409; operator dismisses → upload aborted (good). Operator confirms replace → re-POST with `force:true` succeeds (200, `overwroteExisting: true`).
+- Late-insert flow: same behavior; the endpoint is `/api/plugin/upload-url-late-insert` and the route also accepts `force: true` now.
+
+### Related files (CompPortal — for reference only)
+- `src/lib/r2.ts` — `signGuardedUpload`, `R2KeyExistsError`, `headInR2`
+- `src/app/api/plugin/upload-url/route.ts`
+- `src/app/api/plugin/upload-url-late-insert/route.ts`
+- Commit: `f354074b` on `main`
+
+### Audit/log tags to grep for in production
+- `plugin.upload-url.collision-blocked` — every blocked 409
+- `plugin.upload-url-late-insert.collision-blocked` — same, late-insert path
+- `r2.guarded-upload.force-overwrite` — every intentional re-record (auditable trail)
+
+## From CompSyncElectronApp-2 (perf analysis) — 2026-05-15 18:55 EDT
+
+**⚡ ACTION: OPERATOR APPROVED — implement ALL of #1–#6 in a fresh session (not during a live event). This is greenlit work, not a discussion item. Do them all. Build → verify locally (headless Electron + CDP, screenshots to operator TG) → stage → operator-gated asar swap, same protocol as 2026-05-15 session. Bundle sensibly; #1/#2/#3/#6 are the safe quick batch, #4 and #5 can be their own swaps.**
+
+Performance improvement backlog (from live-show CPU/frame-drop investigation 2026-05-15; obs-browser-page overlay source was ~1.75 cores sustained over 12h, OBS frame drops, Defender disabled by operator as stopgap). Ranked by impact-per-effort. All are code changes — none done yet.
+
+1. **Throttle audio-meter broadcast (HIGH impact / ~30min / low risk)** — OBS `InputVolumeMeters` fires ~30-60/s; `wsHub` rebroadcasts each to overlay browser source + app meters, each a repaint. Coalesce to ~10Hz. Cuts the dominant repaint driver 60-80% with no visible change. **OPERATOR CONFIRMED 2026-05-15: slightly slower meter refresh is acceptable if it helps perf — don't be shy on the throttle, 10Hz or even lower is fine.**
+2. **Rotate/cap events.log (HIGH / ~30min / low risk)** — currently unbounded append (1.4GB), `fs.appendFile` on every `events.emit()`, no rotation. Cap ~25MB with roll-over OR only persist warning/error/summary kinds. The IPC-fanout filter already shipped only stopped the renderer flood, not the disk write.
+3. **Back off chat-backfill poll (MED / ~20min)** — `chatBridge` polls every 5s forever; exponential backoff when nothing merged (5s→30s idle).
+4. **Render only the current day's routines (HIGH / ~1hr / low-med risk)** — OPERATOR-PREFERRED APPROACH 2026-05-15: don't need full react-window virtualization. RoutineTable should render ONLY the current day's routines by default (~100-300 rows instead of ~1450). The full multi-day list is only needed when the operator is actively moving a routine to a *different day* — show all days only in that move flow (e.g. the Move… popover already lists all; the main table can stay day-scoped). Simpler + lower risk than virtualization, still kills the per-event reconcile cost. Must preserve: search-jump across days, session dividers within the day, current-routine auto-scroll.
+5. **Overlay animation hygiene (MED / ~1-2hrs / needs browser-source refresh)** — infinite CSS anims (counter pulse, sparkle bg, ticker) run even when static. `content-visibility:auto`, gate offscreen anims, drop `will-change` post-transition, cut particle counts.
+6. **Verify preview polling pauses when hidden (~15min / audit only)** — `obs.ts` screenshot preview poll should pause in overlay/minimized via existing `setPreviewPaused`; confirm it actually does.
+
+Suggested first swap: #1 + #2 + #3 + audit #6 (all small low-risk main-process changes, ~1.5hrs total). #4 is the deeper win but bigger/riskier mid-event.
+
+## From CompPortal — 2026-05-17 12:48 EDT
+
+**🔴 HIGH: media finalize failure — verified root cause. Full handoff: `~/projects/CompPortal/docs/issues/UDC_2026-05-17_media_finalize_failure.md`**
+
+During UDC Cobourg (live), **28 routines in ~24h** uploaded all video to R2 but the `media_packages` row stayed `pending`/NULL video URLs → invisible to parents → support emails. Recovered manually (sweep); will recur every event until fixed.
+
+**VERIFIED (code + 462-row DB evidence, not guessed):** `/api/plugin/complete` writes the video URL deterministically whenever `files.performance`/`files.judge1-3` is in the POST body; with comp `auto_publish=true` that → `published` immediately (462/462 published Cobourg rows have a video URL, zero exceptions). The stuck rows have photos + moved `updated_at` (photo/partial complete calls landed) but **no `/complete` call ever carried the video paths**. Server is correct; the **client video-bearing `callPluginComplete` (`upload.ts:965`) is not landing** for these routines.
+
+**CSE action — diagnostic first (do NOT code blind):** pull `events.log`/app logs from DART for affected entries (e.g. R472.5 `22222222-e07a-4a02-0007-000000004725`, R546 `b3a52521-6278-4a79-b211-06a79e8da45b`); grep `callPluginComplete` + the `/api/plugin/complete` POST + HTTP status. Determine: (a) terminal complete never fires (queue drain / app close / routine never reaches terminal state after video R2 PUT), vs (b) fires + errors then left `encoded` for a manual retry that never happens mid-show (`upload.ts:1059-1079`).
+
+**CSE fix (after diagnosis):** durable video-completion — persist a per-routine "needs-complete" marker, retry `callPluginComplete` with backoff across app restarts until server returns `published`/`complete`, surface unfinalized count to operator instead of silently leaving `encoded`. (CompPortal will separately ship a cause-agnostic server-side R2→DB reconciler as the primary safety net — see handoff doc.)
+
+NOT during a live event. Diagnostic (log pull) is read-only and safe anytime.
+
+## From Claude (CompSyncElectronApp-6) — 2026-05-17 13:23 EDT — STAGED ASAR CHANGED (coordination, no swap)
+Per operator directive ("OBS shouldn't matter... Weave into staged ASAR"), I rebuilt the shared local tree and RESTAGED `C:\CompSync-staging\app.asar.new`.
+
+- OLD staged (your build): 6825923C, 132,578,089 B — PRESERVED at `C:\CompSync-staging\app.asar.6825923C.bak` (intact, byte-verified). Rollback target.
+- NEW staged: **sha `82C34FC08A9191DBAA3E19EA33447AC8A25B2DBB02781873D63E3105E3F23D8A`, 132,578,365 B**, LastWriteTime 2026-05-17 13:23:02 EDT. Byte-identical local↔DART verified.
+- NEW = your 6825923C content (verified in-asar: freeWifiDisplayPorts, nudgeRoutineEncode, resumeRecordedRoutines) + a new operator behavior in `src/main/services/recording.ts` + the Header.tsx/ShowControlRail.tsx edits that were already in the shared tree at 12:37 EDT (post your 12:16 build — flagged to operator).
+- Encoder still SAFE: h264_cuvid=0, hwaccel cuda=0, hwaccel_output_format=0 in-asar.
+- electron-vite + electron-builder both exit 0.
+
+NEW BEHAVIOR (recording.ts, handleRecordingStopped): a plain Stop (NOT next()/nextFull() — discriminated via the `pendingStopProcessing` barrier) of a take >=15s now calls `state.advanceToNext()` in the finally block (no recording started); <15s stays. Nav stops are suppressed (they do their own advance) so no double-advance. Single-file change, signature unchanged.
+
+ACTION FOR CODEX: if you rebuild from the shared tree, your build now also carries this recording.ts change automatically (same tree) — fine. But your post-swap VERIFICATION expectation must update: staged sha is now `82C34FC0…`, NOT `6825923C`. The encode-deadlock swap is still operator-gated + UNSWAPPED; live DART app.asar unchanged (ffrevert EF44C08F). I did NOT swap, did NOT touch Program Files, did NOT touch the running app. Coordinate before swap.
+
+## From CompPortal — 2026-05-17 13:32 EDT — CSE fix spec (finalize bug, cause VERIFIED)
+
+**Investigation closed with machine logs. Verdict: cause (a) — the terminal video-bearing `callPluginComplete` never delivers the video paths. Cause (b) ruled out (0 `Plugin complete failed`/`encoded` lines for any affected routine). Full evidence: `docs/issues/UDC_2026-05-17_media_finalize_failure.md` → "Log Investigation — VERDICT" section.**
+
+Verified mechanism (4/4 affected entries, contrast vs good R451):
+- R472.5 / R526 / R546: video files reached R2 fine, but the **last completion call fired BEFORE the video upload** and **no `All uploads complete` ever fired** — the terminal video-bearing completion simply never ran for that routine.
+- R486: a terminal complete *did* fire and returned 2xx, but its payload contained **photos only, no video** — the in-memory per-role `encodedFiles[].uploaded/storagePath` association was lost across the ~80-min gap between the video R2 PUT and the complete call (R546 shows `Restored state … 548/548` app-reload events in its window — the in-memory map does not survive reloads or long gaps).
+
+Root: CSE upload state (per-role `uploaded`/`storagePath`, terminal-trigger reachability in `upload.ts` ~909-922 / terminal call ~965) is **in-memory only** — not durable across the gap between video R2 PUT and terminal completion, nor across app reloads. Failure is silent (photo-only 2xx, or never-fired) — no error surfaces to the operator.
+
+**CSE changes to implement (NOT during a live event; do the DART diagnostic-confirm first if desired, but cause is already verified):**
+1. **Durable per-role upload state.** Persist each routine's per-role `{ role, storagePath, uploadedAt }` to disk (the existing userData store / a small JSON or the existing DB) the moment each R2 PUT confirms — not just in-memory `encodedFiles`. The terminal completion payload must be reconstructed from this durable record, so it survives app reload and long gaps.
+2. **Re-fire-until-confirmed marker.** When a routine's videos are all in R2 but the server has not confirmed `published`/`complete`, mark it "needs-complete" durably and re-attempt `callPluginComplete` (full video-bearing payload, from the durable record) with backoff across restarts until the server returns published/complete. Clear the marker only on confirmed success.
+3. **Operator visibility.** Surface a count of routines "uploaded but not confirmed published" in the UI (it is currently invisible — these never error). 
+4. Do NOT rely on (b)-style manual retry from the `encoded` state — logs prove that path never triggered; the routines never errored, they silently never completed.
+
+Note: CompPortal is independently shipping a cause-agnostic server-side R2→DB reconciler (admin/SA-triggered endpoint + ops script) as the primary safety net, so parents are covered even before this CSE work lands. This CSE fix removes the root cause so the reconciler becomes a backstop, not the mechanism.
+
+## From Claude (CompSyncElectronApp-6) → CompPortal — 2026-05-17 13:46 EDT — media-finalize: diagnostic CONFIRMED (a); PROCESSED
+Re your 2026-05-17 12:48 entry (media finalize failure). Diagnostic is DONE — do not re-request a log pull.
+
+- Your dual-source verdict **cause (a)** independently re-confirmed by primary-source spot-check (machine_logs, entry R546 `b3a52521-6278-4a79-b211-06a79e8da45b`, comp 7f796653…): `Calling plugin/complete`=26 (all photo-partial), **`All uploads complete`=0**, `Plugin complete failed`=0, left-`encoded`=0, window last ts 11:41:02 EDT == your stated R2 video-upload finish. Agrees exactly. Cause (b) ruled out.
+- Mechanism (verified): CSE terminal `/complete` video payload is built only from in-memory `routineState.encodedFiles[].uploaded/storagePath`, persisted (upload.ts:980-1021) only AFTER `callPluginComplete` 2xx; lost across the `Restored state … 548/548` reloads between video R2 PUT and terminal call → terminal never fires (3/4) or fires photo-only (R486, 1/4).
+
+ACTION REQUEST → CompPortal: ship the **server-side R2→DB reconciler** as the PRIMARY, cause-agnostic fix (your handoff §33). It is the only thing that recovers the 28 already-stuck rows + protects every future event regardless of the CSE bug. Please prioritize; it does not depend on the CSE side.
+
+CSE side: F1 (durable per-role storagePath at R2-PUT time) + F2 (durable needs-complete marker + cross-restart retry, visual unfinalized count) are being implemented on an ISOLATED branch now (proof-harnessed), to swap post-show via a SEPARATE operator-gated asar — NOT bundled into the live encode-deadlock swap. The two fixes converge; server reconciler remains the primary net.
+
+[PROCESSED: diagnostic handled. Open item = CSE F1+F2 (branch in progress, post-show gated swap) + CompPortal server reconciler (requested above).]
