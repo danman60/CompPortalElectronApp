@@ -30,6 +30,14 @@ let livestreamPinnedMessages: LivestreamPinnedMessage[] = []
 let onLivestreamPinChange: (() => void) | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
 let pollTimer: NodeJS.Timeout | null = null
+// Backfill poll backoff: 5s while messages are still arriving, doubling up to
+// 30s when nothing merges. The fixed 5s setInterval ran forever even on idle
+// streams; combined with the realtime reconnect loop it produced 1.5GB of
+// zero-merge backfill traffic over a 12h show (2026-05-15).
+const POLL_MIN_MS = 5000
+const POLL_MAX_MS = 30000
+let pollDelayMs = POLL_MIN_MS
+let pollerRunning = false
 let reconnectDelayMs = 2000  // grows on repeated failures
 let consecutiveFailures = 0
 let started = false  // user has called startChatBridge — auto-reconnect on failures
@@ -108,41 +116,63 @@ function mergeMessage(msg: ChatMessage, notify = true): boolean {
   return true
 }
 
-async function backfillChatMessages(): Promise<void> {
+async function backfillChatMessages(): Promise<number> {
   const conn = getResolvedConnection()
-  if (!conn) return
+  if (!conn) return 0
   try {
     const response = await fetch(
       `${conn.apiBase}/api/livestream/chat?competitionId=${encodeURIComponent(conn.competitionId)}&limit=${MAX_MESSAGES}`,
     )
     if (!response.ok) {
       logger.app.warn(`Chat bridge: backfill HTTP ${response.status}`)
-      return
+      return 0
     }
     const body = await response.json() as { messages?: ChatMessage[] }
     let merged = 0
     for (const msg of body.messages || []) {
       if (mergeMessage(msg)) merged++
     }
-    events.emit('chat.backfill.ok', { merged, total: messages.length })
+    // Only emit when something actually changed. The 5s poll + realtime
+    // reconnect loop produced 1.5GB of zero-merge backfill events over 12h,
+    // saturating the renderer IPC channel and freezing the UI (2026-05-15).
+    if (merged > 0) {
+      events.emit('chat.backfill.ok', { merged, total: messages.length })
+    }
+    return merged
   } catch (err) {
     logger.app.warn('Chat bridge: backfill failed:', err instanceof Error ? err.message : err)
+    return 0
   }
+}
+
+function scheduleNextBackfill(): void {
+  if (!pollerRunning) return
+  pollTimer = setTimeout(async () => {
+    pollTimer = null
+    let merged = 0
+    try { merged = await backfillChatMessages() } catch { /* best-effort */ }
+    // Reset to the fast cadence the moment anything merges; otherwise back
+    // off geometrically toward the 30s idle ceiling.
+    pollDelayMs = merged > 0 ? POLL_MIN_MS : Math.min(pollDelayMs * 2, POLL_MAX_MS)
+    scheduleNextBackfill()
+  }, pollDelayMs)
 }
 
 function startBackfillPoller(): void {
-  if (pollTimer) return
+  if (pollerRunning) return
+  pollerRunning = true
+  pollDelayMs = POLL_MIN_MS
   void backfillChatMessages()
-  pollTimer = setInterval(() => {
-    void backfillChatMessages()
-  }, 5000)
+  scheduleNextBackfill()
 }
 
 function stopBackfillPoller(): void {
+  pollerRunning = false
   if (pollTimer) {
-    clearInterval(pollTimer)
+    clearTimeout(pollTimer)
     pollTimer = null
   }
+  pollDelayMs = POLL_MIN_MS
 }
 
 function connectChannel(): void {

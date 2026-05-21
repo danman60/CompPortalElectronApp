@@ -20,7 +20,17 @@ const EASING_OPTIONS: AnimationEasing[] = [
   'ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'bounce', 'elastic',
 ]
 
-export default function OverlayControls({ compact = false, noChat = false }: { compact?: boolean; noChat?: boolean }): React.ReactElement {
+export default function OverlayControls({
+  compact = false,
+  noChat = false,
+  hideFeatureCards = false,
+  hideAnimConfig = false,
+}: {
+  compact?: boolean
+  noChat?: boolean
+  hideFeatureCards?: boolean
+  hideAnimConfig?: boolean
+}): React.ReactElement {
   const currentRoutine = useStore((s) => s.currentRoutine)
   // Initial defaults are all FALSE so nothing shows as "active/green" until
   // the server state is actually confirmed via overlayGetState. Previous
@@ -150,63 +160,136 @@ export default function OverlayControls({ compact = false, noChat = false }: { c
         >
           {toggles.lowerThird ? 'Hide LT' : 'Fire LT'}
         </button>
-        <div className="oc-anim-config oc-anim-inline">
-          <div className="oc-anim-config-item">
-            <div className="oc-config-label">Anim</div>
-            <select
-              className="oc-select"
-              value={selectedAnim}
-              onChange={(e) => handleAnimSelect(e.target.value as OverlayAnimation)}
-            >
-              {ALL_ANIMATIONS.map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
+        {!hideAnimConfig && (
+          <div className="oc-anim-config oc-anim-inline">
+            <div className="oc-anim-config-item">
+              <div className="oc-config-label">Anim</div>
+              <select
+                className="oc-select"
+                value={selectedAnim}
+                onChange={(e) => handleAnimSelect(e.target.value as OverlayAnimation)}
+              >
+                {ALL_ANIMATIONS.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+            <div className="oc-anim-config-item narrow">
+              <div className="oc-config-label">Hide</div>
+              <input
+                type="number"
+                className="oc-input center"
+                min="0"
+                max="60"
+                value={autoHideSec}
+                onChange={(e) => handleAnimConfigChange('autoHideSeconds', parseInt(e.target.value) || 0)}
+                title="Seconds (0 = manual)"
+              />
+            </div>
+            <div className="oc-anim-config-item narrow">
+              <div className="oc-config-label">Dur</div>
+              <input
+                type="number"
+                className="oc-input center"
+                min="0.1"
+                max="6"
+                step="0.1"
+                value={animDuration}
+                onChange={(e) => handleAnimConfigChange('animationDuration', parseFloat(e.target.value) || 0.5)}
+              />
+            </div>
+            <div className="oc-anim-config-item">
+              <div className="oc-config-label">Ease</div>
+              <select
+                className="oc-select"
+                value={animEasing}
+                onChange={(e) => handleAnimConfigChange('animationEasing', e.target.value)}
+              >
+                {EASING_OPTIONS.map((e) => (
+                  <option key={e} value={e}>{e}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div className="oc-anim-config-item narrow">
-            <div className="oc-config-label">Hide</div>
-            <input
-              type="number"
-              className="oc-input center"
-              min="0"
-              max="60"
-              value={autoHideSec}
-              onChange={(e) => handleAnimConfigChange('autoHideSeconds', parseInt(e.target.value) || 0)}
-              title="Seconds (0 = manual)"
-            />
-          </div>
-          <div className="oc-anim-config-item narrow">
-            <div className="oc-config-label">Dur</div>
-            <input
-              type="number"
-              className="oc-input center"
-              min="0.1"
-              max="6"
-              step="0.1"
-              value={animDuration}
-              onChange={(e) => handleAnimConfigChange('animationDuration', parseFloat(e.target.value) || 0.5)}
-            />
-          </div>
-          <div className="oc-anim-config-item">
-            <div className="oc-config-label">Ease</div>
-            <select
-              className="oc-select"
-              value={animEasing}
-              onChange={(e) => handleAnimConfigChange('animationEasing', e.target.value)}
-            >
-              {EASING_OPTIONS.map((e) => (
-                <option key={e} value={e}>{e}</option>
-              ))}
-            </select>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* === Graphics — Feature Card (UP NEXT / THAT WAS) === */}
-      <GraphicsSection currentRoutineExists={!!currentRoutine} />
+      {!hideFeatureCards && <GraphicsSection currentRoutineExists={!!currentRoutine} />}
 
       {/* === Inline Chat Strip — latest 3, click-to-pin, scrollable history === */}
       {!noChat && <InlineChatStrip />}
+    </div>
+  )
+}
+
+/**
+ * Standalone lower-third animation config bar — extracted from OverlayControls
+ * so it can live in the Settings dialog independently of the rail's Fire LT
+ * button. State hydrated from overlayGetState + OVERLAY_STATE_CHANGED push,
+ * same as the inline version.
+ */
+export function LowerThirdAnimConfig(): React.ReactElement {
+  const [animDuration, setAnimDuration] = useState(0.5)
+  const [animEasing, setAnimEasing] = useState<AnimationEasing>('ease')
+  const [autoHideSec, setAutoHideSec] = useState(8)
+  const [selectedAnim, setSelectedAnim] = useState<OverlayAnimation>('random')
+
+  useEffect(() => {
+    function applyState(state: any): void {
+      if (!state) return
+      if (state.animConfig) {
+        setAnimDuration(state.animConfig.animationDuration ?? 0.5)
+        setAnimEasing(state.animConfig.animationEasing ?? 'ease')
+        setAutoHideSec(state.animConfig.autoHideSeconds ?? 8)
+      }
+      if (state.lowerThird?.animation) setSelectedAnim(state.lowerThird.animation)
+    }
+    const sync = (): void => {
+      window.api.overlayGetState().then(applyState).catch(() => {})
+    }
+    sync()
+    const offState = window.api.on(IPC_CHANNELS.OVERLAY_STATE_CHANGED, (data: unknown) => applyState(data))
+    const poll = setInterval(sync, 10000)
+    return () => { clearInterval(poll); offState?.() }
+  }, [])
+
+  function handleAnimSelect(anim: OverlayAnimation): void {
+    setSelectedAnim(anim)
+    window.api.settingsSet({ overlay: { animation: anim } } as any)
+    window.api.overlaySetAnimationConfig({ animation: anim })
+  }
+  function handleAnimConfigChange(key: string, value: number | string): void {
+    if (key === 'animationDuration') setAnimDuration(value as number)
+    else if (key === 'animationEasing') setAnimEasing(value as AnimationEasing)
+    else if (key === 'autoHideSeconds') setAutoHideSec(value as number)
+    window.api.overlaySetAnimationConfig({ [key]: value })
+  }
+
+  return (
+    <div className="oc-anim-config oc-anim-inline">
+      <div className="oc-anim-config-item">
+        <div className="oc-config-label">Anim</div>
+        <select className="oc-select" value={selectedAnim} onChange={(e) => handleAnimSelect(e.target.value as OverlayAnimation)}>
+          {ALL_ANIMATIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+      </div>
+      <div className="oc-anim-config-item narrow">
+        <div className="oc-config-label">Hide</div>
+        <input type="number" className="oc-input center" min="0" max="60" value={autoHideSec}
+          onChange={(e) => handleAnimConfigChange('autoHideSeconds', parseInt(e.target.value) || 0)} title="Seconds (0 = manual)" />
+      </div>
+      <div className="oc-anim-config-item narrow">
+        <div className="oc-config-label">Dur</div>
+        <input type="number" className="oc-input center" min="0.1" max="6" step="0.1" value={animDuration}
+          onChange={(e) => handleAnimConfigChange('animationDuration', parseFloat(e.target.value) || 0.5)} />
+      </div>
+      <div className="oc-anim-config-item">
+        <div className="oc-config-label">Ease</div>
+        <select className="oc-select" value={animEasing} onChange={(e) => handleAnimConfigChange('animationEasing', e.target.value)}>
+          {EASING_OPTIONS.map((e) => <option key={e} value={e}>{e}</option>)}
+        </select>
+      </div>
     </div>
   )
 }
@@ -216,7 +299,7 @@ export default function OverlayControls({ compact = false, noChat = false }: { c
  * "FEATURE CARD" OBS scene with a slide-on broadcast graphic, mirroring the
  * Stream Deck buttons. No auto-hide — operator owns timing.
  */
-function GraphicsSection({ currentRoutineExists }: { currentRoutineExists: boolean }): React.ReactElement {
+export function GraphicsSection({ currentRoutineExists }: { currentRoutineExists: boolean }): React.ReactElement {
   const [active, setActive] = useState<'upNext' | 'thatWas' | null>(null)
   const fire = useCallback(async (mode: 'upNext' | 'thatWas') => {
     if (active === mode) {
@@ -371,18 +454,31 @@ export function InlineChatStrip(): React.ReactElement {
   const currentRoutine = useStore((s) => s.currentRoutine)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [pinned, setPinned] = useState<PinnedChatMessage[]>([])
+  const [flashMessageIds, setFlashMessageIds] = useState<Set<string>>(() => new Set())
+  const [panelFlash, setPanelFlash] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const seenMessageIdsRef = useRef<Set<string>>(new Set())
+  const flashTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const historyScrollRef = useRef<HTMLDivElement>(null)
-  const [adminName, setAdminName] = useState<string>(() => {
-    try { return localStorage.getItem(ADMIN_NAME_KEY) || 'Host' } catch { return 'Host' }
-  })
+  // Sticky-bottom: only auto-scroll the history to newest when the operator
+  // is already parked at the bottom. Once they scroll up to read old
+  // comments, leave their position alone — the 5s poll re-renders the list
+  // every cycle and the old unconditional scrollTop=scrollHeight yanked them
+  // back down within 5s, making old messages unreadable (operator report
+  // 2026-05-15 UDC Cobourg).
+  const atBottomRef = useRef(true)
+  const onHistoryScroll = useCallback(() => {
+    const el = historyScrollRef.current
+    if (!el) return
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  }, [])
+  // 2026-05-15: name is baked as "Admin" — no operator name field (collapses
+  // the admin composer from 2 rows to 1).
+  const adminName = 'Admin'
   const [draft, setDraft] = useState<string>('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-  useEffect(() => {
-    try { localStorage.setItem(ADMIN_NAME_KEY, adminName) } catch { /* ignore */ }
-  }, [adminName])
   const handleAdminSend = useCallback(async () => {
     const text = draft.trim()
     if (!text || sending) return
@@ -408,7 +504,33 @@ export function InlineChatStrip(): React.ReactElement {
         window.api.chatGetMessages(),
         window.api.chatGetPinned(),
       ])
-      if (Array.isArray(msgs)) setMessages(msgs)
+      if (Array.isArray(msgs)) {
+        const seen = seenMessageIdsRef.current
+        const isInitialLoad = seen.size === 0
+        const incomingIds = msgs
+          .map((msg) => msg.id)
+          .filter((id) => id && !seen.has(id))
+        for (const msg of msgs) seen.add(msg.id)
+        if (!isInitialLoad && incomingIds.length > 0) {
+          setFlashMessageIds((prev) => {
+            const next = new Set(prev)
+            for (const id of incomingIds) next.add(id)
+            return next
+          })
+          setPanelFlash(false)
+          requestAnimationFrame(() => setPanelFlash(true))
+          const timer = setTimeout(() => {
+            setPanelFlash(false)
+            setFlashMessageIds((prev) => {
+              const next = new Set(prev)
+              for (const id of incomingIds) next.delete(id)
+              return next
+            })
+          }, 2600)
+          flashTimersRef.current.push(timer)
+        }
+        setMessages(msgs)
+      }
       if (Array.isArray(pins)) setPinned(pins)
     } catch { /* ignore */ }
   }, [])
@@ -423,11 +545,24 @@ export function InlineChatStrip(): React.ReactElement {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
+      for (const timer of flashTimersRef.current) clearTimeout(timer)
+      flashTimersRef.current = []
     }
   }, [fetchData])
 
+  // Opening history (or it being open across a re-render) jumps to newest
+  // once and re-arms sticky-bottom.
   useEffect(() => {
     if (historyOpen && historyScrollRef.current) {
+      atBottomRef.current = true
+      historyScrollRef.current.scrollTop = historyScrollRef.current.scrollHeight
+    }
+  }, [historyOpen])
+
+  // New messages: pin to newest ONLY if the operator is still at the bottom.
+  // If they've scrolled up to read old comments, don't move their view.
+  useEffect(() => {
+    if (historyOpen && historyScrollRef.current && atBottomRef.current) {
       historyScrollRef.current.scrollTop = historyScrollRef.current.scrollHeight
     }
   }, [messages, historyOpen])
@@ -474,10 +609,17 @@ export function InlineChatStrip(): React.ReactElement {
     const pinState = isPinned(msg.id)
     const entryNum = (msg.routineIdAtPost && routineEntryById.get(msg.routineIdAtPost)) || fallbackEntry
     const entryEstimated = !msg.routineIdAtPost
+    const isCurrentRoutineMessage = !!msg.routineIdAtPost && msg.routineIdAtPost === currentRoutine?.id
+    const className = [
+      'ic-strip-msg',
+      pinState ? 'pinned' : '',
+      flashMessageIds.has(msg.id) ? 'new-flash' : '',
+      isCurrentRoutineMessage ? 'current-routine' : '',
+    ].filter(Boolean).join(' ')
     return (
       <div
         key={msg.id}
-        className={`ic-strip-msg${pinState ? ' pinned' : ''}`}
+        className={className}
         onClick={() => togglePin(msg.id)}
         title={pinState ? 'Click to unpin' : 'Click to pin (fires on overlay)'}
       >
@@ -485,7 +627,7 @@ export function InlineChatStrip(): React.ReactElement {
         <span className="ic-strip-text">{msg.text}</span>
         {entryNum && (
           <span
-            className={`ic-strip-entry${entryEstimated ? ' estimated' : ''}`}
+            className={`ic-strip-entry${entryEstimated ? ' estimated' : ''}${isCurrentRoutineMessage ? ' current' : ''}`}
             title={entryEstimated ? `Estimated — current routine at fetch time` : `During routine R${entryNum}`}
           >
             R{entryNum}{entryEstimated ? '?' : ''}
@@ -514,7 +656,7 @@ export function InlineChatStrip(): React.ReactElement {
   }
 
   return (
-    <div className="oc-section ic-strip-wrap">
+    <div className={`oc-section ic-strip-wrap${panelFlash ? ' has-new-message' : ''}`}>
       <div className="ic-strip-header">
         <span className="ic-strip-title">Live Chat</span>
         <div className="ic-strip-meta">
@@ -530,37 +672,9 @@ export function InlineChatStrip(): React.ReactElement {
         </div>
       </div>
 
-      {!historyOpen && (
-        <div className="ic-strip-feed">
-          {latest3.length === 0 ? (
-            <div className="ic-strip-empty">No messages yet</div>
-          ) : (
-            latest3.map(renderMsgRow)
-          )}
-        </div>
-      )}
-
-      {historyOpen && (
-        <div className="ic-strip-history" ref={historyScrollRef}>
-          {messages.length === 0 ? (
-            <div className="ic-strip-empty">No messages yet</div>
-          ) : (
-            messages.map(renderMsgRow)
-          )}
-        </div>
-      )}
-
       <div className="ic-strip-admin">
-        <div className="ic-strip-admin-header">CHAT AS ADMIN</div>
         <div className="ic-strip-admin-row">
-          <input
-            type="text"
-            className="ic-strip-admin-name"
-            value={adminName}
-            onChange={(e) => setAdminName(e.target.value)}
-            placeholder="Display name"
-            maxLength={40}
-          />
+          <span className="ic-strip-admin-label">Admin</span>
           <input
             type="text"
             className="ic-strip-admin-text"
@@ -572,7 +686,7 @@ export function InlineChatStrip(): React.ReactElement {
                 void handleAdminSend()
               }
             }}
-            placeholder="Reply… (Enter to send)"
+            placeholder="Reply... (Enter to send)"
             maxLength={300}
             disabled={sending}
           />
@@ -581,15 +695,36 @@ export function InlineChatStrip(): React.ReactElement {
             className="ic-strip-admin-send"
             onClick={() => void handleAdminSend()}
             disabled={sending || !draft.trim()}
-          >{sending ? '…' : 'Send'}</button>
+          >{sending ? '...' : 'Send'}</button>
         </div>
         {sendError && <div className="ic-strip-admin-error">{sendError}</div>}
       </div>
+
+      {!historyOpen && (
+        <div className="ic-strip-feed">
+          {latest3.length === 0 ? (
+            <div className="ic-strip-empty">No messages yet</div>
+          ) : (
+            latest3.map(renderMsgRow)
+          )}
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="ic-strip-history" ref={historyScrollRef} onScroll={onHistoryScroll}>
+          {messages.length === 0 ? (
+            <div className="ic-strip-empty">No messages yet</div>
+          ) : (
+            messages.map(renderMsgRow)
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-export function OverlayModules(): React.ReactElement {
+export function OverlayModules({ includeFeatureCards = false }: { includeFeatureCards?: boolean } = {}): React.ReactElement {
+  const currentRoutine = useStore((s) => s.currentRoutine)
   const [tickerText, setTickerText] = useState('')
   const [tickerSpeed, setTickerSpeed] = useState(60)
   const [tickerVisible, setTickerVisible] = useState(false)
@@ -723,6 +858,15 @@ export function OverlayModules(): React.ReactElement {
           </button>
         </div>
       </div>
+
+      {includeFeatureCards && (
+        <div className="oc-module oc-feature-card-module">
+          <div className="oc-module-header oc-feature-card-header">
+            <span className="oc-module-title">Feature Card</span>
+            <GraphicsSection currentRoutineExists={!!currentRoutine} />
+          </div>
+        </div>
+      )}
 
       {ssEditorOpen && <StartingSoonEditor onClose={() => setSsEditorOpen(false)} />}
     </>

@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, execFileSync, ChildProcess } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import dgram from 'dgram'
@@ -329,6 +329,74 @@ function clearPid(): void {
   } catch {}
 }
 
+/**
+ * Pre-spawn self-heal (incident 2026-05-16 live show): a stale
+ * `wifi-display-server.exe` that survived a previous crash/app-exit can keep
+ * squatting UDP ports 5000/5001. The fresh child then fails to bind:
+ *
+ *   `Failed to bind UDP socket on port 5000 — Only one usage of each socket
+ *    address, os error 10048` → exit code 1 → supervisor respawn → repeat
+ *
+ * That is an infinite crash/restart loop that left the tablet display dead
+ * and required a manual `taskkill` of the stale PID. This reclaims the ports
+ * automatically before EVERY spawn (button start AND supervisor auto-restart,
+ * since both funnel through start()).
+ *
+ * Image-name kill is intentional and matches the proven manual fix: there is
+ * only ever one wifi-display-server.exe, and the (re)start action legitimately
+ * owns reclaiming it. childProc is always null here (start() guards on
+ * `running && childProc` up top and stop()/exit handlers null it), so this
+ * never targets a child we still own.
+ *
+ * Idempotent + safe when nothing is stale: `taskkill` returns exit 128 with
+ * "not found" on Windows when no matching image exists — swallowed, logged as
+ * a no-op. Best-effort: any failure is logged and start() proceeds (the spawn
+ * will surface the real bind error if the port truly couldn't be freed).
+ *
+ * ffmpeg note: the HEVC-NVENC encoder path makes the Rust server spawn its own
+ * ffmpeg child. We deliberately do NOT kill ffmpeg here — the app's
+ * video-encode/upload pipeline also uses ffmpeg.exe and a broad
+ * `taskkill /IM ffmpeg.exe` would corrupt active encodes. Killing the parent
+ * wifi-display-server.exe is sufficient to free 5000/5001; Windows reaps the
+ * orphaned ffmpeg child on its own (and the next HEVC start respawns a fresh
+ * one). Scope-limited by design — see VERIFY (c).
+ */
+function freeWifiDisplayPorts(): void {
+  if (process.platform !== 'win32') return
+  try {
+    // /F force, /T also terminate any child tree (covers an orphaned ffmpeg
+    // the stale server spawned, without touching unrelated ffmpeg.exe).
+    const out = execFileSync(
+      'taskkill',
+      ['/F', '/T', '/IM', BINARY_NAME],
+      { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 5000 },
+    )
+      .toString()
+      .trim()
+    // taskkill prints "SUCCESS: ... PID <N> ..." per killed process.
+    const m = out.match(/PID\s+(\d+)/i)
+    const pid = m ? m[1] : 'unknown'
+    logger.app.warn(
+      `[wifi-display] pre-spawn cleanup: killed stale ${BINARY_NAME} pid=${pid} to free ports 5000/5001`,
+    )
+  } catch (err: unknown) {
+    // taskkill exits 128 (+ "not found" on stderr) when no matching image is
+    // running — that is the normal, healthy path. Anything else is logged but
+    // non-fatal: the subsequent spawn will report the real bind failure.
+    const e = err as { status?: number; stderr?: Buffer | string }
+    const stderr = e?.stderr ? e.stderr.toString() : ''
+    if (e?.status === 128 || /not found|No tasks/i.test(stderr)) {
+      logger.app.info(
+        `[wifi-display] pre-spawn cleanup: no stale instance of ${BINARY_NAME} (ports 5000/5001 clear)`,
+      )
+    } else {
+      logger.app.warn(
+        `[wifi-display] pre-spawn cleanup: taskkill non-fatal error (${stderr || (err instanceof Error ? err.message : String(err))}) — continuing to spawn`,
+      )
+    }
+  }
+}
+
 export function getMonitors(): MonitorInfo[] {
   return screen.getAllDisplays().map((d) => ({
     id: d.id,
@@ -397,6 +465,12 @@ export async function start(): Promise<void> {
       )
     }
   }
+
+  // Self-heal: reclaim UDP 5000/5001 from any stale wifi-display-server.exe
+  // BEFORE spawning. Runs on the button start AND every supervisor
+  // auto-restart (both reach this point via start()), so the port-bind
+  // crash/respawn loop now self-heals with no operator action.
+  freeWifiDisplayPorts()
 
   logger.app.info(`Starting wifi display: ${binaryPath} ${args.join(' ')}`)
 

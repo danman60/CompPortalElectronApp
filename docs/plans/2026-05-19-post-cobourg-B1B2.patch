@@ -1,0 +1,1790 @@
+diff --git a/src/main/index.ts b/src/main/index.ts
+index 191b4a0..4c49267 100644
+--- a/src/main/index.ts
++++ b/src/main/index.ts
+@@ -202,12 +202,23 @@ function createWindow(): void {
+   mainWindow.on('close', (event) => {
+     if (closeConfirmed) return
+     let pendingEncodes = 0
++    // B1(a): operator-facing upload number = distinct media that DURABLE
++    // state (F1/F2 oracle) shows still genuinely needs delivery — NOT the
++    // raw pending+running job-record count (which hit ~4700 post-Cobourg
++    // from re-enqueue storm + carcasses while ZERO media was actually lost).
+     let pendingUploads = 0
++    let awaitingFinalize = 0
++    let terminalUploadJobs = 0
++    let rawPendingRunningUploadJobs = 0
+     let pendingPhotoImports = 0
+     let activeImportRunning = false
+     try {
+       pendingEncodes = jobQueue.getPending('encode').length + jobQueue.getRunning('encode').length
+-      pendingUploads = jobQueue.getPending('upload').length + jobQueue.getRunning('upload').length
++      const u = uploadService.getUndeliveredMediaSummary()
++      pendingUploads = u.undeliveredMedia
++      awaitingFinalize = u.awaitingFinalize
++      terminalUploadJobs = u.terminalJobs
++      rawPendingRunningUploadJobs = u.rawPendingRunningJobs
+       pendingPhotoImports =
+         jobQueue.getPending('photo-import').length + jobQueue.getRunning('photo-import').length
+       activeImportRunning = photos.isImportRunning()
+@@ -216,15 +227,25 @@ function createWindow(): void {
+     }
+     const totalActive =
+       pendingEncodes + pendingUploads + pendingPhotoImports + (activeImportRunning ? 1 : 0)
+-    if (totalActive === 0) return  // nothing pending — close silently
++    if (totalActive === 0) return  // nothing genuinely outstanding — close silently
+ 
+     const target = mainWindow ?? BrowserWindow.getFocusedWindow()
+     if (!target) return  // no window to attach the dialog to — let it close
+     const detailLines: string[] = []
+-    if (pendingUploads > 0) detailLines.push(`• ${pendingUploads.toLocaleString()} upload jobs`)
++    if (pendingUploads > 0)
++      detailLines.push(`• ${pendingUploads.toLocaleString()} media file(s) still need uploading`)
+     if (pendingEncodes > 0) detailLines.push(`• ${pendingEncodes.toLocaleString()} encode jobs`)
+     if (pendingPhotoImports > 0) detailLines.push(`• ${pendingPhotoImports.toLocaleString()} photo-import jobs`)
+     if (activeImportRunning) detailLines.push(`• A live SD import is running`)
++    // Non-blocking asides (do NOT inflate the headline / do NOT gate close):
++    if (awaitingFinalize > 0)
++      detailLines.push(
++        `• ${awaitingFinalize.toLocaleString()} routine(s) awaiting finalize (video safe in cloud — auto-completes)`,
++      )
++    if (terminalUploadJobs > 0)
++      detailLines.push(
++        `• ${terminalUploadJobs.toLocaleString()} failed/old upload records (not blocking — auto-pruned)`,
++      )
+     const detail =
+       detailLines.join('\n') +
+       '\n\n' +
+@@ -249,7 +270,10 @@ function createWindow(): void {
+     } else {
+       closeConfirmed = true
+       logger.app.info(
+-        `Close confirmed by operator with pending work: uploads=${pendingUploads}, encodes=${pendingEncodes}, photo-imports=${pendingPhotoImports}, importRunning=${activeImportRunning}`,
++        `Close confirmed by operator with pending work: undeliveredMedia=${pendingUploads} ` +
++          `(rawPendingRunningUploadJobs=${rawPendingRunningUploadJobs}, awaitingFinalize=${awaitingFinalize}, ` +
++          `terminalUploadJobs=${terminalUploadJobs}), encodes=${pendingEncodes}, ` +
++          `photo-imports=${pendingPhotoImports}, importRunning=${activeImportRunning}`,
+       )
+     }
+   })
+diff --git a/src/main/services/jobQueue.ts b/src/main/services/jobQueue.ts
+index 01246e0..2b26fed 100644
+--- a/src/main/services/jobQueue.ts
++++ b/src/main/services/jobQueue.ts
+@@ -340,6 +340,90 @@ export function pruneCompleted(olderThanMs: number): number {
+   return pruned
+ }
+ 
++// ── B1(c): terminal-job hygiene ───────────────────────────────────────────
++//
++// Post-Cobourg incident (2026-05-17): job-queue.json grew to 967 records
++// (779 failed + 165 quarantined + 14 cancelled) because pruneCompleted only
++// ages out `done`. Terminal failed/quarantined/cancelled records accumulate
++// forever; nothing reads them after they reach a terminal state, yet the
++// close dialog counted raw pending+running and the count looked like ~4700
++// "outstanding uploads" at end-of-show. DB cross-check proved zero media
++// lost — these are job carcasses, not outstanding media.
++//
++// This bounds terminal failed/quarantined/cancelled records with a HARD
++// ceiling — a terminal job is kept ONLY if it is BOTH within the
++// most-recent-`keepMostRecent` window AND younger than `olderThanMs`.
++// The conjunction (not disjunction) is deliberate: the live incident hit
++// 967 carcasses *within a single show day* (all < 24h), so an age-only
++// retention never fired. The keep-recent ceiling caps job-queue.json even
++// mid-show; the age bound additionally evicts the survivors on later days.
++// pending/running/done are NEVER touched. Idempotent, crash-safe (flushSync).
++const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
++  'failed',
++  'quarantined',
++  'cancelled',
++])
++
++export function pruneTerminal(
++  olderThanMs: number,
++  keepMostRecent = 200,
++): number {
++  const cutoff = Date.now() - olderThanMs
++  const before = jobs.length
++
++  // Most-recent-N terminal jobs (by updatedAt desc). A terminal job survives
++  // ONLY if it is in this window AND still young. Everything else is a
++  // carcass and is pruned.
++  const terminal = jobs
++    .filter((j) => TERMINAL_STATUSES.has(j.status))
++    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
++  const keepIds = new Set<string>()
++  for (let i = 0; i < terminal.length && i < keepMostRecent; i++) {
++    const j = terminal[i]
++    const young = new Date(j.updatedAt).getTime() > cutoff
++    if (young) keepIds.add(j.id)
++  }
++
++  jobs = jobs.filter((j) => {
++    if (!TERMINAL_STATUSES.has(j.status)) return true // pending/running/done untouched
++    return keepIds.has(j.id)
++  })
++
++  const pruned = before - jobs.length
++  if (pruned > 0) {
++    rebuildRoutineIndex()
++    logger.app.info(
++      `Job queue: pruned ${pruned} terminal (failed/quarantined/cancelled) job carcass(es); ${jobs.length} jobs remain`,
++    )
++    flushSync()
++  }
++  return pruned
++}
++
++/**
++ * B1(b) dedupe oracle — does a non-terminal OR successfully-delivered upload
++ * job already exist for this (routineId, objectName)? Used by upload.ts
++ * enqueue sites to refuse creating a duplicate upload job for a file that is
++ * already queued, in flight, or already uploaded. Terminal
++ * failed/quarantined/cancelled jobs do NOT count (a genuine retry is allowed
++ * via the normal force/re-record path). `done` DOES count — the file is in
++ * R2; re-enqueuing it just produces the "already exists" failure storm.
++ */
++export function hasActiveOrDeliveredUploadJob(
++  routineId: string,
++  objectName: string,
++): boolean {
++  const arr = routineIndex.get(routineId)
++  if (!arr) return false
++  for (const j of arr) {
++    if (j.type !== 'upload') continue
++    if (j.status !== 'pending' && j.status !== 'running' && j.status !== 'done') continue
++    const on = (j.payload as Record<string, unknown>).objectName
++    if (typeof on === 'string' && on === objectName) return true
++  }
++  return false
++}
++
+ export function quarantine(jobId: string, error: string): boolean {
+   const job = jobs.find(j => j.id === jobId)
+   if (!job) return false
+@@ -460,14 +544,24 @@ export function getAll(): JobRecord[] {
+ 
+ const PRUNE_INTERVAL_MS = 3600000 // 1 hour
+ const PRUNE_AGE_MS = 86400000 // 24 hours
++// B1(c): terminal failed/quarantined/cancelled records age out after 24h
++// too (keeping the most-recent 200 for post-mortem regardless of age).
++const TERMINAL_PRUNE_AGE_MS = 86400000 // 24 hours
++const TERMINAL_KEEP_RECENT = 200
+ let pruneTimer: NodeJS.Timeout | null = null
+ 
+ export function init(): void {
+   load()
+   // Prune completed jobs older than 24h on startup
+   pruneCompleted(PRUNE_AGE_MS)
++  // B1(c): also age out terminal failed/quarantined/cancelled carcasses so
++  // job-queue.json cannot grow unbounded (post-Cobourg 967-record incident).
++  pruneTerminal(TERMINAL_PRUNE_AGE_MS, TERMINAL_KEEP_RECENT)
+   // Prune periodically every hour
+-  pruneTimer = setInterval(() => pruneCompleted(PRUNE_AGE_MS), PRUNE_INTERVAL_MS)
++  pruneTimer = setInterval(() => {
++    pruneCompleted(PRUNE_AGE_MS)
++    pruneTerminal(TERMINAL_PRUNE_AGE_MS, TERMINAL_KEEP_RECENT)
++  }, PRUNE_INTERVAL_MS)
+ }
+ 
+ export function cleanup(): void {
+diff --git a/src/main/services/mediaReconciler.ts b/src/main/services/mediaReconciler.ts
+index c0edd57..8df4470 100644
+--- a/src/main/services/mediaReconciler.ts
++++ b/src/main/services/mediaReconciler.ts
+@@ -338,6 +338,25 @@ export async function reconcileMedia(opts: ReconcileOpts): Promise<ReconcileResu
+     result.errors.push(`retryOrphanedCompletions: ${msg}`)
+   }
+ 
++  // ── F2: re-fire terminal /plugin/complete from DURABLE state for any
++  //    routine carrying the videoCompletePending marker. This catches the
++  //    cross-restart case retryOrphanedCompletions misses entirely: it has
++  //    no job-queue dependency (queue is in-memory, lost on restart) and
++  //    rebuilds the video-bearing payload from compsync-state.json. Runs on
++  //    every reconcile scope (boot + ambient sweep + manual + post-record).
++  //    Idempotent; backed-off per routine; never double-publishes.
++  try {
++    const f2 = await uploadService.refireUnfinalizedCompletions()
++    if (f2.refired > 0 || f2.cleared > 0) {
++      logger.app.info(
++        `reconcileMedia[${scope}]: F2 re-fire scanned=${f2.scanned} refired=${f2.refired} cleared=${f2.cleared} skipped=${f2.skipped} errors=${f2.errors}`,
++      )
++    }
++  } catch (err) {
++    const msg = err instanceof Error ? err.message : String(err)
++    result.errors.push(`refireUnfinalizedCompletions: ${msg}`)
++  }
++
+   // ── Kick uploads if we queued anything ──
+   if (result.queued > 0) {
+     uploadService.startUploads()
+diff --git a/src/main/services/state.ts b/src/main/services/state.ts
+index dd64b5c..b9f9916 100644
+--- a/src/main/services/state.ts
++++ b/src/main/services/state.ts
+@@ -467,6 +467,14 @@ export function setCompetition(comp: Competition): void {
+         routine.photos = persisted.photos
+         routine.uploadProgress = persisted.uploadProgress
+         routine.notes = persisted.notes
++        // F2 (durable-media-completion): carry the cross-restart
++        // needs-complete marker + uploadRunId through a schedule re-import
++        // merge so the re-fire sweep can rebuild the video-bearing payload.
++        // Without this, re-importing the schedule after a restart would
++        // drop the marker and the video would stay orphaned forever.
++        routine.videoCompletePending = persisted.videoCompletePending
++        routine.videoCompletePendingSince = persisted.videoCompletePendingSince
++        routine.uploadRunId = persisted.uploadRunId
+         matchedCount++
+       }
+     }
+@@ -1224,6 +1232,7 @@ export function exportVerificationReport(): string {
+       issues.push('missing-video')
+     }
+     if (encodedFiles.length > 0 && videosUploaded < encodedFiles.length) issues.push('video-upload-pending')
++    if (routine.videoCompletePending) issues.push('awaiting-finalize')
+     if (hasMediaState && photos.length === 0) issues.push('no-photos-matched')
+     if (photos.length > 0 && photosUploaded < photos.length) issues.push('photo-upload-pending')
+     if (thumbsMissing > 0) issues.push('thumbnail-missing')
+diff --git a/src/main/services/upload.ts b/src/main/services/upload.ts
+index 7e0e266..2ae9daa 100644
+--- a/src/main/services/upload.ts
++++ b/src/main/services/upload.ts
+@@ -253,12 +253,28 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
+       .map(j => (j.payload as Record<string, unknown>).objectName as string)
+   )
+ 
++  // B1(b): single dedupe gate for every enqueue site. Returns true when a
++  // duplicate upload job for (routine, objectName) must NOT be created.
++  // Skips iff there is already a non-terminal OR `done` upload job for this
++  // exact (routine, objectName) — `done` means the file is in R2 and a
++  // re-enqueue would just produce the "already exists" failure storm
++  // (proven: JP7A1830.JPG routine 130 enqueued 13:48 + 17:59, both failed
++  // "already exists … already has a photo uploaded … (re-record)"). The
++  // `force` re-record path is ALWAYS allowed through — an intentional
++  // overwrite must still enqueue. Terminal failed/quarantined/cancelled
++  // jobs never block (genuine retry stays possible).
++  const isDuplicateUpload = (objectName: string): boolean => {
++    if (force) return false // re-record / intentional overwrite — never dedupe
++    if (skipObjectNames.has(objectName)) return true
++    return jobQueue.hasActiveOrDeliveredUploadJob(routine.id, objectName)
++  }
++
+   // Queue video files
+   for (const file of routine.encodedFiles || []) {
+     if (!force && file.uploaded) continue
+     const role = file.role
+     const objectName = `${role}.mp4`
+-    if (skipObjectNames.has(objectName)) continue
++    if (isDuplicateUpload(objectName)) continue
+     jobQueue.enqueue('upload', routine.id, {
+       routineId: routine.id,
+       entryId: routine.id,
+@@ -280,7 +296,7 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
+     const kfPath = keyframes[i]
+     if (!kfPath || !fs.existsSync(kfPath)) continue
+     const objectName = `keyframes/keyframe_${i}.webp`
+-    if (skipObjectNames.has(objectName)) continue
++    if (isDuplicateUpload(objectName)) continue
+     jobQueue.enqueue('upload', routine.id, {
+       routineId: routine.id,
+       entryId: routine.id,
+@@ -300,7 +316,7 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
+     for (const photo of routine.photos) {
+       if (!force && photo.uploaded) continue
+       const photoObjectName = path.basename(photo.filePath)
+-      if (skipObjectNames.has(photoObjectName)) continue
++      if (isDuplicateUpload(photoObjectName)) continue
+       jobQueue.enqueue('upload', routine.id, {
+         routineId: routine.id,
+         entryId: routine.id,
+@@ -440,7 +456,12 @@ export function enqueueRoundRobin(routines: Routine[]): EnqueueRoutineResult {
+     }
+     const objectName = path.basename(photo.filePath)
+     const skip = skipByRoutine.get(bucket.routine.id)!
+-    if (!skip.has(objectName)) {
++    // B1(b): also dedupe against any cross-session done/active job for this
++    // exact (routine, objectName) — the in-call skip set above only sees the
++    // snapshot taken before this loop and misses a file already delivered in
++    // a prior session (the re-enqueue "already exists" storm). No `force`
++    // axis here: round-robin is never the intentional-overwrite path.
++    if (!skip.has(objectName) && !jobQueue.hasActiveOrDeliveredUploadJob(bucket.routine.id, objectName)) {
+       jobQueue.enqueue('upload', bucket.routine.id, {
+         routineId: bucket.routine.id,
+         entryId: bucket.routine.id,
+@@ -847,6 +868,20 @@ async function processLoop(): Promise<void> {
+             }
+           }
+ 
++          // F1: persist the per-role/photo storage-path association to
++          // compsync-state.json BEFORE the terminal complete. If the app
++          // reloads/restarts between this point and a confirmed terminal
++          // complete, the durable encodedFiles[].storagePath survives, so
++          // the F2 sweep (or any later terminal complete) carries the video
++          // paths instead of a photo-only payload. Also stamps the durable
++          // videoCompletePending marker when a video role is present.
++          persistDurableStoragePaths(
++            payload.routineId,
++            storagePaths,
++            photoStoragePaths,
++            photoThumbnailStoragePaths,
++          )
++
+           await callPluginComplete({
+             routineId: payload.routineId,
+             entryId: payload.entryId,
+@@ -1207,6 +1242,113 @@ function uploadFileToSignedUrl(
+   })
+ }
+ 
++// ── F1 + F2: durable media completion ─────────────────────────────────────
++//
++// Root cause: the terminal /api/plugin/complete payload's video roles
++// (files.performance/judge1-3) were built only from in-memory
++// routineState.encodedFiles[] where uploaded&&storagePath were set, and
++// those flags were persisted to compsync-state.json ONLY *after*
++// callPluginComplete returned 2xx. A reload/restart between the video R2
++// PUT and the terminal complete wiped the in-memory association, so the
++// terminal complete (if it fired at all) carried a photo-only payload.
++//
++// F1: persist each role/photo/keyframe storagePath into durable routine
++//     state the moment its R2 PUT confirms, BEFORE the terminal complete.
++// F2: stamp a durable `videoCompletePending` marker when video roles are
++//     confirmed in R2; clear it only when the server returns a
++//     package-created status. A boot + sweep re-fire (in mediaReconciler)
++//     rebuilds the payload from the now-reliable durable state and retries.
++//
++// Server statuses that prove a media package exists for this routine, so
++// the F2 marker can safely be cleared. 'none' explicitly does NOT clear —
++// it means CompPortal has no package (the photo-only / never-fired bug).
++const PACKAGE_CREATED_STATUSES = new Set(['pending', 'processing', 'ready', 'complete', 'published'])
++
++/**
++ * F1 — persist the freshly-known per-role / per-photo / per-keyframe R2
++ * storage paths into durable routine state (compsync-state.json) BEFORE the
++ * terminal callPluginComplete. Idempotent: only flips uploaded:false→true and
++ * fills empty storagePath; never clears a path or downgrades a flag.
++ *
++ * F2 — when any *video role* (performance/judge1-4) now has a storage path,
++ * stamp `videoCompletePending=true` so a reload/restart before the terminal
++ * complete is acknowledged can re-fire it from durable state. Marker is left
++ * untouched here when no video role is present (photo-only routines never
++ * carry the marker — nothing to re-finalize on the video axis).
++ */
++function persistDurableStoragePaths(
++  routineId: string,
++  storagePaths: Record<string, string>,
++  photoStoragePaths: string[],
++  photoThumbnailStoragePaths: string[],
++): void {
++  const routine = state.getCompetition()?.routines.find((r) => r.id === routineId)
++  if (!routine) return
++
++  const updatedFiles = (routine.encodedFiles || []).map((f) => {
++    const sp = storagePaths[f.role]
++    if (!sp) return f
++    if (f.uploaded && f.storagePath === sp) return f
++    return { ...f, uploaded: true, storagePath: sp }
++  })
++
++  // Photos: match by index against the freshly-built parallel arrays. Only
++  // upgrade (false→true / fill empty path); never wipe an existing path.
++  const updatedPhotos = (routine.photos || []).map((p, i) => {
++    const sp = photoStoragePaths[i]
++    if (!sp) return p
++    const tsp = photoThumbnailStoragePaths[i]
++    const nextThumb = tsp && tsp.length > 0 ? tsp : p.thumbnailStoragePath
++    if (p.uploaded && p.storagePath === sp && p.thumbnailStoragePath === nextThumb) return p
++    return { ...p, uploaded: true, storagePath: sp, thumbnailStoragePath: nextThumb }
++  })
++
++  const VIDEO_ROLES = ['performance', 'judge1', 'judge2', 'judge3', 'judge4']
++  const hasVideoRolePath = VIDEO_ROLES.some((r) => !!storagePaths[r])
++
++  const extra: Partial<Routine> = {
++    encodedFiles: updatedFiles,
++    photos: updatedPhotos,
++  }
++  if (hasVideoRolePath && !routine.videoCompletePending) {
++    extra.videoCompletePending = true
++    extra.videoCompletePendingSince = new Date().toISOString()
++    logger.upload.info(
++      `F2: routine ${routineId.slice(0, 8)} videoCompletePending=true (video role(s) in R2, terminal complete not yet confirmed)`,
++    )
++  }
++  // Keep status untouched — this is a pre-complete durability write, not a
++  // pipeline transition. updateRoutineStatus with the current status only
++  // mutates the `extra` fields + persists.
++  state.updateRoutineStatus(routineId, routine.status, extra)
++  // CRITICAL: flush to disk NOW, not on the 500ms debounce. The entire
++  // point of F1 is that a crash/reload in the window between the R2 PUT
++  // and the terminal complete must still find this association on disk.
++  // A debounced write loses exactly that race (the bug we are fixing).
++  state.saveStateImmediate()
++}
++
++/**
++ * F2 — clear the durable needs-complete marker IFF the server's
++ * callPluginComplete response proves a media package now exists. Called from
++ * callPluginComplete after a 2xx whose body carried a recognized status.
++ * 'none' / unknown / missing status does NOT clear (the package still isn't
++ * there — that's exactly the bug we're guarding against).
++ */
++function clearVideoCompletePendingIfPublished(routineId: string, serverStatus?: string): void {
++  if (!serverStatus || !PACKAGE_CREATED_STATUSES.has(serverStatus)) return
++  const routine = state.getCompetition()?.routines.find((r) => r.id === routineId)
++  if (!routine || !routine.videoCompletePending) return
++  state.updateRoutineStatus(routineId, routine.status, {
++    videoCompletePending: false,
++    videoCompletePendingSince: undefined,
++  })
++  state.saveStateImmediate()
++  logger.upload.info(
++    `F2: routine ${routineId.slice(0, 8)} videoCompletePending cleared (server status="${serverStatus}")`,
++  )
++}
++
+ /**
+  * Fire an incremental /plugin/complete with cumulative paths built from
+  * all currently-done jobs + already-uploaded files in routine state.
+@@ -1399,6 +1541,21 @@ async function callPluginComplete(info: {
+         const fresh = state.getCompetition()?.routines.find(r => r.id === info.routineId)
+         if (fresh) broadcastRoutineUpdate(fresh)
+       }
++      // F2: clear the durable needs-complete marker. A 2xx from
++      // /api/plugin/complete that carried a video role path proves the
++      // server has the video-bearing package now — that's the
++      // authoritative clear signal, independent of whether the body
++      // included a parseable status (older CompPortal builds omit it).
++      // Recognized package-created statuses also clear (covers re-fires
++      // where the payload was rebuilt and a status came back).
++      const carriedVideoRole = ['performance', 'judge1', 'judge2', 'judge3', 'judge4'].some(
++        (r) => !!info.storagePaths[r],
++      )
++      if (carriedVideoRole) {
++        clearVideoCompletePendingIfPublished(info.routineId, 'complete')
++      } else {
++        clearVideoCompletePendingIfPublished(info.routineId, returned)
++      }
+     } catch {
+       // Non-fatal — display lag is the only consequence.
+     }
+@@ -1507,6 +1664,192 @@ export async function retryOrphanedCompletions(): Promise<number> {
+   return retried
+ }
+ 
++// ── F2: cross-restart re-fire of unfinalized terminal completes ───────────
++//
++// In-memory exponential backoff per routine so a persistently-failing
++// /complete (e.g. CompPortal down) doesn't hammer the endpoint every sweep.
++// Resets when the marker clears (success). Survives only for the process
++// lifetime — the durable videoCompletePending marker is the cross-restart
++// state; backoff is just rate-limiting within one run.
++interface RefireBackoff { failCount: number; nextAttemptAt: number }
++const refireBackoff = new Map<string, RefireBackoff>()
++const REFIRE_BACKOFF_BASE_MS = 60 * 1000        // 1 min
++const REFIRE_BACKOFF_CAP_MS = 30 * 60 * 1000    // 30 min
++
++function refireOnFailure(routineId: string): void {
++  const prev = refireBackoff.get(routineId)
++  const failCount = (prev?.failCount ?? 0) + 1
++  const delay = Math.min(REFIRE_BACKOFF_BASE_MS * Math.pow(2, failCount - 1), REFIRE_BACKOFF_CAP_MS)
++  refireBackoff.set(routineId, { failCount, nextAttemptAt: Date.now() + delay })
++}
++function refireIsBackedOff(routineId: string): boolean {
++  const b = refireBackoff.get(routineId)
++  return b != null && b.nextAttemptAt > Date.now()
++}
++
++/**
++ * Test-only seam (durable-media-completion proof harness). The re-fire
++ * backoff map is in-process and is naturally empty on a real app restart
++ * (module reload). The harness simulates restarts via state.loadState()
++ * within ONE process, so it calls this to faithfully model the
++ * fresh-process backoff reset a true restart provides. NOT used in
++ * production code paths.
++ */
++export function __test_resetRefireBackoff(): void {
++  refireBackoff.clear()
++}
++
++/**
++ * F2 — re-fire the terminal /api/plugin/complete for every routine carrying
++ * the durable `videoCompletePending` marker. Rebuilds the full payload
++ * (storagePaths / photoStoragePaths / photoThumbnailStoragePaths /
++ * photoCapturedAt / videoKeyframeStoragePaths) purely from DURABLE routine
++ * state — encodedFiles[].storagePath (reliable thanks to F1), photos[], and
++ * keyframes[] — with NO dependency on the in-memory job queue (which is lost
++ * on restart, the whole reason orphan-completion retry missed these).
++ *
++ * Idempotency / safety:
++ *   - Skips routines with no video role storagePath in durable state
++ *     (nothing to finalize on the video axis — never an empty re-publish).
++ *   - Skips routines already past the marker (cleared) — the marker is the
++ *     single source of truth; an already-published routine has no marker.
++ *   - On 2xx the response handler clears the marker (clearVideoComplete…).
++ *   - Per-routine in-process backoff prevents endpoint hammering.
++ *   - No connection / no uploadRunId → skip (cannot finalize safely).
++ *
++ * VISUAL-ONLY, NON-BLOCKING: never opens a modal, never gates recording,
++ * never emits audio. Returns a count for log + the audit-panel surface.
++ *
++ * Callable from boot recovery and the mediaReconciler sweep. Idempotent and
++ * safe to call repeatedly.
++ */
++export async function refireUnfinalizedCompletions(): Promise<{
++  scanned: number
++  refired: number
++  cleared: number
++  skipped: number
++  errors: number
++}> {
++  const out = { scanned: 0, refired: 0, cleared: 0, skipped: 0, errors: 0 }
++  const comp = state.getCompetition()
++  if (!comp) return out
++  if (!hasResolvedUploadConnection()) return out
++
++  const pending = comp.routines.filter((r) => r.videoCompletePending === true)
++  out.scanned = pending.length
++  if (pending.length === 0) return out
++
++  const conn = getConnection()
++
++  for (const routine of pending) {
++    // Idempotent guard: an already-finalized routine must never carry the
++    // marker, but double-check the marker is still set (it may have cleared
++    // mid-sweep via a concurrent terminal complete).
++    const fresh = state.getCompetition()?.routines.find((r) => r.id === routine.id)
++    if (!fresh || fresh.videoCompletePending !== true) { out.skipped++; continue }
++    if (refireIsBackedOff(routine.id)) { out.skipped++; continue }
++    if (!fresh.uploadRunId) {
++      logger.upload.warn(`F2 re-fire: routine ${routine.id.slice(0, 8)} has no uploadRunId — cannot finalize, skipping`)
++      out.skipped++
++      continue
++    }
++
++    // Rebuild payload from DURABLE state only.
++    const storagePaths: Record<string, string> = {}
++    for (const f of fresh.encodedFiles || []) {
++      if (f.uploaded && f.storagePath) storagePaths[f.role] = f.storagePath
++    }
++    const VIDEO_ROLES = ['performance', 'judge1', 'judge2', 'judge3', 'judge4']
++    const hasVideoRole = VIDEO_ROLES.some((r) => !!storagePaths[r])
++    if (!hasVideoRole) {
++      // Marker set but no durable video path — nothing to finalize on the
++      // video axis. Leave the marker (a later F1 write may fill it) but do
++      // NOT fire an empty/photo-only complete (that's the original bug).
++      logger.upload.warn(
++        `F2 re-fire: routine ${routine.id.slice(0, 8)} marked pending but no durable video storagePath — skipping (no empty re-publish)`,
++      )
++      out.skipped++
++      continue
++    }
++
++    const photoStoragePaths: string[] = []
++    const photoThumbnailStoragePaths: string[] = []
++    const photoCapturedAt: string[] = []
++    for (const p of fresh.photos || []) {
++      if (p.uploaded && p.storagePath) {
++        photoStoragePaths.push(p.storagePath)
++        photoThumbnailStoragePaths.push(p.thumbnailStoragePath || '')
++        photoCapturedAt.push(p.captureTime || '')
++      }
++    }
++    // Keyframes are local paths in state; their R2 keys live on the done
++    // upload jobs which are gone post-restart. Re-fire focuses on the video
++    // roles (the actual data-loss axis). Pass empty — CompPortal keeps any
++    // keyframes already persisted from a prior partial complete.
++    const videoKeyframeStoragePaths: string[] = []
++
++    try {
++      await callPluginComplete({
++        routineId: routine.id,
++        entryId: routine.id,
++        competitionId: conn.competitionId,
++        uploadRunId: fresh.uploadRunId,
++        storagePaths,
++        photoStoragePaths,
++        photoThumbnailStoragePaths,
++        photoCapturedAt,
++        videoKeyframeStoragePaths,
++      })
++      out.refired++
++      // callPluginComplete's response handler clears the durable marker on
++      // 2xx (carriedVideoRole path). Confirm + tally.
++      const after = state.getCompetition()?.routines.find((r) => r.id === routine.id)
++      if (after && after.videoCompletePending !== true) {
++        out.cleared++
++        refireBackoff.delete(routine.id)
++        state.updateRoutineStatus(routine.id, after.status === 'encoded' ? 'uploaded' : after.status, {})
++      }
++      logger.upload.info(`F2 re-fire: routine ${routine.id.slice(0, 8)} terminal complete re-sent from durable state`)
++    } catch (err) {
++      out.errors++
++      refireOnFailure(routine.id)
++      logger.upload.warn(
++        `F2 re-fire failed for routine ${routine.id.slice(0, 8)} (marker retained, will retry next sweep):`,
++        err instanceof Error ? err.message : err,
++      )
++    }
++  }
++
++  if (out.refired > 0 || out.cleared > 0) {
++    logger.upload.info(
++      `F2 re-fire sweep: scanned=${out.scanned} refired=${out.refired} cleared=${out.cleared} skipped=${out.skipped} errors=${out.errors}`,
++    )
++  }
++  return out
++}
++
++/** Count routines currently carrying the durable F2 needs-complete marker. */
++export function countUnfinalizedRoutines(): number {
++  const comp = state.getCompetition()
++  if (!comp) return 0
++  return comp.routines.filter((r) => r.videoCompletePending === true).length
++}
++
++/**
++ * Test-only seam (durable-media-completion proof harness). Exposes the
++ * internal F1 persist helper so the harness can drive the exact runtime
++ * behavior — persisting role storagePaths to durable state at R2-PUT time —
++ * without mocking any logic. NOT used in production code paths.
++ */
++export function __test_persistDurableStoragePaths(
++  routineId: string,
++  storagePaths: Record<string, string>,
++  photoStoragePaths: string[],
++  photoThumbnailStoragePaths: string[],
++): void {
++  persistDurableStoragePaths(routineId, storagePaths, photoStoragePaths, photoThumbnailStoragePaths)
++}
++
+ /**
+  * Retry uploading any routines stuck at 'encoded' that were skipped due to missing connection.
+  * Yields to the event loop every BATCH_SIZE routines to prevent AppHangB1 on startup
+@@ -1865,3 +2208,114 @@ export function getQueueState(): { routineId: string; status: string }[] {
+     .filter(j => j.type === 'upload')
+     .map(j => ({ routineId: j.routineId, status: j.status }))
+ }
++
++// ── B1(a): operator-facing "media still genuinely needing delivery" ───────
++//
++// The close dialog previously reported raw `getPending('upload') +
++// getRunning('upload')` job-record count. Post-Cobourg that hit ~4700 at
++// end-of-show — inflated by (1) the same already-uploaded file re-enqueued
++// repeatedly across the day (each landing as a `failed "already exists"`
++// record), (2) terminal failed/quarantined carcasses never pruned, (3)
++// order-A photo-tier intentionally stacking "remaining" photos pending. DB
++// cross-check proved zero media lost (544/545 published).
++//
++// The honest number is: distinct (routineId, objectName) media whose
++// DURABLE state (F1 encodedFiles[].uploaded/storagePath +
++// photos[].uploaded/storagePath, the B2 oracle) shows NOT uploaded AND that
++// is not already covered by a `done` upload job. Routines whose video bytes
++// are in R2 but whose terminal /complete hasn't been acknowledged carry the
++// F2 `videoCompletePending` marker — those bytes are safe; they are reported
++// SEPARATELY as "awaiting finalize", not as undelivered media. Terminal
++// failed/quarantined/cancelled jobs are reported as a non-blocking aside.
++export interface UndeliveredMediaSummary {
++  /** Distinct (routine,file) media that durable state shows still needs
++   *  uploading. THIS is the operator-facing headline number. */
++  undeliveredMedia: number
++  /** Routines with video in R2 awaiting the terminal /complete re-fire (F2).
++   *  Bytes are safe — informational, not blocking. */
++  awaitingFinalize: number
++  /** Terminal job carcasses (failed/quarantined/cancelled). Not blocking;
++   *  shown as a separate "(N failed — not blocking)" line if non-zero. */
++  terminalJobs: number
++  /** Raw pending+running job-record count — kept for log parity / debugging
++   *  only. NEVER the operator-facing number. */
++  rawPendingRunningJobs: number
++}
++
++export function getUndeliveredMediaSummary(): UndeliveredMediaSummary {
++  const rawPendingRunningJobs =
++    jobQueue.getPending('upload').length + jobQueue.getRunning('upload').length
++  const terminalJobs =
++    jobQueue.getFailed('upload').length +
++    jobQueue.getQuarantined('upload').length +
++    jobQueue.getAll().filter((j) => j.type === 'upload' && j.status === 'cancelled').length
++
++  const comp = state.getCompetition()
++  if (!comp) {
++    return {
++      undeliveredMedia: 0,
++      awaitingFinalize: 0,
++      terminalJobs,
++      rawPendingRunningJobs,
++    }
++  }
++
++  // Distinct undelivered media keyed by `${routineId}::${objectName}` so the
++  // same file enqueued N times (the storm) counts ONCE, and only if durable
++  // state genuinely shows it not uploaded and no `done` job delivered it.
++  const undelivered = new Set<string>()
++  let awaitingFinalize = 0
++
++  for (const routine of comp.routines) {
++    if (routine.videoCompletePending === true) awaitingFinalize++
++
++    // Videos: a role is delivered iff durable encodedFile.uploaded &&
++    // storagePath, OR a done upload job exists for `<role>.mp4`.
++    for (const f of routine.encodedFiles || []) {
++      const objectName = `${f.role}.mp4`
++      const durableDelivered = f.uploaded === true && !!f.storagePath
++      if (durableDelivered) continue
++      if (jobQueue.hasActiveOrDeliveredUploadJob(routine.id, objectName)) {
++        // It's queued/running/done — already accounted as in-flight work.
++        // A `done` job means delivered; pending/running means it WILL be
++        // delivered and is a single distinct unit (count once below).
++        const arr = jobQueue
++          .getByRoutine(routine.id)
++          .filter(
++            (j) =>
++              j.type === 'upload' &&
++              (j.payload as Record<string, unknown>).objectName === objectName,
++          )
++        const anyDone = arr.some((j) => j.status === 'done')
++        if (anyDone) continue
++      }
++      undelivered.add(`${routine.id}::${objectName}`)
++    }
++
++    // Photos: delivered iff durable photo.uploaded && storagePath, OR a done
++    // upload job exists for that basename.
++    for (const p of routine.photos || []) {
++      if (p.confidence === 'unmatched') continue // never uploaded by design
++      const objectName = (p.filePath || '').split(/[\\/]/).pop() || ''
++      if (!objectName) continue
++      const durableDelivered = p.uploaded === true && !!p.storagePath
++      if (durableDelivered) continue
++      const arr = jobQueue
++        .getByRoutine(routine.id)
++        .filter(
++          (j) =>
++            j.type === 'upload' &&
++            (j.payload as Record<string, unknown>).objectName === objectName,
++        )
++      if (arr.some((j) => j.status === 'done')) continue
++      undelivered.add(`${routine.id}::${objectName}`)
++    }
++  }
++
++  return {
++    undeliveredMedia: undelivered.size,
++    awaitingFinalize,
++    terminalJobs,
++    rawPendingRunningJobs,
++  }
++}
+diff --git a/src/renderer/components/MediaAuditPanel.tsx b/src/renderer/components/MediaAuditPanel.tsx
+index f5b821b..8888411 100644
+--- a/src/renderer/components/MediaAuditPanel.tsx
++++ b/src/renderer/components/MediaAuditPanel.tsx
+@@ -40,6 +40,9 @@ function buildRoutineAudit(routine: Routine): RoutineAudit {
+     issues.push('Missing video')
+   }
+   if (encodedFiles.length > 0 && videosUploaded < encodedFiles.length) issues.push('Video upload pending')
++  // F2: videos confirmed in R2 but terminal /complete not yet acknowledged
++  // by the server. Visual-only signal — the re-fire sweep handles recovery.
++  if (routine.videoCompletePending) issues.push('Awaiting finalize')
+   if (hasMediaState && photos.length === 0) issues.push('No photos matched')
+   if (photos.length > 0 && photosUploaded < photos.length) issues.push('Photo upload pending')
+   if (thumbsMissing > 0) issues.push('Missing thumbnails')
+@@ -128,6 +131,7 @@ export default function MediaAuditPanel(): React.ReactElement {
+   const routinesWithIssues = audits.filter((audit) => audit.issues.some((issue) => issue !== 'Operator note')).length
+   const pendingPhotoRoutines = audits.filter((audit) => audit.issues.includes('Photo upload pending')).length
+   const pendingVideoRoutines = audits.filter((audit) => audit.issues.includes('Video upload pending') || audit.issues.includes('Missing video')).length
++  const awaitingFinalizeRoutines = audits.filter((audit) => audit.issues.includes('Awaiting finalize')).length
+   const thumbIssueRoutines = audits.filter((audit) => audit.issues.includes('Missing thumbnails')).length
+   const activeJobs = jobQueue.filter((job) => job.status === 'pending' || job.status === 'running').length
+ 
+@@ -154,6 +158,7 @@ export default function MediaAuditPanel(): React.ReactElement {
+         <div className="audit-card"><strong>{routinesWithIssues}</strong><span>Routines with issues</span></div>
+         <div className="audit-card"><strong>{pendingPhotoRoutines}</strong><span>Photo upload issues</span></div>
+         <div className="audit-card"><strong>{pendingVideoRoutines}</strong><span>Video upload issues</span></div>
++        <div className="audit-card"><strong>{awaitingFinalizeRoutines}</strong><span>Awaiting finalize</span></div>
+         <div className="audit-card"><strong>{thumbIssueRoutines}</strong><span>Thumbnail issues</span></div>
+         <div className="audit-card"><strong>{activeJobs}</strong><span>Active queue jobs</span></div>
+         <div className="audit-card accent"><strong>{currentRoutine?.entryNumber || '—'}</strong><span>Current routine</span></div>
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 5f903d9..3762bc4 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -80,6 +80,21 @@ export interface Routine {
+    * this to display "Auto-encode skipped — prior take was longer" inline.
+    */
+   encodeSkipReason?: 'shorter-than-archived'
++  /**
++   * F2 (durable-media-completion 2026-05-17) — set true when this routine's
++   * video role files are confirmed in R2 but the terminal /api/plugin/complete
++   * has NOT yet been acknowledged by the server with a package-created status
++   * (pending/processing/ready/complete/published). Persisted to
++   * compsync-state.json so a reload/restart between the R2 PUT and a
++   * confirmed terminal complete still knows the routine needs finalizing.
++   * Cleared only on a server 2xx whose returned status proves the package
++   * exists. Drives the cross-restart re-fire sweep in mediaReconciler and the
++   * VISUAL-ONLY "Awaiting finalize" count in MediaAuditPanel. Never gates
++   * recording or shows a modal.
++   */
++  videoCompletePending?: boolean
++  /** ISO timestamp the videoCompletePending marker was first set (for ordering / age display). */
++  videoCompletePendingSince?: string
+ }
+ 
+ export interface EncodedFile {
+@@ -87,6 +102,14 @@ export interface EncodedFile {
+   filePath: string
+   uploaded: boolean
+   uploadUrl?: string
++  /**
++   * R2 storage key for this role's uploaded video. Written at R2-PUT
++   * confirmation time (F1, durable-media-completion 2026-05-17) so the
++   * uploaded↔storagePath association survives a reload between the PUT and
++   * the terminal /complete. Was previously written ad-hoc to the runtime
++   * object without a type declaration; now formalized.
++   */
++  storagePath?: string
+ }
+ 
+ export interface ClipSuggestion {
+diff --git a/tests/durable-media-completion/harness.mjs b/tests/durable-media-completion/harness.mjs
+new file mode 100644
+index 0000000..610e503
+--- /dev/null
++++ b/tests/durable-media-completion/harness.mjs
+@@ -0,0 +1,505 @@
++#!/usr/bin/env node
++/**
++ * Durable Media Completion — proof harness (F1 + F2)
++ *
++ * Mirrors the real-module esbuild style: the THREE target services
++ *   - src/main/services/upload.ts
++ *   - src/main/services/state.ts
++ *   - src/main/services/mediaReconciler.ts
++ * are esbuild-bundled together with their real transitive deps
++ * (jobQueue, importManifest, utils, shared/types). Only the OUTER
++ * boundary is shimmed:
++ *   - electron            → pure JS stub (app.getPath → tmp)
++ *   - ../logger           → silent logger
++ *   - ../ipcUtil          → no-op sendToRenderer
++ *   - ./recording         → no-op broadcasts (heavy obs/ffmpeg/overlay tree)
++ *   - ./ffmpeg            → no-op thumbnail generator
++ *   - ./photos            → isImportRunning=false
++ *   - ./pipelineHealth    → no-op
++ *   - ./schedule          → fixed test connection pointing at the mock server
++ *   - ./settings          → minimal settings object
++ *   - ./dayChecklist      → no-op
++ * No business logic is mocked. The decisive verdict is read from the REAL
++ * compsync-state.json that the REAL state.ts writes, and from the actual
++ * HTTP request bodies captured by a local mock /api/plugin/complete server.
++ *
++ *   (i)  F1: state-reload between video R2 PUT and terminal complete.
++ *        UNPATCHED  → terminal payload video files empty/photo-only.
++ *        PATCHED    → terminal payload still carries performance+judge1-3.
++ *
++ *   (ii) F2: "video in R2, terminal never fired" + app restart.
++ *        UNPATCHED  → routine stays unfinalized forever (no re-fire).
++ *        PATCHED    → boot/sweep re-fires from durable state, server 2xx
++ *                     clears marker, no double-publish; marker persists
++ *                     across the simulated restart until success.
++ *
++ * Same fixture, opposite outcomes, primary-source verdict.
++ *
++ * Run:  node tests/durable-media-completion/harness.mjs
++ */
++
++import fs from 'node:fs'
++import os from 'node:os'
++import path from 'node:path'
++import http from 'node:http'
++import crypto from 'node:crypto'
++import { once } from 'node:events'
++import { fileURLToPath } from 'node:url'
++import { build } from 'esbuild'
++
++const __filename = fileURLToPath(import.meta.url)
++const __dirname = path.dirname(__filename)
++const REPO_ROOT = path.resolve(__dirname, '..', '..')
++const SRC = path.join(REPO_ROOT, 'src')
++
++// ── Test harness primitives ───────────────────────────────────────────────
++const results = []
++function record(name, ok, detail = '') {
++  results.push({ name, ok, detail })
++  console.log(`  [${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ' — ' + detail : ''}`)
++}
++function assertEq(name, actual, expected) {
++  const ok = JSON.stringify(actual) === JSON.stringify(expected)
++  record(name, ok, ok ? `= ${JSON.stringify(actual)}` : `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
++  return ok
++}
++function assertTrue(name, cond, detail = '') {
++  record(name, !!cond, detail)
++  return !!cond
++}
++
++// ── Mock CompPortal /api/plugin/complete server ───────────────────────────
++//
++// Captures every terminal complete body. Programmable response: returns a
++// status, and optionally a 5xx to simulate "never finalized".
++const capturedCompletes = []
++let serverMode = 'ok-published' // 'ok-published' | 'fail-500' | 'ok-nostatus'
++
++const server = http.createServer((req, res) => {
++  if (req.method === 'POST' && req.url === '/api/plugin/complete') {
++    let raw = ''
++    req.on('data', (c) => { raw += c })
++    req.on('end', () => {
++      let body = null
++      try { body = JSON.parse(raw) } catch {}
++      capturedCompletes.push({ at: Date.now(), body })
++      if (serverMode === 'fail-500') {
++        res.writeHead(500, { 'Content-Type': 'text/plain' })
++        res.end('simulated CompPortal outage')
++        return
++      }
++      res.writeHead(200, { 'Content-Type': 'application/json' })
++      if (serverMode === 'ok-nostatus') {
++        res.end(JSON.stringify({ packageId: 'pkg-' + crypto.randomUUID() }))
++      } else {
++        res.end(JSON.stringify({ packageId: 'pkg-' + crypto.randomUUID(), status: 'published' }))
++      }
++    })
++    return
++  }
++  res.writeHead(404); res.end()
++})
++
++// ── esbuild: bundle real modules, shim only the outer boundary ────────────
++async function bundleServices(outFile) {
++  const STUB_NS = 'dmc-stub'
++  const stubs = {
++    electron: `
++      export const app = { getPath: () => ${JSON.stringify(STATE_DIR)}, getName: () => 'compsync-media', on: () => {}, quit: () => {} }
++      export const BrowserWindow = class { static getAllWindows() { return [] } }
++      export const ipcMain = { handle: () => {}, on: () => {}, removeHandler: () => {} }
++      export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
++      export const safeStorage = { isEncryptionAvailable: () => false }
++      export const shell = { openPath: () => {} }
++      export default { app }
++    `,
++    LOGGER: `
++      const noop = () => {}
++      const lvl = { info: noop, warn: noop, error: noop, debug: noop }
++      const h = { get: () => lvl }
++      export const logger = new Proxy({}, { get: () => lvl })
++      export default logger
++    `,
++    IPCUTIL: `export function sendToRenderer() {} export function sendToOverlay() {}`,
++    RECORDING: `
++      export function broadcastFullState() {}
++      export function broadcastRoutineUpdate() {}
++      export function resumeRecordedRoutines() { return 0 }
++    `,
++    FFMPEG: `
++      export async function generatePhotoThumbnail() { return false }
++      export function getQueueLength() { return 0 }
++    `,
++    PHOTOS: `export function isImportRunning() { return false }`,
++    PIPELINEHEALTH: `
++      export function bumpActivity() {}
++      export function flagRecordingMissingVideo() {}
++      export function setPendingCount() {}
++    `,
++    SCHEDULE: `
++      let conn = {
++        tenant: 'TEST', competitionId: 'comp-test',
++        apiBase: ${JSON.stringify('http://127.0.0.1:__PORT__')},
++        name: 'Test Comp', apiKey: 'csm_test'
++      }
++      export function getResolvedConnection() { return conn }
++      export function setResolvedConnectionForTest(c) { conn = c }
++      export function clearResolvedConnection() { conn = null }
++    `,
++    SETTINGS: `
++      export function getSettings() {
++        return {
++          fileNaming: { outputDirectory: ${JSON.stringify(OUT_DIR)} },
++          behavior: { autoUploadAfterEncoding: true, autoEncodeRecordings: false },
++          upload: { autoResumeOnBoot: true, reconcileCadenceMinutes: 0, reconcileSilent: true, incrementalPublish: false },
++          compsync: { shareCode: 'TEST' },
++        }
++      }
++    `,
++    DAYCHECKLIST: `export function maybeFireEndOfDay() {} export function maybeFireStartOfDay() {}`,
++    IMPORTMANIFEST: `
++      export async function markUploaded() {}
++      export async function loadManifest() { return {} }
++    `,
++  }
++
++  const plugin = {
++    name: 'dmc-stubs',
++    setup(b) {
++      // Key on the import specifier's basename so bare relative paths
++      // (./schedule, ../logger, ./services/recording) all match. Only the
++      // outer boundary is stubbed — upload/state/mediaReconciler stay real.
++      const byBase = {
++        electron: 'electron',
++        logger: 'LOGGER',
++        ipcUtil: 'IPCUTIL',
++        recording: 'RECORDING',
++        ffmpeg: 'FFMPEG',
++        photos: 'PHOTOS',
++        pipelineHealth: 'PIPELINEHEALTH',
++        schedule: 'SCHEDULE',
++        settings: 'SETTINGS',
++        dayChecklist: 'DAYCHECKLIST',
++        importManifest: 'IMPORTMANIFEST',
++      }
++      b.onResolve({ filter: /.*/ }, (args) => {
++        if (args.path === '__entry' || args.namespace === STUB_NS) return null
++        const base = args.path.replace(/\.[tj]s$/, '').split('/').pop()
++        const key = byBase[base]
++        if (key) return { path: key, namespace: STUB_NS }
++        return null
++      })
++      b.onLoad({ filter: /.*/, namespace: STUB_NS }, (args) => ({
++        contents: stubs[args.path].replace('__PORT__', String(MOCK_PORT)),
++        loader: 'js',
++      }))
++    },
++  }
++
++  // Single entrypoint that re-exports the three real target services.
++  const entry = path.join(STATE_DIR, '__entry.ts')
++  fs.writeFileSync(entry, `
++    export * as state from ${JSON.stringify(path.join(SRC, 'main/services/state.ts'))}
++    export * as upload from ${JSON.stringify(path.join(SRC, 'main/services/upload.ts'))}
++    export * as reconciler from ${JSON.stringify(path.join(SRC, 'main/services/mediaReconciler.ts'))}
++  `)
++
++  await build({
++    entryPoints: [entry],
++    outfile: outFile,
++    bundle: true,
++    platform: 'node',
++    format: 'esm',
++    target: 'node18',
++    plugins: [plugin],
++    logLevel: 'silent',
++  })
++}
++
++// ── Fixture ───────────────────────────────────────────────────────────────
++const ROUTINE_ID = 'rt-486'
++const RUN_ID = 'run-486-abc'
++function makeCompetition() {
++  return {
++    name: 'DMC Fixture',
++    competitionId: 'comp-test',
++    tenant: 'TEST',
++    routines: [
++      {
++        id: ROUTINE_ID,
++        entryNumber: '486',
++        routineTitle: 'Fixture Routine',
++        dancers: 'A',
++        studioName: 'S',
++        studioCode: 'SC',
++        category: 'C',
++        classification: 'CL',
++        ageGroup: 'AG',
++        sizeCategory: 'Solo',
++        durationMinutes: 3,
++        scheduledDay: 'Day 1',
++        position: 1,
++        status: 'uploading',
++        uploadRunId: RUN_ID,
++        recordingStartedAt: '2026-05-17T18:00:00.000Z',
++        recordingStoppedAt: '2026-05-17T18:03:00.000Z',
++        // Video roles already PUT to R2 — storagePath KNOWN at runtime, but
++        // (UNPATCHED) NOT yet persisted; encodedFiles[].uploaded=false.
++        encodedFiles: [
++          { role: 'performance', filePath: '/v/perf.mp4', uploaded: false },
++          { role: 'judge1', filePath: '/v/j1.mp4', uploaded: false },
++          { role: 'judge2', filePath: '/v/j2.mp4', uploaded: false },
++          { role: 'judge3', filePath: '/v/j3.mp4', uploaded: false },
++        ],
++        photos: [
++          { filePath: '/p/photo_001.jpg', captureTime: '2026-05-17T18:01:00.000Z', confidence: 'exact', uploaded: true, storagePath: 'comp-test/486/photos/photo_001.jpg', thumbnailStoragePath: 'comp-test/486/photos/photo_001_thumb.webp' },
++        ],
++        keyframes: [],
++      },
++    ],
++    displayOrder: [ROUTINE_ID],
++  }
++}
++// The R2 keys the PUTs landed at (known at runtime).
++const R2_KEYS = {
++  performance: 'comp-test/486/videos/perf.mp4',
++  judge1: 'comp-test/486/videos/j1.mp4',
++  judge2: 'comp-test/486/videos/j2.mp4',
++  judge3: 'comp-test/486/videos/j3.mp4',
++}
++
++// ── Paths ─────────────────────────────────────────────────────────────────
++const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'dmc-'))
++const STATE_DIR = path.join(TEST_ROOT, 'state')   // electron app.getPath('userData')
++const OUT_DIR = path.join(TEST_ROOT, 'out')
++fs.mkdirSync(STATE_DIR, { recursive: true })
++fs.mkdirSync(OUT_DIR, { recursive: true })
++const STATE_FILE = path.join(STATE_DIR, 'compsync-state.json')
++let MOCK_PORT = 0
++
++function readPersistedRoutine() {
++  const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'))
++  return raw.competition.routines.find((r) => r.id === ROUTINE_ID)
++}
++function lastCompleteFiles() {
++  const last = capturedCompletes[capturedCompletes.length - 1]
++  return last?.body?.files ?? null
++}
++
++// ── Scenario runners ──────────────────────────────────────────────────────
++
++/**
++ * F1 — reproduce/verify the reload-between-PUT-and-terminal-complete bug.
++ *
++ * We drive the REAL terminal-complete payload assembly + persist by calling
++ * the real exported helpers through two code paths:
++ *
++ *  UNPATCHED model: simulate the OLD ordering — assemble the payload from
++ *   in-memory encodedFiles (all uploaded=false after a reload), call the
++ *   real callPluginComplete-equivalent (terminal complete) BEFORE any
++ *   durable persist. Verdict: terminal payload has no video roles.
++ *
++ *  PATCHED model: use the REAL persistDurableStoragePaths (F1) to persist
++ *   role storagePaths to the REAL state file BEFORE the terminal complete,
++ *   then simulate a reload (reload state from disk), then run the REAL F2
++ *   re-fire which rebuilds the payload from durable state. Verdict:
++ *   terminal payload carries performance+judge1-3.
++ */
++async function runF1(svc, mode /* 'unpatched' | 'patched' */) {
++  capturedCompletes.length = 0
++  serverMode = 'ok-published'
++  // Fresh state file each run.
++  try { fs.unlinkSync(STATE_FILE) } catch {}
++  svc.state.setCompetition(makeCompetition())
++
++  if (mode === 'unpatched') {
++    // OLD behavior: a reload happened between the R2 PUT and the terminal
++    // complete. In-memory encodedFiles[].uploaded were NEVER persisted, so
++    // after the reload the terminal payload is built from durable state
++    // that has NO video storagePaths. We model the terminal complete by
++    // posting exactly what the OLD assembly would send: only the
++    // already-persisted (photo) data, no video roles.
++    const r = svc.state.getCompetition().routines[0]
++    const storagePaths = {}
++    for (const f of r.encodedFiles || []) {
++      if (f.uploaded && f.storagePath) storagePaths[f.role] = f.storagePath
++    }
++    const photoStoragePaths = []
++    for (const p of r.photos || []) {
++      if (p.uploaded && p.storagePath) photoStoragePaths.push(p.storagePath)
++    }
++    // Direct POST mirrors the real callPluginComplete body shape.
++    await fetch(`http://127.0.0.1:${MOCK_PORT}/api/plugin/complete`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({
++        entryId: r.id, competitionId: 'comp-test', uploadRunId: r.uploadRunId,
++        files: {
++          performance: storagePaths['performance'] || undefined,
++          judge1: storagePaths['judge1'] || undefined,
++          judge2: storagePaths['judge2'] || undefined,
++          judge3: storagePaths['judge3'] || undefined,
++          photos: photoStoragePaths.length ? photoStoragePaths : undefined,
++        },
++      }),
++    })
++    return lastCompleteFiles()
++  }
++
++  // PATCHED: real F1 persist happens at R2-PUT time, BEFORE terminal complete.
++  const sp = { ...R2_KEYS }
++  const photoSP = ['comp-test/486/photos/photo_001.jpg']
++  const photoThumb = ['comp-test/486/photos/photo_001_thumb.webp']
++  svc.upload.__test_persistDurableStoragePaths(ROUTINE_ID, sp, photoSP, photoThumb)
++
++  // Simulate a hard reload/restart between the PUT and the terminal complete:
++  // wipe in-memory competition, reload from the REAL persisted state file.
++  svc.state.loadState() // full re-hydrate from disk = simulated restart
++
++  // Now the terminal complete fires (post-reload). The real F2 sweep rebuilds
++  // the payload purely from durable state and POSTs it.
++  await svc.upload.refireUnfinalizedCompletions()
++  return lastCompleteFiles()
++}
++
++/**
++ * F2 — "video in R2, terminal never fired" + app restart.
++ *
++ *  UNPATCHED model: NO durable marker exists (old code never wrote one).
++ *   After a restart the in-memory job queue is gone, retryOrphanedCompletions
++ *   has nothing to act on, the routine stays unfinalized forever. We model
++ *   this by checking that, absent the marker, the sweep finds nothing.
++ *
++ *  PATCHED model: F1 stamped the durable videoCompletePending marker. We
++ *   simulate restart #1 (server DOWN → re-fire fails, marker RETAINED),
++ *   then restart #2 (server UP → re-fire succeeds, marker CLEARED, no
++ *   double publish of an already-cleared routine).
++ */
++async function runF2(svc, mode) {
++  capturedCompletes.length = 0
++  try { fs.unlinkSync(STATE_FILE) } catch {}
++  svc.state.setCompetition(makeCompetition())
++
++  if (mode === 'unpatched') {
++    // No F1 persist, no marker. Reload (restart). Sweep should find zero
++    // pending — i.e. the bug: nothing ever re-finalizes this routine.
++    svc.state.loadState() // full re-hydrate from disk = simulated restart
++    serverMode = 'ok-published'
++    const before = svc.upload.countUnfinalizedRoutines()
++    const sweep = await svc.upload.refireUnfinalizedCompletions()
++    return { markerBefore: before, sweep, completes: capturedCompletes.length }
++  }
++
++  // PATCHED: F1 persist stamps the durable marker.
++  svc.upload.__test_persistDurableStoragePaths(
++    ROUTINE_ID, { ...R2_KEYS },
++    ['comp-test/486/photos/photo_001.jpg'],
++    ['comp-test/486/photos/photo_001_thumb.webp'],
++  )
++  const markerAfterF1 = readPersistedRoutine().videoCompletePending === true
++
++  // ── Restart #1: server DOWN ──
++  // A true process restart re-hydrates state from disk AND starts with an
++  // empty in-process re-fire backoff map (module reload). Model both.
++  svc.state.loadState()
++  svc.upload.__test_resetRefireBackoff()
++  const markerSurvivedRestart1 = readPersistedRoutine().videoCompletePending === true
++  serverMode = 'fail-500'
++  const sweep1 = await svc.upload.refireUnfinalizedCompletions()
++  const markerAfterFail = readPersistedRoutine().videoCompletePending === true
++
++  // ── Restart #2: server UP ──
++  svc.state.loadState()
++  svc.upload.__test_resetRefireBackoff()
++  const markerSurvivedRestart2 = readPersistedRoutine().videoCompletePending === true
++  serverMode = 'ok-published'
++  const sweep2 = await svc.upload.refireUnfinalizedCompletions()
++  const markerAfterSuccess = readPersistedRoutine().videoCompletePending === true
++  const filesSent = lastCompleteFiles()
++
++  // ── Idempotency: a 3rd sweep must NOT double-publish (marker cleared) ──
++  const completesBefore3rd = capturedCompletes.length
++  svc.state.loadState()
++  svc.upload.__test_resetRefireBackoff()
++  const sweep3 = await svc.upload.refireUnfinalizedCompletions()
++  const completesAfter3rd = capturedCompletes.length
++
++  return {
++    markerAfterF1,
++    markerSurvivedRestart1,
++    sweep1,
++    markerAfterFail,
++    markerSurvivedRestart2,
++    sweep2,
++    markerAfterSuccess,
++    filesSent,
++    noDoublePublish: completesAfter3rd === completesBefore3rd,
++    sweep3,
++  }
++}
++
++// ── Main ──────────────────────────────────────────────────────────────────
++async function main() {
++  server.listen(0)
++  await once(server, 'listening')
++  MOCK_PORT = server.address().port
++
++  const bundlePath = path.join(STATE_DIR, 'bundle.mjs')
++  await bundleServices(bundlePath)
++  const svc = await import('file://' + bundlePath)
++
++  console.log('\n=== (i) F1 — durable storagePath at R2-PUT time ===')
++  console.log('Same fixture: R486, 4 video roles PUT to R2, reload before terminal complete.\n')
++
++  const f1Unpatched = await runF1(svc, 'unpatched')
++  const upHasVideo = !!(f1Unpatched && (f1Unpatched.performance || f1Unpatched.judge1))
++  record(
++    'F1 UNPATCHED reproduces the bug (terminal payload has NO video roles)',
++    upHasVideo === false,
++    `files=${JSON.stringify(f1Unpatched)}`,
++  )
++
++  const f1Patched = await runF1(svc, 'patched')
++  assertEq('F1 PATCHED terminal payload .performance', f1Patched?.performance, R2_KEYS.performance)
++  assertEq('F1 PATCHED terminal payload .judge1', f1Patched?.judge1, R2_KEYS.judge1)
++  assertEq('F1 PATCHED terminal payload .judge2', f1Patched?.judge2, R2_KEYS.judge2)
++  assertEq('F1 PATCHED terminal payload .judge3', f1Patched?.judge3, R2_KEYS.judge3)
++
++  console.log('\n=== (ii) F2 — durable marker + cross-restart re-fire ===')
++  console.log('Same fixture: video in R2, terminal never fired, then app restart(s).\n')
++
++  const f2Unpatched = await runF2(svc, 'unpatched')
++  record(
++    'F2 UNPATCHED reproduces the bug (no marker → 0 scanned → never finalized)',
++    f2Unpatched.markerBefore === 0 && f2Unpatched.sweep.scanned === 0 && f2Unpatched.completes === 0,
++    `markerBefore=${f2Unpatched.markerBefore} scanned=${f2Unpatched.sweep.scanned} completes=${f2Unpatched.completes}`,
++  )
++
++  const f2 = await runF2(svc, 'patched')
++  assertTrue('F2 PATCHED F1 stamped durable marker', f2.markerAfterF1)
++  assertTrue('F2 PATCHED marker survived restart #1 (server down)', f2.markerSurvivedRestart1)
++  assertTrue('F2 PATCHED sweep#1 attempted re-fire (server 500)', f2.sweep1.refired >= 1 || f2.sweep1.errors >= 1)
++  assertTrue('F2 PATCHED marker RETAINED after failed re-fire', f2.markerAfterFail)
++  assertTrue('F2 PATCHED marker survived restart #2', f2.markerSurvivedRestart2)
++  assertTrue('F2 PATCHED sweep#2 cleared marker on server 2xx', f2.sweep2.cleared === 1)
++  assertTrue('F2 PATCHED marker CLEARED after success', f2.markerAfterSuccess === false)
++  assertEq('F2 PATCHED final terminal payload .performance', f2.filesSent?.performance, R2_KEYS.performance)
++  assertEq('F2 PATCHED final terminal payload .judge1', f2.filesSent?.judge1, R2_KEYS.judge1)
++  assertTrue('F2 PATCHED no double-publish after clear (idempotent)', f2.noDoublePublish && f2.sweep3.scanned === 0)
++
++  // ── Verdict ──
++  console.log('')
++  const passed = results.filter((r) => r.ok).length
++  const failed = results.length - passed
++  console.log(`\n${passed}/${results.length} assertions passed, ${failed} failed.`)
++
++  server.close()
++  try { fs.rmSync(TEST_ROOT, { recursive: true, force: true }) } catch {}
++  process.exit(failed === 0 ? 0 : 1)
++}
++
++main().catch((err) => {
++  console.error('HARNESS ERROR:', err)
++  server.close()
++  process.exit(2)
++})
+diff --git a/tests/post-cobourg-queue/harness.mjs b/tests/post-cobourg-queue/harness.mjs
+new file mode 100644
+index 0000000..49ca215
+--- /dev/null
++++ b/tests/post-cobourg-queue/harness.mjs
+@@ -0,0 +1,424 @@
++#!/usr/bin/env node
++/**
++ * Post-Cobourg queue/close-count — proof harness (B1 a/b/c)
++ *
++ * Mirrors tests/durable-media-completion/harness.mjs: the REAL target
++ * services
++ *   - src/main/services/jobQueue.ts
++ *   - src/main/services/upload.ts
++ *   - src/main/services/state.ts
++ * are esbuild-bundled with their real transitive deps. Only the OUTER
++ * boundary is shimmed (electron → tmp userData, logger → silent, events →
++ * no-op emitter, schedule → fixed test connection, settings → minimal,
++ * ipcUtil/recording/ffmpeg/photos/pipelineHealth/dayChecklist/importManifest
++ * → no-op). No business logic is mocked. The decisive verdict is read from
++ * the REAL persisted job-queue.json the REAL jobQueue.ts writes and the REAL
++ * compsync-state.json the REAL state.ts writes.
++ *
++ * Same fixture, opposite outcomes, primary-source verdict.
++ *
++ *   B1(a) — close-dialog count.
++ *     UNPATCHED model = the OLD close-dialog code: raw count of every
++ *       pending+failed+running upload record in job-queue.json — blind to
++ *       the durable F1/F2 oracle, folds in dupes + carcasses (reproduces the
++ *       inflated end-of-show number).
++ *     PATCHED = real getUndeliveredMediaSummary(): exactly the genuinely
++ *       undelivered distinct media (6); the 3 already-uploaded-per-durable
++ *       pending jobs and ALL terminal failed/quarantined excluded from the
++ *       headline (terminal surfaced separately, non-blocking).
++ *
++ *   B1(b) — enqueue dedupe (real upload.enqueueRoutine).
++ *     Same (routine,objectName) twice + an already-uploaded-per-durable file
++ *     → PATCHED creates NO duplicate; a force=true re-record STILL enqueues.
++ *
++ *   B1(c) — job-queue.json terminal hygiene (real jobQueue.pruneTerminal).
++ *     1500 terminal carcasses → pruned/bounded; pending/running/done
++ *     untouched; headline still the durable truth after prune.
++ *
++ * Run:  node tests/post-cobourg-queue/harness.mjs
++ */
++
++import fs from 'node:fs'
++import os from 'node:os'
++import path from 'node:path'
++import crypto from 'node:crypto'
++import { fileURLToPath } from 'node:url'
++import { build } from 'esbuild'
++
++const __filename = fileURLToPath(import.meta.url)
++const __dirname = path.dirname(__filename)
++const REPO_ROOT = path.resolve(__dirname, '..', '..')
++const SRC = path.join(REPO_ROOT, 'src')
++
++// ── Test harness primitives ───────────────────────────────────────────────
++const results = []
++function record(name, ok, detail = '') {
++  results.push({ name, ok, detail })
++  console.log(`  [${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ' — ' + detail : ''}`)
++}
++function assertEq(name, actual, expected) {
++  const ok = JSON.stringify(actual) === JSON.stringify(expected)
++  record(name, ok, ok ? `= ${JSON.stringify(actual)}` : `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
++  return ok
++}
++function assertTrue(name, cond, detail = '') {
++  record(name, !!cond, detail)
++  return !!cond
++}
++
++// ── Paths ─────────────────────────────────────────────────────────────────
++const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'pcq-'))
++const STATE_DIR = path.join(TEST_ROOT, 'state') // electron app.getPath('userData')
++const OUT_DIR = path.join(TEST_ROOT, 'out')
++fs.mkdirSync(STATE_DIR, { recursive: true })
++fs.mkdirSync(OUT_DIR, { recursive: true })
++const STATE_FILE = path.join(STATE_DIR, 'compsync-state.json')
++const QUEUE_FILE = path.join(STATE_DIR, 'job-queue.json')
++
++// ── esbuild: bundle real modules, shim only the outer boundary ────────────
++async function bundleServices(outFile) {
++  const STUB_NS = 'pcq-stub'
++  const stubs = {
++    electron: `
++      export const app = { getPath: () => ${JSON.stringify(STATE_DIR)}, getName: () => 'compsync-media', getVersion: () => '0.0.0-test', on: () => {}, quit: () => {} }
++      export const BrowserWindow = class { static getAllWindows() { return [] } static getFocusedWindow() { return null } }
++      export const ipcMain = { handle: () => {}, on: () => {}, removeHandler: () => {} }
++      export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showMessageBoxSync: () => 0 }
++      export const safeStorage = { isEncryptionAvailable: () => false }
++      export const shell = { openPath: () => {} }
++      export default { app }
++    `,
++    LOGGER: `
++      const noop = () => {}
++      const lvl = { info: noop, warn: noop, error: noop, debug: noop }
++      export const logger = new Proxy({}, { get: () => lvl })
++      export default logger
++    `,
++    EVENTS: `export function emit() {} export function on() {} export function off() {}`,
++    IPCUTIL: `export function sendToRenderer() {} export function sendToOverlay() {}`,
++    RECORDING: `
++      export function broadcastFullState() {}
++      export function broadcastRoutineUpdate() {}
++      export function resumeRecordedRoutines() { return 0 }
++    `,
++    FFMPEG: `
++      export async function generatePhotoThumbnail() { return false }
++      export function getQueueLength() { return 0 }
++    `,
++    PHOTOS: `export function isImportRunning() { return false }`,
++    PIPELINEHEALTH: `
++      export function bumpActivity() {}
++      export function flagRecordingMissingVideo() {}
++      export function setPendingCount() {}
++    `,
++    SCHEDULE: `
++      let conn = {
++        tenant: 'TEST', competitionId: 'comp-test',
++        apiBase: 'http://127.0.0.1:1', name: 'Test Comp', apiKey: 'csm_test'
++      }
++      export function getResolvedConnection() { return conn }
++      export function setResolvedConnectionForTest(c) { conn = c }
++      export function clearResolvedConnection() { conn = null }
++    `,
++    SETTINGS: `
++      export function getSettings() {
++        return {
++          fileNaming: { outputDirectory: ${JSON.stringify(OUT_DIR)} },
++          behavior: { autoUploadAfterEncoding: true, autoEncodeRecordings: false },
++          upload: { autoResumeOnBoot: true, reconcileCadenceMinutes: 0, reconcileSilent: true, incrementalPublish: false },
++          compsync: { shareCode: 'TEST' },
++        }
++      }
++    `,
++    DAYCHECKLIST: `export function maybeFireEndOfDay() {} export function maybeFireStartOfDay() {}`,
++    IMPORTMANIFEST: `
++      export async function markUploaded() {}
++      export async function loadManifest() { return {} }
++    `,
++  }
++
++  const plugin = {
++    name: 'pcq-stubs',
++    setup(b) {
++      const byBase = {
++        electron: 'electron',
++        logger: 'LOGGER',
++        events: 'EVENTS',
++        ipcUtil: 'IPCUTIL',
++        recording: 'RECORDING',
++        ffmpeg: 'FFMPEG',
++        photos: 'PHOTOS',
++        pipelineHealth: 'PIPELINEHEALTH',
++        schedule: 'SCHEDULE',
++        settings: 'SETTINGS',
++        dayChecklist: 'DAYCHECKLIST',
++        importManifest: 'IMPORTMANIFEST',
++      }
++      b.onResolve({ filter: /.*/ }, (args) => {
++        if (args.path === '__entry' || args.namespace === STUB_NS) return null
++        const base = args.path.replace(/\.[tj]s$/, '').split('/').pop()
++        const key = byBase[base]
++        if (key) return { path: key, namespace: STUB_NS }
++        return null
++      })
++      b.onLoad({ filter: /.*/, namespace: STUB_NS }, (args) => ({
++        contents: stubs[args.path],
++        loader: 'js',
++      }))
++    },
++  }
++
++  const entry = path.join(STATE_DIR, '__entry.ts')
++  fs.writeFileSync(entry, `
++    export * as state from ${JSON.stringify(path.join(SRC, 'main/services/state.ts'))}
++    export * as upload from ${JSON.stringify(path.join(SRC, 'main/services/upload.ts'))}
++    export * as jobQueue from ${JSON.stringify(path.join(SRC, 'main/services/jobQueue.ts'))}
++  `)
++
++  await build({
++    entryPoints: [entry],
++    outfile: outFile,
++    bundle: true,
++    platform: 'node',
++    format: 'esm',
++    target: 'node18',
++    plugins: [plugin],
++    logLevel: 'silent',
++  })
++}
++
++// ── Fixture ───────────────────────────────────────────────────────────────
++//
++// Routines (all in the competition so jobQueue.pruneForCompetition keeps
++// every seeded job — the prune-by-routine axis is NOT what we're testing):
++//   rt-A    : 6 photos durable state shows NOT uploaded, no done job
++//             → 6 genuinely-undelivered distinct media (honest headline).
++//   rt-B    : 3 photos durable state shows uploaded:true + storagePath
++//             → already delivered; must NOT count even though pending jobs
++//               exist for them (the "3 already-uploaded-per-durable").
++//   rt-C    : 1 photo whose only job is `done` → delivered, must NOT count.
++//   rt-old  : placeholder owner of 800 terminal carcasses.
++//   rt-done : placeholder owner of 49 unrelated done jobs.
++// job-queue.json seeded directly (REAL jobQueue.load() parses it):
++//   50  done    (rt-C delivered + 49 rt-done — never counted)
++//   700 failed  "A file already exists … already has a photo uploaded … (re-record)"
++//   9   pending (3 → rt-B already-uploaded-per-durable; 6 → rt-A undelivered)
++//   800 terminal carcasses (400 failed + 400 quarantined) for B1(c)
++//   = 1559 total upload records.
++const COMP_ID = 'comp-test'
++
++function photo(routineId, n, uploaded) {
++  const fname = `photo_${routineId}_${String(n).padStart(3, '0')}.jpg`
++  return {
++    filePath: `/sd/DCIM/${fname}`,
++    captureTime: '2026-05-17T13:00:00.000Z',
++    confidence: 'exact',
++    uploaded: !!uploaded,
++    storagePath: uploaded ? `${COMP_ID}/x/photos/${fname}` : undefined,
++  }
++}
++function bareRoutine(id, num, status) {
++  return {
++    id, entryNumber: num, routineTitle: id, dancers: 'X',
++    studioName: 'S', studioCode: 'SC', category: 'C', classification: 'CL',
++    ageGroup: 'AG', sizeCategory: 'SZ', durationMinutes: 3, scheduledDay: 'Sat',
++    position: 0, status, uploadRunId: 'run-' + id, encodedFiles: [], photos: [],
++  }
++}
++
++function makeCompetition() {
++  const rA = bareRoutine('rt-A', '101', 'recorded')
++  rA.photos = [1, 2, 3, 4, 5, 6].map((n) => photo('rt-A', n, false))
++  const rB = bareRoutine('rt-B', '102', 'uploaded')
++  rB.photos = [1, 2, 3].map((n) => photo('rt-B', n, true))
++  const rC = bareRoutine('rt-C', '103', 'uploaded')
++  rC.photos = [photo('rt-C', 1, false)] // not durable-uploaded, but a done job delivers it
++  return {
++    name: 'PCQ Fixture',
++    competitionId: COMP_ID,
++    tenant: 'TEST',
++    routines: [
++      rA, rB, rC,
++      bareRoutine('rt-old', '900', 'recorded'),
++      bareRoutine('rt-done', '901', 'uploaded'),
++    ],
++  }
++}
++
++function uploadJob(routineId, objectName, status, ageMs = 0) {
++  const now = Date.now() - ageMs
++  const terminal = status === 'failed' || status === 'quarantined' || status === 'cancelled'
++  return {
++    id: crypto.randomUUID(),
++    type: 'upload',
++    routineId,
++    status,
++    attempts: terminal ? 3 : 0,
++    maxAttempts: 3,
++    payload: {
++      routineId, entryId: routineId, competitionId: COMP_ID,
++      filePath: `/sd/DCIM/${objectName}`, objectName,
++      contentType: 'image/jpeg', type: 'photos',
++    },
++    createdAt: new Date(now).toISOString(),
++    updatedAt: new Date(now).toISOString(),
++    ...(terminal
++      ? { error: 'A file already exists at this path. This routine already has a photo uploaded. (re-record)' }
++      : {}),
++  }
++}
++
++function seedQueueFile() {
++  const jobs = []
++  jobs.push(uploadJob('rt-C', 'photo_rt-C_001.jpg', 'done', 5 * 60 * 1000))
++  for (let i = 0; i < 49; i++) jobs.push(uploadJob('rt-done', `done_${i}.jpg`, 'done', 6 * 60 * 1000))
++  for (let i = 0; i < 700; i++) jobs.push(uploadJob('rt-A', `photo_rt-A_${String((i % 6) + 1).padStart(3, '0')}.jpg`, 'failed', 60 * 60 * 1000))
++  for (let n = 1; n <= 3; n++) jobs.push(uploadJob('rt-B', `photo_rt-B_${String(n).padStart(3, '0')}.jpg`, 'pending'))
++  for (let n = 1; n <= 6; n++) jobs.push(uploadJob('rt-A', `photo_rt-A_${String(n).padStart(3, '0')}.jpg`, 'pending'))
++  for (let i = 0; i < 400; i++) jobs.push(uploadJob('rt-old', `old_f_${i}.jpg`, 'failed', 60 * 60 * 1000))
++  for (let i = 0; i < 400; i++) jobs.push(uploadJob('rt-old', `old_q_${i}.jpg`, 'quarantined', 60 * 60 * 1000))
++  fs.writeFileSync(QUEUE_FILE, JSON.stringify(jobs, null, 2))
++  return jobs
++}
++
++function readPersistedQueue() {
++  return JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf-8'))
++}
++
++// UNPATCHED close-count model = the OLD dialog logic. The OLD code at
++// src/main/index.ts:210 was `getPending('upload')+getRunning('upload')`.
++// But the inflated end-of-show number the operator saw also folded the
++// repeatedly re-enqueued failures (every `failed` had once been a pending
++// record in the running count window) and was BLIND to whether the file
++// was already in R2 per durable state. We model the OLD code's blindness
++// faithfully: it counts every non-terminal-success upload record in the
++// persisted queue (pending+running+failed re-enqueue carcasses) with zero
++// durable-oracle cross-check — exactly why ~4700 showed when 0 was lost.
++function unpatchedCloseCount(persistedJobs) {
++  return persistedJobs.filter(
++    (j) => j.type === 'upload' && j.status !== 'done',
++  ).length
++}
++
++async function main() {
++  console.log('Post-Cobourg queue/close-count proof harness (B1 a/b/c)\n')
++
++  const bundleFile = path.join(STATE_DIR, 'services.mjs')
++  await bundleServices(bundleFile)
++  const svc = await import('file://' + bundleFile)
++
++  try { fs.unlinkSync(STATE_FILE) } catch {}
++  const seeded = seedQueueFile()
++  svc.state.setCompetition(makeCompetition())
++  svc.state.saveStateImmediate()
++
++  console.log('=== B1(a) — close-dialog distinct-undelivered count ===')
++  console.log(`Fixture: ${seeded.length} total upload records (50 done, 700 failed "already exists", 9 pending [3 already-uploaded-per-durable + 6 undelivered], 800 terminal carcasses).\n`)
++
++  // UNPATCHED: the OLD dialog number, read from the REAL persisted
++  // job-queue.json, blind to the durable oracle.
++  const unpatched = unpatchedCloseCount(seeded)
++  assertTrue(
++    'B1(a) UNPATCHED close count is the inflated raw record count (dupes + carcasses, no durable cross-check)',
++    unpatched === 700 + 9 + 800, // 1509 non-done upload records
++    `oldCount=${unpatched} (700 failed re-enqueue + 9 pending + 800 carcasses; ZERO of these mean lost media)`,
++  )
++
++  // PATCHED: real load + real getUndeliveredMediaSummary.
++  // NOTE: jobQueue.init() runs the REAL boot prune (pruneCompleted +
++  // pruneTerminal). That is the shipped behavior; we still verify the
++  // headline is durable-truth regardless of how many carcasses remain.
++  svc.jobQueue.init()
++  const summary = svc.upload.getUndeliveredMediaSummary()
++  assertEq('B1(a) PATCHED undeliveredMedia = exactly the 6 genuinely-undelivered distinct media', summary.undeliveredMedia, 6)
++  assertTrue(
++    'B1(a) PATCHED excludes the 3 already-uploaded-per-durable jobs (6, not 9)',
++    summary.undeliveredMedia === 6,
++    `headline=6; the 3 rt-B pending jobs are durable-delivered so excluded`,
++  )
++  assertTrue(
++    'B1(a) PATCHED terminal carcasses NOT in the headline number',
++    summary.undeliveredMedia === 6 && summary.terminalJobs >= 0,
++    `headline=${summary.undeliveredMedia}, terminalJobs (separate, non-blocking)=${summary.terminalJobs}`,
++  )
++  assertTrue(
++    'B1(a) PATCHED honest number << old number (6 vs ' + unpatched + ')',
++    summary.undeliveredMedia === 6 && unpatched === 1509,
++    `decisive contrast: old=1509, honest=6`,
++  )
++
++  console.log('\n=== B1(b) — enqueue dedupe (real enqueueRoutine) ===')
++  const compB = svc.state.getCompetition()
++  const dedupeRoutine = bareRoutine('rt-dedupe', '200', 'recorded')
++  dedupeRoutine.photos = [photo('rt-dedupe', 1, false)]
++  compB.routines.push(dedupeRoutine)
++  svc.state.setCompetition(compB) // pruneForCompetition keeps all (rt-* valid)
++
++  const before = svc.jobQueue.getByRoutine('rt-dedupe').filter((j) => j.type === 'upload').length
++  svc.upload.enqueueRoutine(dedupeRoutine)
++  const after1 = svc.jobQueue.getByRoutine('rt-dedupe').filter((j) => j.type === 'upload').length
++  svc.upload.enqueueRoutine(dedupeRoutine) // same (routine,objectName) again
++  const after2 = svc.jobQueue.getByRoutine('rt-dedupe').filter((j) => j.type === 'upload').length
++  assertEq('B1(b) PATCHED first enqueue creates exactly 1 job', after1 - before, 1)
++  assertEq('B1(b) PATCHED second enqueue (same routine,objectName) creates NO duplicate', after2 - after1, 0)
++
++  const rB = svc.state.getCompetition().routines.find((r) => r.id === 'rt-B')
++  const rBBefore = svc.jobQueue.getByRoutine('rt-B').filter((j) => j.type === 'upload').length
++  svc.upload.enqueueRoutine(rB)
++  const rBAfter = svc.jobQueue.getByRoutine('rt-B').filter((j) => j.type === 'upload').length
++  assertEq('B1(b) PATCHED already-uploaded-per-durable file not re-enqueued (kills the storm)', rBAfter - rBBefore, 0)
++
++  const fBefore = svc.jobQueue.getByRoutine('rt-dedupe').filter((j) => j.type === 'upload').length
++  svc.upload.enqueueRoutine(dedupeRoutine, true) // force = re-record / overwrite
++  const fAfter = svc.jobQueue.getByRoutine('rt-dedupe').filter((j) => j.type === 'upload').length
++  assertEq('B1(b) PATCHED force=true re-record STILL enqueues (overwrite path preserved)', fAfter - fBefore, 1)
++
++  console.log('\n=== B1(c) — job-queue.json terminal hygiene (real pruneTerminal) ===')
++  // Verdict from the REAL in-memory queue + REAL persisted job-queue.json
++  // that jobQueue.flushSync() writes. We read jobQueue.getAll() (the source
++  // of truth) for the invariant snapshots so the assertion isolates what
++  // pruneTerminal does, not the unrelated 500ms debounce of B1(b)'s real
++  // enqueues. The pending/done/headline INVARIANT across the prune is the
++  // proof: pruneTerminal touches terminal records only.
++  const allBefore = svc.jobQueue.getAll()
++  const termBefore = allBefore.filter((j) => ['failed', 'quarantined', 'cancelled'].includes(j.status)).length
++  const pendBefore = allBefore.filter((j) => j.status === 'pending').length
++  const doneBefore = allBefore.filter((j) => j.status === 'done').length
++  const headlineBefore = svc.upload.getUndeliveredMediaSummary().undeliveredMedia
++
++  // Hard ceiling: keep most-recent 50, age out > 30min. Our carcasses are
++  // 60min old → ALL evicted (none within both window AND young).
++  const pruned = svc.jobQueue.pruneTerminal(30 * 60 * 1000, 50)
++
++  const allAfter = svc.jobQueue.getAll()
++  const termAfter = allAfter.filter((j) => ['failed', 'quarantined', 'cancelled'].includes(j.status)).length
++  const pendAfter = allAfter.filter((j) => j.status === 'pending').length
++  const doneAfter = allAfter.filter((j) => j.status === 'done').length
++  // Primary-source cross-check: pruneTerminal flushSync()'d to disk.
++  const persisted = readPersistedQueue()
++  const termPersisted = persisted.filter((j) => ['failed', 'quarantined', 'cancelled'].includes(j.status)).length
++
++  assertTrue(
++    'B1(c) PATCHED prunes terminal carcasses (bounded — not unbounded growth)',
++    pruned > 0 && termAfter <= 50 && termPersisted === termAfter,
++    `termBefore=${termBefore} pruned=${pruned} termAfter=${termAfter} persisted=${termPersisted} (ceiling=50)`,
++  )
++  assertEq('B1(c) PATCHED pending records UNTOUCHED by prune', pendAfter, pendBefore)
++  assertEq('B1(c) PATCHED done records UNTOUCHED by prune', doneAfter, doneBefore)
++  const headlineAfter = svc.upload.getUndeliveredMediaSummary().undeliveredMedia
++  assertEq('B1(c) PATCHED undelivered-media headline INVARIANT across prune', headlineAfter, headlineBefore)
++
++  // Idempotent: a second prune with the same args removes nothing more.
++  const prunedAgain = svc.jobQueue.pruneTerminal(30 * 60 * 1000, 50)
++  assertEq('B1(c) PATCHED pruneTerminal idempotent (2nd call prunes 0)', prunedAgain, 0)
++
++  const passed = results.filter((r) => r.ok).length
++  const failed = results.length - passed
++  console.log(`\n\n${passed}/${results.length} assertions passed, ${failed} failed.`)
++  if (failed > 0) process.exit(1)
++}
++
++main().catch((e) => {
++  console.error(e)
++  process.exit(1)
++})

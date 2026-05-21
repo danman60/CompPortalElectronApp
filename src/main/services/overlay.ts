@@ -3,6 +3,10 @@ import http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
+// Alias for use inside startServer(), where `const app = express()` shadows
+// the electron `app` import for the whole function body. The udc-bug sprite
+// route needs electron's app.isPackaged / app.getAppPath().
+import { app as electronApp } from 'electron'
 import { OverlayState, OverlayLayout, DEFAULT_LAYOUT, TickerState, StartingSoonState, AnimationConfig, StartingSoonConfig, StartingSoonPreset, StartingSoonLayout, GradientConfig, SSElementPosition, TimeDateConfig, CountdownStyleConfig, VideoPlaylistConfig, PhotoSlideshowConfig, SocialBarConfig, SponsorCarouselConfig, VisualizerConfig, EventInfoConfig, ChatMessage, OverlayAnimation, VenueIdentifierConfig, SectionBadgeConfig } from '../../shared/types'
 import { getSettings } from './settings'
 import { logger } from '../logger'
@@ -1280,6 +1284,42 @@ export function startServer(): void {
     }
   })
 
+  // UDC broadcast-bug sprite route. The native (no-video) UDCLogoBug port
+  // mounts 3 PNG layers (dancer / wordmark / istar) into #logo and the LT
+  // #ltBrandGlyph. iframe blocks file:// from the http overlay origin, so the
+  // bundled sprites are served here. Resolves from process.resourcesPath in a
+  // packaged build (extraResources → "udc-bug"), or the repo resources/udc-bug
+  // dir in dev — same isPackaged pattern as seedDefaults / ffmpeg.
+  app.get('/udc-bug-asset', (req, res) => {
+    try {
+      const partRaw = String(req.query.part || '').toLowerCase()
+      const fileMap: Record<string, string> = {
+        dancer: 'udc-logo-white-dancer.png',
+        wordmark: 'udc-logo-white-wordmark.png',
+        istar: 'udc-logo-white-istar.png',
+      }
+      const fileName = fileMap[partRaw]
+      if (!fileName) {
+        res.status(404).send('Unknown udc-bug part')
+        return
+      }
+      const baseDir = electronApp.isPackaged
+        ? path.join(process.resourcesPath, 'udc-bug')
+        : path.join(electronApp.getAppPath(), 'resources', 'udc-bug')
+      const filePath = path.join(baseDir, fileName)
+      if (!fs.existsSync(filePath)) {
+        res.status(404).send('udc-bug sprite not found')
+        return
+      }
+      res.setHeader('Content-Type', 'image/png')
+      res.setHeader('Cache-Control', 'public, max-age=86400')
+      fs.createReadStream(filePath).pipe(res)
+    } catch (err) {
+      logger.app.warn('Failed to serve udc-bug sprite: ' + (err instanceof Error ? err.message : String(err)))
+      res.status(500).send('udc-bug sprite error')
+    }
+  })
+
   // Brand logo HTTP route — Chromium blocks file:// URLs from http origin.
   // The iframe loads from http://localhost:9876/overlay so any <img src> must
   // also be http(s) or data:. Serve the configured logo file as a binary HTTP
@@ -1390,7 +1430,9 @@ function buildOverlayHTML(): string {
     font-family: -apple-system, 'Segoe UI', sans-serif;
   }
   .counter {
-    position: absolute; left: ${overlayLayout.counter.x}%; top: ${overlayLayout.counter.y}%;
+    position: absolute;
+    right: ${Math.max(0, 100 - overlayLayout.counter.x - (overlayLayout.counter.width || 13))}%;
+    top: ${overlayLayout.counter.y}%;
     opacity: 0; transform: translateY(-10px);
     transition: opacity 0.4s ease, transform 0.4s ease;
   }
@@ -1404,6 +1446,7 @@ function buildOverlayHTML(): string {
   }
   .counter-number {
     font-size: 48px; font-weight: 800; color: #ffffff; line-height: 1;
+    white-space: nowrap;
   }
   .counter-number::before { content: '#'; opacity: 0.4; font-size: 28px; }
   .counter-label { font-size: 13px; color: #e8e8f5; margin-top: 4px; letter-spacing: 0.5px; }
@@ -1721,8 +1764,16 @@ function buildOverlayHTML(): string {
     transition: opacity 0.8s ease;
     z-index: 50;
     overflow: hidden;
+    /* perf #5 2026-05-15: the .starting-soon.visible animation gating below
+       stops the infinite repaints while hidden (the actual perf win).
+       content-visibility:auto was also tried here but blanked the scene
+       under OBS CEF — an always-in-viewport absolute full-bleed element
+       never re-fires the render-unlock, so the subtree painted only its
+       intrinsic-size skeleton. Removed 2026-05-16 (live regression fix). */
   }
-  .starting-soon.visible { opacity: 1; }
+  .starting-soon.visible {
+    opacity: 1;
+  }
 
   /* Scene-entry: subtle camera-zoom on the whole scene, settles to 1:1 */
   .starting-soon.first-show {
@@ -1767,6 +1818,11 @@ function buildOverlayHTML(): string {
     filter: blur(48px);
     pointer-events: none;
     opacity: 0.85;
+  }
+  /* perf #5 2026-05-15: gate the blurred-conic bloom drift to the visible
+     scene only — blur(48px) over a 38vw layer is costly to keep
+     transforming; it was animating 100% of the time while hidden. */
+  .starting-soon.visible .ss-bloom {
     animation: ssBloomDrift 24s ease-in-out infinite;
   }
   @keyframes ssBloomDrift {
@@ -1811,7 +1867,8 @@ function buildOverlayHTML(): string {
   }
   /* Subtle 1s blink on every colon character inside the countdown so the
      timer feels alive without being noisy. JS marks colons with .ss-cd-colon */
-  .ss-cd-colon { animation: ssColonBlink 1.05s ease-in-out infinite; }
+  /* perf #5 2026-05-15: gate colon blink to visible scene only. */
+  .starting-soon.visible .ss-cd-colon { animation: ssColonBlink 1.05s ease-in-out infinite; }
   @keyframes ssColonBlink {
     0%, 100% { opacity: 1; }
     52%      { opacity: 0.55; }
@@ -1879,7 +1936,15 @@ function buildOverlayHTML(): string {
     100% { opacity: 1; }
   }
   /* Background saturation ramps from 60% → 100% on entry */
-  .starting-soon.first-show .ss-gradient-bg {
+  /* perf #5 2026-05-15: also match .visible (always set alongside
+     .first-show) to raise specificity above the new
+     '.starting-soon.visible .ss-gradient-bg' perf gate, so the first-show
+     ignite ramp + drift still win on entry — visuals unchanged.
+     2026-05-16: backticks here were unescaped INSIDE the buildOverlayHTML
+     template literal — they closed it early and the CSS after parsed as JS
+     ('soon is not defined'), blanking the whole overlay. Use apostrophes
+     in comments inside this template literal, never backticks. */
+  .starting-soon.visible.first-show .ss-gradient-bg {
     animation: ssBgIgnite 1.6s ease-out both, gradient-shift var(--gradient-speed, 18s) ease infinite 1.6s;
   }
   @keyframes ssBgIgnite {
@@ -1905,24 +1970,29 @@ function buildOverlayHTML(): string {
     100% { transform: scale(1.0);  opacity: 1; filter: blur(0); }
   }
   /* Logo animations — applied as classes from applyStartingSoon */
-  .ss-logo.anim-pulse img {
+  /* perf #5 2026-05-15: gated on .starting-soon.visible so the infinite
+     logo loops (pulse/float/spin/breathing/glow) don't run while the
+     scene is hidden. Visuals identical when the scene is on-screen. */
+  .starting-soon.visible .ss-logo.anim-pulse img {
     animation: ss-logo-pulse var(--ss-logo-anim-dur, 2s) ease-in-out infinite;
   }
-  .ss-logo.anim-float img {
+  .starting-soon.visible .ss-logo.anim-float img {
     animation: ss-logo-float var(--ss-logo-anim-dur, 4s) ease-in-out infinite;
   }
-  .ss-logo.anim-spin img {
+  .starting-soon.visible .ss-logo.anim-spin img {
     animation: ss-logo-spin var(--ss-logo-anim-dur, 12s) linear infinite;
   }
-  .ss-logo.anim-fade-in-once img {
+  .starting-soon.visible .ss-logo.anim-fade-in-once img {
     animation: ss-logo-fade-in-once var(--ss-logo-anim-dur, 1.2s) ease-out 1 both;
   }
-  .ss-logo.anim-breathing img {
+  .starting-soon.visible .ss-logo.anim-breathing img {
     animation: ss-logo-breathing var(--ss-logo-anim-dur, 5s) ease-in-out infinite;
   }
   .ss-logo.anim-glow img {
-    animation: ss-logo-glow var(--ss-logo-anim-dur, 3s) ease-in-out infinite;
     filter: drop-shadow(0 0 8px rgba(255,255,255,0.6));
+  }
+  .starting-soon.visible .ss-logo.anim-glow img {
+    animation: ss-logo-glow var(--ss-logo-anim-dur, 3s) ease-in-out infinite;
   }
   @keyframes ss-logo-pulse {
     0%, 100% { transform: scale(1); }
@@ -2088,6 +2158,9 @@ function buildOverlayHTML(): string {
     border-radius: 50%;
     background: var(--ss-sb-dot, #ef4444);
     box-shadow: 0 0 8px var(--ss-sb-dot, #ef4444);
+  }
+  /* perf #5 2026-05-15: gate section-badge dot pulse to visible scene. */
+  .starting-soon.visible .ss-section-badge .ss-sb-dot {
     animation: ssBadgeDotPulse 1.4s ease-in-out infinite;
   }
   @keyframes ssBadgeDotPulse {
@@ -2148,6 +2221,9 @@ function buildOverlayHTML(): string {
     border-radius: 50%;
     background: #ef4444;
     box-shadow: 0 0 6px #ef4444;
+  }
+  /* perf #5 2026-05-15: gate LIVE dot pulse to visible scene only. */
+  .starting-soon.visible .ss-ticker-live::before {
     animation: ssLiveDot 1.0s ease-in-out infinite;
   }
   @keyframes ssLiveDot {
@@ -2208,6 +2284,9 @@ function buildOverlayHTML(): string {
     color: #c5cae9;
     opacity: 0.85;
     padding: 0 0.04em;
+  }
+  /* perf #5 2026-05-15: gate flipboard separator blink to visible scene. */
+  .starting-soon.visible .ss-cd-sep {
     animation: ssColonBlink 1.05s ease-in-out infinite;
   }
 
@@ -2365,6 +2444,10 @@ function buildOverlayHTML(): string {
     display: inline-block;
     white-space: nowrap;
     padding-left: 100%;
+  }
+  /* perf #5 2026-05-15: gate the infinite ticker scroll to the visible
+     scene only — it was running 100% of the time while hidden. */
+  .starting-soon.visible .ss-ticker-rail-inner {
     animation: ss-ticker-scroll var(--ss-ticker-dur, 30s) linear infinite;
   }
   @keyframes ss-ticker-scroll {
@@ -2387,6 +2470,12 @@ function buildOverlayHTML(): string {
     inset: 0;
     z-index: 0;
     background-size: 400% 400%;
+  }
+  /* perf #5 2026-05-15: gate the background-position drift (full-screen,
+     non-composited repaint every frame) to the visible scene only. The
+     .first-show rule below re-declares this same animation on show, so
+     steady-state visuals are unchanged; this only stops it while hidden. */
+  .starting-soon.visible .ss-gradient-bg {
     animation: gradient-shift var(--gradient-speed, 15s) ease infinite;
   }
   @keyframes gradient-shift {
@@ -2788,8 +2877,14 @@ function buildOverlayHTML(): string {
     transform: translateY(100%);
     filter: blur(0px);
     opacity: 0;
+    /* perf #5 2026-05-15: the .feature-card.visible animation gating below
+       stops the infinite sparkle/ring/glow repaints while hidden (the
+       actual perf win). content-visibility:auto was also tried here but
+       blanked the card under OBS CEF. Removed 2026-05-16 (regression fix). */
   }
-  .feature-card.visible { visibility: visible; opacity: 1; }
+  .feature-card.visible {
+    visibility: visible; opacity: 1;
+  }
   .feature-card.slide-up   { --fc-from: translateY( 100%); }
   .feature-card.slide-down { --fc-from: translateY(-100%); }
   .feature-card.slide-left { --fc-from: translateX( 100%); }
@@ -2857,6 +2952,10 @@ function buildOverlayHTML(): string {
     text-shadow:
       0 0 28px rgba(0,0,0,0.5),
       0 0 18px color-mix(in srgb, var(--brand-accent) 60%, transparent);
+  }
+  /* perf #5 2026-05-15: gate text-shadow glow (paint-heavy) to visible card
+     only — was running infinitely even while card hidden. */
+  .feature-card.visible .fc-header {
     animation: fcHeaderGlow 3.4s ease-in-out infinite;
   }
   @keyframes fcHeaderGlow {
@@ -2887,9 +2986,12 @@ function buildOverlayHTML(): string {
       rgba(255,255,255,0.45) 50%,
       transparent 62%
     );
-    animation: fcShimmer 4.5s ease-in-out infinite;
     pointer-events: none;
     mix-blend-mode: screen;
+  }
+  /* perf #5 2026-05-15: gate brand-lockup shimmer to visible card only. */
+  .feature-card.visible .fc-brand-lockup::after {
+    animation: fcShimmer 4.5s ease-in-out infinite;
   }
   @keyframes fcShimmer {
     0%   { transform: translateX(-130%); opacity: 0; }
@@ -2925,8 +3027,12 @@ function buildOverlayHTML(): string {
     background-size: contain; background-repeat: no-repeat;
     opacity: 0;
     filter: drop-shadow(0 0 6px rgba(255,255,255,0.85));
+  }
+  /* perf #5 2026-05-15: gate sparkle twinkle to visible card only +
+     dropped permanent will-change (was forcing N persistent composited
+     layers in memory even while the card was hidden). */
+  .feature-card.visible .fc-sparkle {
     animation: fcSparkle 3s ease-in-out infinite;
-    will-change: opacity, transform;
   }
   .fc-sparkle.fc-sparkle-sm { width: 10px;  height: 10px; }
   .fc-sparkle.fc-sparkle-md { width: 18px;  height: 18px; }
@@ -2959,15 +3065,22 @@ function buildOverlayHTML(): string {
     -webkit-mask-composite: xor;
             mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
             mask-composite: exclude;
-    animation: fcRingSpin 8s linear infinite;
     opacity: 0.75;
     z-index: 1;
+  }
+  /* perf #5 2026-05-15: gate full-screen conic-gradient ring spin to
+     visible card only — animating the @property angle repaints a
+     1920x1080 conic gradient every frame; was running 100% of the time. */
+  .feature-card.visible .fc-glow-ring {
+    animation: fcRingSpin 8s linear infinite;
   }
   @keyframes fcRingSpin {
     to { --fc-ring-angle: 360deg; }
   }
   /* Title glow pulse — 2.4s soft halo synced to brand accent. */
-  .fc-title {
+  /* perf #5 2026-05-15: gate text-shadow pulse (paint-heavy) to visible
+     card only — was running infinitely even while card hidden. */
+  .feature-card.visible .fc-title {
     animation: fcTitlePulse 2.4s ease-in-out infinite;
   }
   @keyframes fcTitlePulse {
@@ -3019,6 +3132,8 @@ function buildOverlayHTML(): string {
     overflow: hidden;
   }
   .fc-dancers .fc-dancer-sep { color: var(--brand-accent); margin: 0 0.45em; opacity: 0.75; }
+  /* Keep each full name on one line; only break between names at the dot. */
+  .fc-dancers .fc-dancer-name { white-space: nowrap; }
   .fc-meta {
     font-family: 'Inter', 'Segoe UI', sans-serif;
     font-weight: 600;
@@ -3321,6 +3436,299 @@ function buildOverlayHTML(): string {
     if (sub.show === false) el.style.display = 'none';
   }
 
+  // Native (no-video) port of the UDCLogoBug broadcast bug. Ported VERBATIM
+  // from RemotionVideo/src/UDCLogoBug.tsx. Builds 3 PNG layers (wordmark back,
+  // dancer mid, i-star front) served from /udc-bug-asset, inside an inner
+  // stage sized FULL_W x FULL_H scaled to fit the host container box.
+  //  - opts.static === true  : render ONE frozen HOLD frame, no rAF.
+  //  - opts.static !== true  : single requestAnimationFrame loop, looping the
+  //                            2550-frame (85s @ 30fps) sequence perpetually.
+  // ABSOLUTE RULE: this whole function lives inside the buildOverlayHTML
+  // template literal — NO backtick and NO dollar-brace anywhere. String
+  // concatenation only (mirrors the typewriter rAF style above).
+  function mountUdcLogoBug(containerEl, opts) {
+    if (!containerEl) { console.log('[mountUdcLogoBug] no containerEl'); return; }
+    opts = opts || {};
+    var isStatic = opts.static === true;
+
+    // Teardown any prior mount on this container so repeated ~1Hz applyState
+    // broadcasts don't stack rAF loops (mirror mountElementAsset's guard).
+    if (containerEl.dataset.udcMounted === '1') {
+      // Already mounted on this container. Repeated ~1Hz applyState pushes
+      // MUST be a true no-op for the animated instance: tearing down and
+      // rebuilding here resets t0=performance.now() every second, pinning the
+      // loop to its first ~1s forever (the glitch / loops-first-1s bug).
+      // Static re-mount is likewise a no-op.
+      if (isStatic) { return; }
+      if (containerEl.__udcRaf) { return; }
+      // Animated but the rAF was lost (cancelled elsewhere): rebuild cleanly.
+      while (containerEl.firstChild) containerEl.removeChild(containerEl.firstChild);
+    } else {
+      // First mount: clear any pre-existing inner element (e.g. the legacy
+      // #ltBrandImg / #logoImg <img> that points at /brand-logo). Mirrors
+      // mountElementAsset's container reset so a broken brand-logo 404 can't
+      // sit behind the native bug or trip the .empty hide path.
+      while (containerEl.firstChild) containerEl.removeChild(containerEl.firstChild);
+    }
+    containerEl.dataset.udcMounted = '1';
+
+    // ---- Source dims + scaling (from UDCLogoBug.tsx) -------------------
+    var SRC_W = 827, SRC_H = 591;
+    var BUG_W = 720;
+    var BUG_SCALE = BUG_W / SRC_W;
+    var FULL_W = SRC_W * BUG_SCALE;          // 720
+    var FULL_H = SRC_H * BUG_SCALE;          // ~514.534
+
+    // Visible-center pivots (connected-component analysis, source-px)
+    var DANCER_SRC_CX = 250, DANCER_SRC_CY = 210;
+    var WORDMARK_SRC_CX = 398, WORDMARK_SRC_CY = 332;
+    var ISTAR_SRC_CX = 416, ISTAR_SRC_CY = 248;
+
+    var DANCER_VC_X = DANCER_SRC_CX * BUG_SCALE;
+    var DANCER_VC_Y = DANCER_SRC_CY * BUG_SCALE;
+    var WORDMARK_VC_X = WORDMARK_SRC_CX * BUG_SCALE;
+    var WORDMARK_VC_Y = WORDMARK_SRC_CY * BUG_SCALE;
+    var ISTAR_VC_X = ISTAR_SRC_CX * BUG_SCALE;
+    var ISTAR_VC_Y = ISTAR_SRC_CY * BUG_SCALE;
+
+    var DANCER_HOME_X = (DANCER_SRC_CX - SRC_W / 2) * BUG_SCALE;
+    var DANCER_HOME_Y = (DANCER_SRC_CY - SRC_H / 2) * BUG_SCALE;
+    var WORDMARK_HOME_X = (WORDMARK_SRC_CX - SRC_W / 2) * BUG_SCALE;
+    var WORDMARK_HOME_Y = (WORDMARK_SRC_CY - SRC_H / 2) * BUG_SCALE;
+    var ISTAR_HOME_X = (ISTAR_SRC_CX - SRC_W / 2) * BUG_SCALE;
+    var ISTAR_HOME_Y = (ISTAR_SRC_CY - SRC_H / 2) * BUG_SCALE;
+
+    // Bug center in the FULL_W x FULL_H stage (so sprites land inside it)
+    var BUG_CX = FULL_W / 2;
+    var BUG_CY = FULL_H / 2;
+
+    var DANCER_CENTER_X = 0, DANCER_CENTER_Y = 0, DANCER_CENTER_SCALE = 1.95;
+    var DANCER_OFF_X = -260, DANCER_OFF_Y = 130, DANCER_OFF_SCALE = 0.18;
+    var WORDMARK_OFF_X = DANCER_CENTER_X;
+    var WORDMARK_OFF_Y = DANCER_CENTER_Y;
+    var WORDMARK_OFF_SCALE = 0.05;
+    var DANCER_SPIN_DEG = 360;
+    var STAR_TWIRL_DEG = 120;
+
+    // ---- Phase boundaries (frames @ 30fps) ----------------------------
+    var DANCER_SPRING_IN_END = 75;
+    var DANCER_SPIN_TO_TL_END = 180;
+    var WORDS_IN_START = 75, WORDS_IN_END = 180;
+    var STAR_IN_START = 180, STAR_IN_END = 225;
+    var HOLD_END = 2025;
+    var STAR_OUT_START = 2025, STAR_OUT_END = 2070;
+    var WORDS_OUT_START = 2070, WORDS_OUT_END = 2175;
+    var DANCER_SPIN_BACK_START = 2070, DANCER_SPIN_BACK_END = 2175;
+    var DANCER_SPRING_OUT_START = 2175, DANCER_SPRING_OUT_END = 2250;
+    var TOTAL = 2550;
+    var FPS = 30;
+
+    // ---- Easings (VERBATIM) -------------------------------------------
+    function clamp01(t) { return Math.max(0, Math.min(1, t)); }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+    function easeInCubic(t) { return t * t * t; }
+    function phaseT(f, s, e) { return clamp01((f - s) / (e - s)); }
+    // Remotion interpolate(frame,[a,b],[0,1],{clamp}) -> clamp01 ramp
+    function ramp(frame, a, b) { return clamp01((frame - a) / (b - a)); }
+    function rampDown(frame, a, b) { return 1 - clamp01((frame - a) / (b - a)); }
+
+    function dancerStateAtFrame(frame) {
+      if (frame <= DANCER_SPRING_IN_END) {
+        var t = phaseT(frame, 0, DANCER_SPRING_IN_END);
+        var e = easeOutCubic(t);
+        return {
+          x: lerp(DANCER_OFF_X, DANCER_CENTER_X, e),
+          y: lerp(DANCER_OFF_Y, DANCER_CENTER_Y, e),
+          scale: lerp(DANCER_OFF_SCALE, DANCER_CENTER_SCALE, e),
+          rotation: 0,
+          opacity: ramp(frame, 0, 12)
+        };
+      }
+      if (frame <= DANCER_SPIN_TO_TL_END) {
+        var t2 = phaseT(frame, DANCER_SPRING_IN_END, DANCER_SPIN_TO_TL_END);
+        var e2 = easeInOutCubic(t2);
+        return {
+          x: lerp(DANCER_CENTER_X, DANCER_HOME_X, e2),
+          y: lerp(DANCER_CENTER_Y, DANCER_HOME_Y, e2),
+          scale: lerp(DANCER_CENTER_SCALE, 1.0, e2),
+          rotation: lerp(0, DANCER_SPIN_DEG, e2),
+          opacity: 1
+        };
+      }
+      if (frame < DANCER_SPIN_BACK_START) {
+        return { x: DANCER_HOME_X, y: DANCER_HOME_Y, scale: 1.0, rotation: 0, opacity: 1 };
+      }
+      if (frame <= DANCER_SPIN_BACK_END) {
+        var t3 = phaseT(frame, DANCER_SPIN_BACK_START, DANCER_SPIN_BACK_END);
+        var e3 = easeInOutCubic(t3);
+        return {
+          x: lerp(DANCER_HOME_X, DANCER_CENTER_X, e3),
+          y: lerp(DANCER_HOME_Y, DANCER_CENTER_Y, e3),
+          scale: lerp(1.0, DANCER_CENTER_SCALE, e3),
+          rotation: lerp(0, -DANCER_SPIN_DEG, e3),
+          opacity: 1
+        };
+      }
+      if (frame <= DANCER_SPRING_OUT_END) {
+        var t4 = phaseT(frame, DANCER_SPRING_OUT_START, DANCER_SPRING_OUT_END);
+        var e4 = easeInCubic(t4);
+        return {
+          x: lerp(DANCER_CENTER_X, DANCER_OFF_X, e4),
+          y: lerp(DANCER_CENTER_Y, DANCER_OFF_Y, e4),
+          scale: lerp(DANCER_CENTER_SCALE, DANCER_OFF_SCALE, e4),
+          rotation: 0,
+          opacity: rampDown(frame, DANCER_SPRING_OUT_END - 14, DANCER_SPRING_OUT_END)
+        };
+      }
+      return { x: DANCER_OFF_X, y: DANCER_OFF_Y, scale: DANCER_OFF_SCALE, rotation: 0, opacity: 0 };
+    }
+
+    function wordmarkStateAtFrame(frame) {
+      if (frame < WORDS_IN_START) {
+        return { x: WORDMARK_OFF_X, y: WORDMARK_OFF_Y, scale: WORDMARK_OFF_SCALE, rotation: 0, opacity: 0 };
+      }
+      if (frame <= WORDS_IN_END) {
+        var t = phaseT(frame, WORDS_IN_START, WORDS_IN_END);
+        var e = easeInOutCubic(t);
+        return {
+          x: lerp(WORDMARK_OFF_X, WORDMARK_HOME_X, e),
+          y: lerp(WORDMARK_OFF_Y, WORDMARK_HOME_Y, e),
+          scale: lerp(WORDMARK_OFF_SCALE, 1.0, e),
+          rotation: 0,
+          opacity: ramp(frame, WORDS_IN_START, WORDS_IN_START + 4)
+        };
+      }
+      if (frame < WORDS_OUT_START) {
+        return { x: WORDMARK_HOME_X, y: WORDMARK_HOME_Y, scale: 1.0, rotation: 0, opacity: 1 };
+      }
+      if (frame <= WORDS_OUT_END) {
+        var t2 = phaseT(frame, WORDS_OUT_START, WORDS_OUT_END);
+        var e2 = easeInOutCubic(t2);
+        return {
+          x: lerp(WORDMARK_HOME_X, WORDMARK_OFF_X, e2),
+          y: lerp(WORDMARK_HOME_Y, WORDMARK_OFF_Y, e2),
+          scale: lerp(1.0, WORDMARK_OFF_SCALE, e2),
+          rotation: 0,
+          opacity: rampDown(frame, WORDS_OUT_END - 4, WORDS_OUT_END)
+        };
+      }
+      return { x: WORDMARK_OFF_X, y: WORDMARK_OFF_Y, scale: WORDMARK_OFF_SCALE, rotation: 0, opacity: 0 };
+    }
+
+    function iStarStateAtFrame(frame) {
+      if (frame < STAR_IN_START) {
+        return { x: ISTAR_HOME_X, y: ISTAR_HOME_Y, scale: 0, rotation: -STAR_TWIRL_DEG, opacity: 0 };
+      }
+      if (frame <= STAR_IN_END) {
+        var t = phaseT(frame, STAR_IN_START, STAR_IN_END);
+        var e = easeOutCubic(t);
+        return {
+          x: ISTAR_HOME_X,
+          y: ISTAR_HOME_Y,
+          scale: lerp(0, 1.0, e),
+          rotation: lerp(-STAR_TWIRL_DEG, 0, e),
+          opacity: ramp(frame, STAR_IN_START, STAR_IN_START + 6)
+        };
+      }
+      if (frame < STAR_OUT_START) {
+        return { x: ISTAR_HOME_X, y: ISTAR_HOME_Y, scale: 1, rotation: 0, opacity: 1 };
+      }
+      if (frame <= STAR_OUT_END) {
+        var t2 = phaseT(frame, STAR_OUT_START, STAR_OUT_END);
+        var e2 = easeInCubic(t2);
+        return {
+          x: ISTAR_HOME_X,
+          y: ISTAR_HOME_Y,
+          scale: lerp(1.0, 0, e2),
+          rotation: lerp(0, STAR_TWIRL_DEG, e2),
+          opacity: rampDown(frame, STAR_OUT_END - 6, STAR_OUT_END)
+        };
+      }
+      return { x: ISTAR_HOME_X, y: ISTAR_HOME_Y, scale: 0, rotation: STAR_TWIRL_DEG, opacity: 0 };
+    }
+
+    // ---- Build the scaled inner stage + 3 layers ----------------------
+    var stage = document.createElement('div');
+    stage.className = 'udc-bug-stage';
+    stage.style.position = 'absolute';
+    stage.style.left = '50%';
+    stage.style.top = '50%';
+    stage.style.width = FULL_W + 'px';
+    stage.style.height = FULL_H + 'px';
+    stage.style.pointerEvents = 'none';
+
+    function fitStage() {
+      var bw = containerEl.clientWidth || containerEl.offsetWidth || FULL_W;
+      var bh = containerEl.clientHeight || containerEl.offsetHeight || FULL_H;
+      var fit = Math.min(bw / FULL_W, bh / FULL_H);
+      if (!isFinite(fit) || fit <= 0) fit = 1;
+      stage.style.transform = 'translate(-50%, -50%) scale(' + fit + ')';
+      stage.style.transformOrigin = 'center center';
+    }
+
+    function makeLayer(part) {
+      var img = document.createElement('img');
+      img.src = '/udc-bug-asset?part=' + part;
+      img.width = FULL_W;
+      img.height = FULL_H;
+      img.draggable = false;
+      img.alt = '';
+      img.style.position = 'absolute';
+      img.style.width = FULL_W + 'px';
+      img.style.height = FULL_H + 'px';
+      img.style.willChange = 'transform, opacity';
+      img.style.pointerEvents = 'none';
+      img.style.userSelect = 'none';
+      return img;
+    }
+
+    // Layer order back -> front: wordmark, dancer, i-star
+    var wmImg = makeLayer('wordmark');
+    var dnImg = makeLayer('dancer');
+    var stImg = makeLayer('istar');
+    stage.appendChild(wmImg);
+    stage.appendChild(dnImg);
+    stage.appendChild(stImg);
+    containerEl.appendChild(stage);
+    fitStage();
+
+    function applySprite(img, st, vcX, vcY) {
+      img.style.left = (BUG_CX + st.x - vcX) + 'px';
+      img.style.top = (BUG_CY + st.y - vcY) + 'px';
+      img.style.opacity = st.opacity;
+      img.style.transform = 'rotate(' + st.rotation + 'deg) scale(' + st.scale + ')';
+      img.style.transformOrigin = vcX + 'px ' + vcY + 'px';
+    }
+
+    function renderFrame(frame) {
+      applySprite(wmImg, wordmarkStateAtFrame(frame), WORDMARK_VC_X, WORDMARK_VC_Y);
+      applySprite(dnImg, dancerStateAtFrame(frame), DANCER_VC_X, DANCER_VC_Y);
+      applySprite(stImg, iStarStateAtFrame(frame), ISTAR_VC_X, ISTAR_VC_Y);
+    }
+
+    if (isStatic) {
+      // Frozen assembled / HOLD state: pick a frame inside the dwell window
+      // (STAR_IN_END..HOLD_END) so all three layers sit at their home pose.
+      renderFrame(1000);
+      return;
+    }
+
+    // Single perpetual rAF loop. Loop frame = (now/1000*30) % 2550.
+    var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    function tick() {
+      var nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      var elapsed = (nowMs - t0) / 1000;
+      var frame = (elapsed * FPS) % TOTAL;
+      renderFrame(frame);
+      containerEl.__udcRaf = requestAnimationFrame(tick);
+    }
+    containerEl.__udcRaf = requestAnimationFrame(tick);
+  }
+
   // Swap an asset host container's inner element to <video> or <img> based on
   // assetUrl extension. assetUrl is empty by default — we then leave the
   // existing /brand-logo <img> chain alone (back-compat). When set: we mount
@@ -3386,7 +3794,13 @@ function buildOverlayHTML(): string {
       window._cachedOverlayLayout = state.overlayLayout;
       var L = state.overlayLayout;
       var ce = document.getElementById('counter');
-      ce.style.left = L.counter.x + '%'; ce.style.top = L.counter.y + '%'; ce.style.right = 'auto';
+      // Right-anchor the counter so long entry numbers (e.g. "169.25") grow
+      // LEFT into the canvas instead of clipping off the right edge. Operator
+      // 2026-05-15: "#169.25" was rendering as "#169.2!" with the last digit
+      // chopped. layout.x is the LEFT edge in editor terms; right anchor =
+      // 100 - (x + width).
+      var counterRight = Math.max(0, 100 - L.counter.x - (typeof L.counter.width === 'number' ? L.counter.width : 13));
+      ce.style.left = 'auto'; ce.style.right = counterRight + '%'; ce.style.top = L.counter.y + '%';
       var le = document.getElementById('logo');
       le.style.left = L.logo.x + '%'; le.style.top = L.logo.y + '%';
       if (typeof L.logo.width === 'number') le.style.width = L.logo.width + '%';
@@ -3434,7 +3848,12 @@ function buildOverlayHTML(): string {
     }
     const logoEl = document.getElementById('logo');
     const logoImg = document.getElementById('logoImg');
-    if (o.logo.visible && (o.logo.url || o.logo.assetUrl)) {
+    // 2026-05-16: native UDCLogoBug port is always-available content, so the
+    // logo no longer requires a tenant brand url/assetUrl to show — visibility
+    // is driven solely by o.logo.visible (Flow A unchanged). The legacy
+    // /brand-logo <img> path still only fires when o.logo.url is set; when no
+    // url/assetUrl is configured the native bug (mounted below) renders.
+    if (o.logo.visible) {
       logoEl.classList.add('visible');
       // Chromium blocks file:// from http:// origin inside iframe preview. Serve
       // the logo via /brand-logo HTTP route (same pattern as ss-logo in r19 fix).
@@ -3462,15 +3881,23 @@ function buildOverlayHTML(): string {
     const ltEl = document.getElementById('lt');
 
     // 2026-05-02 (Burlington UDC Day 2): brand glyph mounted on the LT card.
-    // Loaded once and cached by the browser; .empty class hides it when the
-    // tenant has no brand logo configured. Source is the same /brand-logo
-    // route used by the legacy logo overlay and ss-logo.
+    // 2026-05-16: native UDCLogoBug port is now the always-available default
+    // glyph (mounted statically into #ltBrandGlyph by the per-element block
+    // below). The legacy /brand-logo <img> fetch is therefore SKIPPED unless
+    // the tenant explicitly configured a brand logo url — a 404 here used to
+    // add .empty and hide the whole capsule, which would also hide the native
+    // bug. The genuine opt-out remains showBrandGlyph === false (handled
+    // separately below). The explicit per-element override still flows through
+    // brandGlyphUrl + mountElementAsset.
     var ltBrandImg = document.getElementById('ltBrandImg');
     var ltBrandGlyph = document.getElementById('ltBrandGlyph');
-    if (ltBrandImg && ltBrandGlyph && !ltBrandImg.dataset.loaded) {
+    var hasBrandUrl = !!(o.logo && o.logo.url);
+    if (hasBrandUrl && ltBrandImg && ltBrandGlyph && !ltBrandImg.dataset.loaded) {
       ltBrandImg.dataset.loaded = '1';
       ltBrandImg.onload = function () { ltBrandGlyph.classList.remove('empty'); };
-      ltBrandImg.onerror = function () { ltBrandGlyph.classList.add('empty'); };
+      // Do NOT re-add .empty on error — the native static bug fills the capsule
+      // as the default. Only an explicit showBrandGlyph === false hides it.
+      ltBrandImg.onerror = function () {};
       ltBrandImg.src = '/brand-logo?v=lt';
     }
 
@@ -3646,7 +4073,17 @@ function buildOverlayHTML(): string {
         var logoContainer = document.getElementById('logo');
         if (o.logo.card) applyElementCard(logoContainer, o.logo.card);
         if (o.logo.assetUrl) {
+          // Operator explicitly configured a logo asset override (image/video)
+          // — keep honoring it (back-compat for the per-element override path).
           mountElementAsset(logoContainer, 'logo', o.logo.assetUrl);
+        } else if (o.logo.url) {
+          // Tenant has a configured brand logo: keep the legacy /brand-logo
+          // <img id="logoImg"> path (src set in the visibility block above) —
+          // do NOT clobber it with the native bug.
+        } else {
+          // Default (no override, no tenant brand logo): native (no-video)
+          // UDCLogoBug broadcast bug, animated loop.
+          mountUdcLogoBug(logoContainer, { static: false });
         }
         var subL = (o.logo.subElements) || {};
         if (subL.image) {
@@ -3660,8 +4097,21 @@ function buildOverlayHTML(): string {
       if (o.lowerThird) {
         var ltCard = document.querySelector('#lt .lt-card');
         if (o.lowerThird.card) applyElementCard(ltCard, o.lowerThird.card);
+        var ltBrandGlyphEl = document.getElementById('ltBrandGlyph');
         if (o.lowerThird.brandGlyphUrl) {
-          mountElementAsset(document.getElementById('ltBrandGlyph'), 'lowerthird', o.lowerThird.brandGlyphUrl);
+          // Explicit per-element operator override wins (back-compat).
+          mountElementAsset(ltBrandGlyphEl, 'lowerthird', o.lowerThird.brandGlyphUrl);
+        } else if (o.logo && o.logo.url) {
+          // Tenant has a configured brand logo: keep the legacy /brand-logo
+          // <img> capsule (set above) — do NOT overwrite it with the native
+          // bug. Just ensure the capsule is shown.
+          if (ltBrandGlyphEl) ltBrandGlyphEl.classList.remove('empty');
+        } else if (ltBrandGlyphEl) {
+          // Default (no tenant brand logo, no override): frozen assembled
+          // UDCLogoBug, scaled to fit the fixed 72x72 #ltBrandGlyph capsule.
+          // Genuine opt-out remains showBrandGlyph === false (handled below).
+          mountUdcLogoBug(ltBrandGlyphEl, { static: true });
+          ltBrandGlyphEl.classList.remove('empty');
         }
         var subLT = o.lowerThird.subElements || {};
         applySubElementStyle(document.getElementById('ltBrandGlyph'), subLT.brandGlyph);
@@ -3834,7 +4284,9 @@ function buildOverlayHTML(): string {
         var fcOut = '';
         for (var di = 0; di < fcRaw.length; di++) {
           if (di > 0) fcOut += '<span class="fc-dancer-sep">·</span>';
-          fcOut += fcRaw[di].replace(/[<>&]/g, function(c){ return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;'; });
+          // Wrap each name so it can't break mid-name (first/last on different
+          // lines). Wraps only happen at the · separators between names.
+          fcOut += '<span class="fc-dancer-name">' + fcRaw[di].replace(/[<>&]/g, function(c){ return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;'; }) + '</span>';
         }
         fcDancers.innerHTML = fcOut;
       }
@@ -3921,7 +4373,10 @@ function buildOverlayHTML(): string {
         if (fcSparkleContainer) {
           fcSparkleContainer.innerHTML = '';
           var fcSparkleSizes = ['fc-sparkle-sm','fc-sparkle-md','fc-sparkle-lg'];
-          for (var fsi = 0; fsi < 14; fsi++) {
+          // perf #5 2026-05-15: sparkle field 14 -> 7 nodes (each runs an
+          // infinite twinkle anim; 7 keeps the effect recognizable at
+          // broadcast distance while halving the per-frame animation cost).
+          for (var fsi = 0; fsi < 7; fsi++) {
             var sp = document.createElement('div');
             sp.className = 'fc-sparkle ' + fcSparkleSizes[fsi % 3];
             sp.style.left = (Math.random() * 92 + 4) + '%';

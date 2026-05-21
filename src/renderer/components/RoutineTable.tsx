@@ -520,10 +520,17 @@ interface NoteEditorExternalOpen {
 function NoteEditor({
   routine,
   externalOpen,
+  triggerless,
 }: {
   routine: Routine
   externalOpen?: NoteEditorExternalOpen | null
-}): React.ReactElement {
+  /**
+   * When true, the standalone pencil button is not rendered — the editor is
+   * only opened via the row action menu (externalOpen seq bump). The inline
+   * textarea still appears in the row's action cell while editing.
+   */
+  triggerless?: boolean
+}): React.ReactElement | null {
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(routine.notes || '')
   const lastSeqRef = useRef<number>(-1)
@@ -572,6 +579,8 @@ function NoteEditor({
     )
   }
 
+  if (triggerless) return null
+
   return (
     <button
       className={`note-btn${routine.notes ? ' has-note' : ''}`}
@@ -607,12 +616,14 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   const dayFilter = useStore((s) => s.dayFilter)
   const searchQuery = useStore((s) => s.searchQuery)
   const setSearchQuery = useStore.getState().setSearchQuery
+  // Perf #4: header day stepper writes through the EXISTING dayFilter store —
+  // not a parallel filter. Empty string = "auto (follow current routine)".
+  const setDayFilter = useStore.getState().setDayFilter
   const compactMode = useStore((s) => s.compactMode)
   const obsState = useStore((s) => s.obsState)
   const judgeCount = settings?.competition.judgeCount ?? 3
 
-  async function handleNudgeRoutine(e: React.MouseEvent, routine: Routine): Promise<void> {
-    e.stopPropagation()
+  async function nudgeRoutine(routine: Routine): Promise<void> {
     try {
       switch (routine.status) {
         case 'recorded':
@@ -638,7 +649,35 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
       // handled server-side
     }
   }
+
+  // Was the Nudge button's right-click gesture. Surfaced as an explicit row
+  // action-menu item so the behaviour isn't lost when the inline buttons
+  // collapse into the menu. Toggles the relevant global auto setting (encode
+  // vs upload follows the routine's pipeline stage) and kicks the queue.
+  async function toggleAutoForRoutine(routine: Routine): Promise<void> {
+    const kind: 'encode' | 'upload' =
+      routine.status === 'recorded' || routine.status === 'queued' || routine.status === 'encoding'
+        ? 'encode'
+        : 'upload'
+    try {
+      const res = await (window.api as any).jobQueueAutoToggle(kind)
+      const label = kind === 'encode' ? 'Auto-encode' : 'Auto-upload'
+      const stateText = (kind === 'encode' ? res?.autoEncode : res?.autoUpload) ? 'ON' : 'OFF'
+      window.dispatchEvent(new CustomEvent('compsync:auto-toggled', {
+        detail: { label, state: stateText },
+      }))
+    } catch {
+      window.dispatchEvent(new CustomEvent('compsync:auto-toggled', {
+        detail: { label: 'Auto toggle', state: 'FAILED' },
+      }))
+    }
+  }
+
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  // Per-row action menu: a single floating menu (not one per row) anchored to
+  // the clicked ⋯ trigger. Replaces the wrapping cluster of inline buttons.
+  const [actionMenu, setActionMenu] = useState<{ routineId: string; rect: DOMRect } | null>(null)
+  const actionMenuRef = useRef<HTMLDivElement | null>(null)
   // Double-click on a row opens the row's note editor (F5 wire-up). The seq
   // increments per double-click so re-clicking the same row re-opens the
   // editor cleanly after close.
@@ -655,6 +694,34 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
       seq: (prev?.routineId === routineId ? prev.seq : 0) + 1,
     }))
   }
+
+  // Dismiss the row action menu on outside pointer-down, Escape, or scroll
+  // (a scrolled table would leave the menu floating at a stale anchor).
+  useEffect(() => {
+    if (!actionMenu) return
+    function onDown(e: MouseEvent): void {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(e.target as Node)) {
+        setActionMenu(null)
+      }
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setActionMenu(null)
+    }
+    function onScroll(): void {
+      setActionMenu(null)
+    }
+    // Bubble phase: the trigger and menu stopPropagation their mousedown so
+    // an in-widget click never reaches this listener.
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    const scrollEl = tableScrollRef.current
+    scrollEl?.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      scrollEl?.removeEventListener('scroll', onScroll)
+    }
+  }, [actionMenu])
 
   // Auto-scroll the active (currently-recording, else first-pending) routine
   // to roughly 1/3 from the top of the visible scroll area. Re-runs when the
@@ -741,17 +808,33 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
     }
   }
 
-  if (!isWindowMode && dayFilter) {
-    routines = routines.filter((r) => r.scheduledDay === dayFilter)
+  // Perf backlog #4 (2026-05-16, operator-approved): default-render ONLY the
+  // current day's routines instead of mounting/reconciling all ~1450 rows on
+  // every state broadcast. We REUSE the existing global `dayFilter` mechanism
+  // (store: dayFilter / setDayFilter; UI: LoadCompetition select + the header
+  // stepper added below) — no parallel filter state.
+  //
+  // Day list = scheduledDay values in render order (after displayOrder sort).
+  // Driven off scheduledDay (not competition.days) so it stays aligned with
+  // the items array / day-header grouping which all key off scheduledDay.
+  const orderedDays: string[] = []
+  if (!isWindowMode) {
+    const seenDays = new Set<string>()
+    for (const r of routines) {
+      const d = r.scheduledDay || ''
+      if (!seenDays.has(d)) {
+        seenDays.add(d)
+        orderedDays.push(d)
+      }
+    }
   }
 
-  // 2026-05-02 (Burlington UDC Day 2): search no longer filters the visible
-  // routine list. Operator complaint was that filtering destroyed nav context
-  // — after jumping to a routine they had to clear the search and find their
-  // way back. New behavior: search matches are highlighted in-place and the
-  // first match is scrolled into view, keeping the rest of the schedule visible.
+  // Search scans the FULL list (all days) BEFORE any day-scoping so a query
+  // never gets limited to the visible day (constraint 4). Match highlight +
+  // first-match scroll behavior unchanged from the 2026-05-02 in-place design.
   const searchMatchIds = new Set<string>()
   let firstSearchMatchId: string | null = null
+  let firstSearchMatchDay: string | null = null
   if (!isWindowMode && searchQuery) {
     const q = searchQuery.toLowerCase()
     for (const r of routines) {
@@ -762,9 +845,52 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
         r.dancers.toLowerCase().includes(q)
       ) {
         searchMatchIds.add(r.id)
-        if (firstSearchMatchId === null) firstSearchMatchId = r.id
+        if (firstSearchMatchId === null) {
+          firstSearchMatchId = r.id
+          firstSearchMatchDay = r.scheduledDay || ''
+        }
       }
     }
+  }
+
+  // Effective day scope:
+  //   - explicit non-empty dayFilter  → operator pinned a day; honor it as-is
+  //     (also covers LoadCompetition's existing day select). Unchanged path.
+  //   - empty dayFilter (the default) → scope to the "current day" =
+  //     scheduledDay of currentRoutine, else first pending routine, else the
+  //     first day present. This is what kills the 1450-row reconcile.
+  // Cross-day search jump (constraint 4): if a search match lands on a day
+  // other than the resolved scope, follow the match's day so the existing
+  // searchMatchRowRef scrollIntoView still lands. This OVERRIDES both the
+  // default scope AND an explicit operator pin — search must never be limited
+  // to the shown day. (The pin is restored as soon as the search is cleared.)
+  let effectiveDay = ''
+  if (!isWindowMode && orderedDays.length > 0) {
+    if (dayFilter && orderedDays.includes(dayFilter)) {
+      effectiveDay = dayFilter
+    } else {
+      const currentDay = currentRoutine?.scheduledDay
+      const firstPendingDay = routines.find(
+        (r) => r.status === 'pending' || r.status === 'queued',
+      )?.scheduledDay
+      effectiveDay =
+        (currentDay && orderedDays.includes(currentDay) && currentDay) ||
+        (firstPendingDay && orderedDays.includes(firstPendingDay) && firstPendingDay) ||
+        orderedDays[0]
+    }
+    if (
+      firstSearchMatchDay !== null &&
+      orderedDays.includes(firstSearchMatchDay) &&
+      firstSearchMatchDay !== effectiveDay
+    ) {
+      effectiveDay = firstSearchMatchDay
+    }
+  }
+
+  // Multi-day competitions only: scope to the effective day. Single-day comps
+  // (orderedDays.length <= 1) render unchanged — nothing to scope.
+  if (!isWindowMode && orderedDays.length > 1) {
+    routines = routines.filter((r) => (r.scheduledDay || '') === effectiveDay)
   }
 
   async function handleJumpTo(routine: Routine): Promise<void> {
@@ -783,6 +909,37 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
     const dir = routine.outputDir || (routine.outputPath ? routine.outputPath.replace(/[/\\][^/\\]+$/, '') : null)
     if (dir) {
       await window.api.openPath(dir)
+    }
+  }
+
+  // Operator "Archive Media" row action (scope A — CSE-local only).
+  // Confirms (destructive-to-local-state, NOT to media — files are moved
+  // into _archive/, never deleted), then archives the routine's local
+  // media and resets the routine to pre-record `pending` so a fresh
+  // recording can be made. CSE-local only — does not touch the uploaded
+  // or published copy. Simple confirm, no audible alert, does not block
+  // recording start.
+  async function archiveMediaForRoutine(routine: Routine): Promise<void> {
+    if (['recording', 'queued', 'encoding', 'uploading'].includes(routine.status)) {
+      window.alert(
+        `Archive Media is blocked while R${routine.entryNumber} is ${routine.status}. Stop or let the active job finish, then archive the local media.`,
+      )
+      return
+    }
+    const ok = window.confirm(
+      `Archive media for R${routine.entryNumber} "${routine.routineTitle}"?\n\n` +
+      `The current local recording/photos will be MOVED into this routine's ` +
+      `_archive folder (never deleted) and the routine will be reset so you ` +
+      `can record it fresh. The already-uploaded copy on the portal is not changed.`,
+    )
+    if (!ok) return
+    try {
+      const res = await (window.api as any).routineArchiveMedia(routine.id)
+      if (res && res.ok === false) {
+        window.alert(`Archive Media failed: ${res.reason}`)
+      }
+    } catch (err) {
+      window.alert(`Archive Media failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -854,6 +1011,7 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
   }
 
   return (
+    <>
     <div className="table-scroll" ref={tableScrollRef}>
       <table className="upload-table">
         <thead>
@@ -861,13 +1019,61 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             <th className="th-num" style={{ paddingLeft: '10px' }}>#</th>
             <th className="th-time">Time</th>
             <th className="th-routine-search">
-              <input
-                type="text"
-                className="th-search-input"
-                placeholder="Search # / name / studio..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <input
+                  type="text"
+                  className="th-search-input"
+                  placeholder="Search # / name / studio..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {!isWindowMode && orderedDays.length > 1 && (() => {
+                  const curIdx = orderedDays.indexOf(effectiveDay)
+                  const goTo = (idx: number): void => {
+                    const d = orderedDays[idx]
+                    if (d != null) setDayFilter(d)
+                  }
+                  return (
+                    <div className="day-nav" title="Day (default follows current routine)">
+                      <button
+                        type="button"
+                        className="day-nav-btn"
+                        disabled={curIdx <= 0}
+                        onClick={() => goTo(curIdx - 1)}
+                        aria-label="Previous day"
+                      >‹</button>
+                      <select
+                        className="day-nav-select"
+                        value={effectiveDay}
+                        onChange={(e) => setDayFilter(e.target.value)}
+                        title="Jump to day"
+                        aria-label="Select day"
+                      >
+                        {orderedDays.map((d) => (
+                          <option key={d} value={d}>{formatDayLabel(d)}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="day-nav-btn"
+                        disabled={curIdx < 0 || curIdx >= orderedDays.length - 1}
+                        onClick={() => goTo(curIdx + 1)}
+                        aria-label="Next day"
+                      >›</button>
+                      {dayFilter ? (
+                        <button
+                          type="button"
+                          className="day-nav-btn day-nav-auto"
+                          onClick={() => setDayFilter('')}
+                          title="Resume auto-follow of current routine"
+                        >AUTO</button>
+                      ) : (
+                        <span className="day-nav-auto-on" title="Following current routine">AUTO</span>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
             </th>
             {!compactMode && <th className="th-pipeline">REC</th>}
             {!compactMode && <th className="th-pipeline">SPLIT</th>}
@@ -876,13 +1082,17 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
             {!compactMode && <th className="th-pipeline">THUMB</th>}
             {!compactMode && <th className="th-pipeline">KEY</th>}
             <th>Status</th>
-            <th></th>
+            <th className="th-actions"></th>
           </tr>
         </thead>
         <tbody>
           {(() => {
             const uniqueDays = Array.from(new Set(routines.map((r) => r.scheduledDay || '')))
-            const showDayHeaders = !isWindowMode && (!dayFilter || uniqueDays.length > 1)
+            // Perf #4: rows are now day-scoped, so only show day-headers when
+            // more than one day is actually visible (multi-day fallback / a
+            // single-day comp that wasn't scoped). Session-dividers WITHIN the
+            // day are emitted by buildGroupedList regardless and stay intact.
+            const showDayHeaders = !isWindowMode && uniqueDays.length > 1
             const items = isWindowMode
               ? routines.map((r) => ({ type: 'routine' as const, routine: r }))
               : buildGroupedList(routines, { showDayHeaders, currentRoutineId: currentRoutine?.id ?? null })
@@ -1076,118 +1286,25 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
                     </div>
                   )}
                 </td>
-                <td>
-                  <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                    <NoteEditor routine={routine} externalOpen={noteOpenTarget} />
-                    {(routine.status === 'uploading' || (routine.status === 'encoded' && routine.error)) && (
-                      <button
-                        className="view-btn"
-                        style={{ color: 'var(--warning)', borderColor: 'var(--warning)' }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.api.uploadCancelRoutine(routine.id)
-                        }}
-                        title="Cancel upload for this routine"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                    {['recorded', 'queued', 'encoding', 'encoded', 'uploading', 'uploaded', 'confirmed', 'failed'].includes(routine.status) && (
-                      <button
-                        className="view-btn"
-                        style={{ color: 'var(--upload-blue)', borderColor: 'var(--upload-blue)' }}
-                        onClick={(e) => {
-                          void handleNudgeRoutine(e, routine)
-                        }}
-                        onContextMenu={(e) => {
-                          // Right-click toggles the relevant global auto setting
-                          // and fires a kick. Choice of encode vs upload follows
-                          // the routine's current pipeline stage.
-                          e.preventDefault()
-                          e.stopPropagation()
-                          const kind: 'encode' | 'upload' =
-                            routine.status === 'recorded' || routine.status === 'queued' || routine.status === 'encoding'
-                              ? 'encode'
-                              : 'upload'
-                          void (async () => {
-                            try {
-                              const res = await (window.api as any).jobQueueAutoToggle(kind)
-                              const label = kind === 'encode' ? 'Auto-encode' : 'Auto-upload'
-                              const stateText = (kind === 'encode' ? res?.autoEncode : res?.autoUpload) ? 'ON' : 'OFF'
-                              window.dispatchEvent(new CustomEvent('compsync:auto-toggled', {
-                                detail: { label, state: stateText },
-                              }))
-                            } catch {
-                              window.dispatchEvent(new CustomEvent('compsync:auto-toggled', {
-                                detail: { label: 'Auto toggle', state: 'FAILED' },
-                              }))
-                            }
-                          })()
-                        }}
-                        title="Click: nudge this routine. Right-click: toggle global auto-encode/upload + kick queue."
-                      >
-                        Nudge
-                      </button>
-                    )}
-                    {routine.status === 'failed' && (
-                      <button
-                        className="view-btn"
-                        style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.api.uploadRoutine(routine.id)
-                        }}
-                        title="Retry upload"
-                      >
-                        Retry
-                      </button>
-                    )}
-                    {routine.status !== 'scratched' ? (
-                      <button
-                        className="view-btn"
-                        style={{ color: '#f59e0b', borderColor: '#f59e0b' }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.api.recordingScratch(routine.id)
-                        }}
-                        title="Mark routine as scratched / did not perform"
-                      >
-                        Scratch
-                      </button>
-                    ) : (
-                      <button
-                        className="view-btn"
-                        style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.api.recordingUnscratch(routine.id)
-                        }}
-                        title="Return scratched routine to pending"
-                      >
-                        Unscratch
-                      </button>
-                    )}
+                <td className="td-actions">
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <NoteEditor routine={routine} externalOpen={noteOpenTarget} triggerless />
                     <button
-                      className="view-btn"
+                      className="view-btn action-menu-btn"
+                      aria-haspopup="menu"
+                      aria-expanded={actionMenu?.routineId === routine.id}
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation()
-                        requestMoveAfter(routine)
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        setActionMenu((prev) =>
+                          prev?.routineId === routine.id ? null : { routineId: routine.id, rect },
+                        )
                       }}
-                      title="Move this routine after another routine in the schedule"
+                      title={routine.notes ? `Note: ${routine.notes}` : 'Row actions'}
                     >
-                      Move…
+                      {routine.notes ? '⋯ •' : '⋯'}
                     </button>
-                    {!isNotRecorded && (
-                      <button
-                        className="view-btn"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleViewMedia(routine)
-                        }}
-                      >
-                        View
-                      </button>
-                    )}
                   </div>
                 </td>
               </tr>
@@ -1197,5 +1314,59 @@ export default function RoutineTable({ windowMode, count = 5 }: RoutineTableProp
         </tbody>
       </table>
     </div>
+    {actionMenu && (() => {
+      const r = competition?.routines.find((x) => x.id === actionMenu.routineId)
+      if (!r) return null
+      const notRecorded = r.status === 'pending' || r.status === 'skipped' || r.status === 'scratched'
+      const canCancel = r.status === 'uploading' || (r.status === 'encoded' && !!r.error)
+      const canNudge = ['recorded', 'queued', 'encoding', 'encoded', 'uploading', 'uploaded', 'confirmed', 'failed'].includes(r.status)
+      const canRetry = r.status === 'failed'
+      const close = (): void => setActionMenu(null)
+      const item = (label: string, run: () => void, color?: string): React.ReactElement => (
+        <button
+          className="view-btn"
+          style={{ display: 'block', width: '100%', textAlign: 'left', ...(color ? { color, borderColor: color } : {}) }}
+          onClick={(e) => { e.stopPropagation(); close(); run() }}
+        >
+          {label}
+        </button>
+      )
+      return (
+        <div
+          ref={actionMenuRef}
+          className="row-action-menu"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: Math.min(actionMenu.rect.bottom + 2, window.innerHeight - 8),
+            right: Math.max(window.innerWidth - actionMenu.rect.right, 8),
+            zIndex: 1000,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+            padding: '4px',
+            background: 'var(--panel, #1b1d24)',
+            border: '1px solid var(--border, #333)',
+            borderRadius: '6px',
+            boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+            minWidth: '170px',
+          }}
+        >
+          {item(r.notes ? 'Edit note' : 'Add note', () => openNoteForRoutine(r.id))}
+          {canCancel && item('Cancel upload', () => window.api.uploadCancelRoutine(r.id), 'var(--warning)')}
+          {canNudge && item('Nudge', () => void nudgeRoutine(r), 'var(--upload-blue)')}
+          {canNudge && item('Toggle auto-encode/upload', () => void toggleAutoForRoutine(r), 'var(--upload-blue)')}
+          {canRetry && item('Retry upload', () => window.api.uploadRoutine(r.id), 'var(--accent)')}
+          {r.status !== 'scratched'
+            ? item('Scratch', () => window.api.recordingScratch(r.id), '#f59e0b')
+            : item('Unscratch', () => window.api.recordingUnscratch(r.id), 'var(--accent)')}
+          {item('Move…', () => requestMoveAfter(r))}
+          {!notRecorded && item('View media', () => void handleViewMedia(r))}
+          {item('Archive Media', () => void archiveMediaForRoutine(r), '#f59e0b')}
+        </div>
+      )
+    })()}
+    </>
   )
 }

@@ -45,6 +45,8 @@ import {
   handleTestExtractKeyframes,
   handleTestReassignRecording,
   handleTestCaptureRenderer,
+  handleTestObsState,
+  handleTestAudioLevels,
   handleSnapshot,
 } from './debugTestRoutes'
 
@@ -313,6 +315,8 @@ const POST_ROUTES: Record<string, Handler> = {
   '/debug/test/extract-keyframes': handleTestExtractKeyframes,
   '/debug/test/recording/reassign': handleTestReassignRecording,
   '/debug/test/capture-renderer': handleTestCaptureRenderer,
+  '/debug/test/obs-state': handleTestObsState,
+  '/debug/test/audio-levels': handleTestAudioLevels,
 }
 
 export function startDebugServer(): void {

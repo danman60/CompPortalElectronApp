@@ -94,7 +94,11 @@ export default function LoadCompetition(): React.ReactElement {
   }
 
   return (
-    <div className="load-popover">
+    <div
+      className="load-popover"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="popover-tabs">
         <button
           className={`popover-tab ${tab === 'live' ? 'active' : ''}`}
@@ -118,6 +122,7 @@ export default function LoadCompetition(): React.ReactElement {
               type="text"
               placeholder="e.g. EMPWR-SPRING-26"
               value={shareCode}
+              onPointerDown={(e) => e.currentTarget.focus()}
               onChange={(e) => setShareCode(e.target.value.toUpperCase())}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleLoadShareCode()

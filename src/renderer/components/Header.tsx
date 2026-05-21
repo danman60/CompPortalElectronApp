@@ -5,7 +5,6 @@ import CurrentRoutine from './CurrentRoutine'
 import Controls from './Controls'
 import LoadCompetition from './LoadCompetition'
 import { HealthStrip } from './RightPanel'
-import VerticalMeters from './VerticalMeters'
 import PipelineHealthChip from './PipelineHealthChip'
 import EventLogPanel from './EventLogPanel'
 import '../styles/header.css'
@@ -27,8 +26,6 @@ function ActionBar(): React.ReactElement {
   const setLoadCompOpen = useStore((s) => s.setLoadCompOpen)
   const tetherState = useStore((s) => s.tetherState)
   const [isUploading, setIsUploading] = useState(false)
-  const [uploadsPaused, setUploadsPaused] = useState(false)
-  const [encodingPaused, setEncodingPaused] = useState(false)
   const [wifiDisplayRunning, setWifiDisplayRunning] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
 
@@ -167,26 +164,6 @@ function ActionBar(): React.ReactElement {
     await window.api.tetherStart(folder)
   }
 
-  async function toggleUploadPause(): Promise<void> {
-    if (uploadsPaused) {
-      await window.api.uploadStart()
-      setUploadsPaused(false)
-    } else {
-      await window.api.uploadStop()
-      setUploadsPaused(true)
-    }
-  }
-
-  async function toggleEncodePause(): Promise<void> {
-    if (encodingPaused) {
-      await window.api.ffmpegResume()
-      setEncodingPaused(false)
-    } else {
-      await window.api.ffmpegPause()
-      setEncodingPaused(true)
-    }
-  }
-
   const uploadDisabled = isUploading || uploadingCount > 0
 
   return (
@@ -275,38 +252,79 @@ function ActionBar(): React.ReactElement {
         <span className="ab-label">Tablet</span>
       </button>
 
-      {(encodingCount > 0 || uploadingCount > 0 || encodingPaused || uploadsPaused) && (
-        <div className="ab-pause-bar">
-          {(encodingCount > 0 || encodingPaused) && (
-            <button
-              className={`ab-pause-btn${encodingPaused ? ' paused' : ''}`}
-              onClick={toggleEncodePause}
-              title={encodingPaused ? 'Resume encoding' : 'Pause encoding (finishes current)'}
-            >
-              {encodingPaused ? '\u25B6' : '\u23F8'} Encode
-              {encodingCount > 0 && <span className="ab-count">{encodingCount}</span>}
-            </button>
-          )}
-          {(uploadingCount > 0 || uploadsPaused) && (
-            <button
-              className={`ab-pause-btn${uploadsPaused ? ' paused' : ''}`}
-              onClick={toggleUploadPause}
-              title={uploadsPaused ? 'Resume uploads' : 'Pause uploads (aborts current)'}
-            >
-              {uploadsPaused ? '\u25B6' : '\u23F8'} Upload
-              {uploadingCount > 0 && <span className="ab-count">{uploadingCount}</span>}
-            </button>
-          )}
-        </div>
+    </div>
+  )
+}
+
+function QueueControlCluster(): React.ReactElement | null {
+  const uploadingCount = useStore((s) => s.uploadingCount)
+  const encodingCount = useStore((s) => s.encodingCount)
+  const [uploadsPaused, setUploadsPaused] = useState(false)
+  const [encodingPaused, setEncodingPaused] = useState(false)
+
+  async function toggleUploadPause(): Promise<void> {
+    if (uploadsPaused) {
+      await window.api.uploadStart()
+      setUploadsPaused(false)
+    } else {
+      await window.api.uploadStop()
+      setUploadsPaused(true)
+    }
+  }
+
+  async function toggleEncodePause(): Promise<void> {
+    if (encodingPaused) {
+      await window.api.ffmpegResume()
+      setEncodingPaused(false)
+    } else {
+      await window.api.ffmpegPause()
+      setEncodingPaused(true)
+    }
+  }
+
+  if (encodingCount === 0 && uploadingCount === 0 && !encodingPaused && !uploadsPaused) return null
+
+  return (
+    <div className="queue-control-cluster" aria-label="Queue controls">
+      {(encodingCount > 0 || encodingPaused) && (
+        <button
+          className={`queue-control-btn${encodingPaused ? ' paused' : ''}`}
+          onClick={toggleEncodePause}
+          title={encodingPaused ? 'Resume encoding' : 'Pause encoding after the current file'}
+        >
+          <span className="queue-control-icon">{encodingPaused ? '\u25B6' : '\u23F8'}</span>
+          <span className="queue-control-label">Encode</span>
+          {encodingCount > 0 && <span className="queue-control-count">{encodingCount}</span>}
+        </button>
+      )}
+      {(uploadingCount > 0 || uploadsPaused) && (
+        <button
+          className={`queue-control-btn${uploadsPaused ? ' paused' : ''}`}
+          onClick={toggleUploadPause}
+          title={uploadsPaused ? 'Resume uploads' : 'Pause uploads'}
+        >
+          <span className="queue-control-icon">{uploadsPaused ? '\u25B6' : '\u23F8'}</span>
+          <span className="queue-control-label">Upload</span>
+          {uploadingCount > 0 && <span className="queue-control-count">{uploadingCount}</span>}
+        </button>
       )}
     </div>
   )
 }
 
+function formatUploadRate(bytesPerSecond: number | undefined): string {
+  if (!Number.isFinite(bytesPerSecond) || !bytesPerSecond || bytesPerSecond <= 0) return 'active'
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)}MB/s`
+  if (bytesPerSecond >= 1024) return `${Math.round(bytesPerSecond / 1024)}KB/s`
+  return `${Math.round(bytesPerSecond)}B/s`
+}
+
 function SystemMonitor(): React.ReactElement | null {
   const stats = useStore((s) => s.systemStats)
   const obsStats = useStore((s) => s.obsStats)
-  if (!stats && !obsStats) return null
+  const competition = useStore((s) => s.competition)
+  const uploadingCount = useStore((s) => s.uploadingCount)
+  if (!stats && !obsStats && uploadingCount === 0) return null
 
   const cpuPercent = Math.min(100, Math.max(0, stats?.cpuPercent ?? 0))
   const cpuColor = cpuPercent > 85 ? 'var(--danger)' : cpuPercent > 60 ? 'var(--warning)' : 'var(--success)'
@@ -346,6 +364,23 @@ function SystemMonitor(): React.ReactElement | null {
     }
   }
 
+  const uploadProgress = (competition?.routines ?? [])
+    .filter((routine) => routine.status === 'uploading' && routine.uploadProgress)
+    .map((routine) => routine.uploadProgress!)
+  const uploadSpeed = uploadProgress.reduce((sum, progress) => (
+    sum + (Number.isFinite(progress.bytesPerSecond) ? progress.bytesPerSecond ?? 0 : 0)
+  ), 0)
+  const uploadFilesCompleted = uploadProgress.reduce((sum, progress) => sum + progress.filesCompleted, 0)
+  const uploadFilesTotal = uploadProgress.reduce((sum, progress) => sum + progress.filesTotal, 0)
+  const uploadStatus = uploadFilesTotal > 0
+    ? `${uploadFilesCompleted}/${uploadFilesTotal}`
+    : uploadingCount > 0
+      ? `${uploadingCount} active`
+      : ''
+  const uploadTitle = uploadFilesTotal > 0
+    ? `Uploading ${uploadingCount} routine${uploadingCount === 1 ? '' : 's'}: ${uploadFilesCompleted}/${uploadFilesTotal} files at ${formatUploadRate(uploadSpeed)}`
+    : `Uploading ${uploadingCount} routine${uploadingCount === 1 ? '' : 's'}`
+
   return (
     <div className="header-status topband-system">
         {stats && (
@@ -383,6 +418,11 @@ function SystemMonitor(): React.ReactElement | null {
         )}
         {obsStats && obsStats.connected && obsStats.streaming && congLabel && (
           <span className="si" style={{ color: congColor }}>Cong {congLabel}</span>
+        )}
+        {uploadingCount > 0 && (
+          <span className="si upload-rate" title={uploadTitle}>
+            UP {uploadStatus} {formatUploadRate(uploadSpeed)}
+          </span>
         )}
     </div>
   )
@@ -720,8 +760,14 @@ export default function Header(): React.ReactElement {
             {/* Iter-8 (2026-04-30): "16 routines" pill dropped — same number
                 appears as the denominator in the REC N/16 stat tile. UploadBacklogPill
                 dropped — same numbers appear inline as PROC / UP / PIX stat tiles. */}
-            <ImportPill />
             <PipelineHealthChip />
+            <QueueControlCluster />
+          </div>
+        </div>
+
+        <div className="topband-import-safe">
+          <div className="import-pill-slot">
+            <ImportPill />
           </div>
         </div>
 
@@ -781,9 +827,6 @@ export default function Header(): React.ReactElement {
           <CurrentRoutine />
         </div>
         <div className="topband-controls">
-          <div className="topband-meters-inline">
-            <VerticalMeters />
-          </div>
           <Controls />
         </div>
       </div>

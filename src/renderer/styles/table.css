@@ -76,6 +76,22 @@
 .th-time { width: 52px; white-space: nowrap; }
 .td-time { white-space: nowrap; overflow: hidden; }
 .upload-table { min-width: 0; }
+/* Reserve a hard slot for the actions column on the right edge. With
+   table-layout: auto, the browser honors width on a TH as the preferred
+   column width and distributes remaining horizontal space to the other
+   columns. Routine name + sub already truncate via overflow:hidden ellipsis,
+   so they happily shrink. Without this, long studio strings in .r-sub
+   uncapped the name column and the actions cell got 0 width on DART
+   (operator complaint 2026-05-15). */
+.th-actions, .td-actions {
+  width: 150px;
+  min-width: 150px;
+  white-space: nowrap;
+}
+/* Soft caps so the routine name + status columns don't hog the table. */
+.th-routine-search, .r-name { max-width: 280px; }
+.r-sub { max-width: 280px; }
+.status-stack { max-width: 170px; }
 .r-name {
   font-weight: 600;
   color: #ffffff;
@@ -446,4 +462,53 @@
 .th-search-input::placeholder {
   color: var(--text-muted);
   text-transform: none;
+}
+
+/* Perf #4: minimal day stepper in the table header. Reuses existing tokens —
+   no redesign. Drives the existing dayFilter store. */
+.day-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.day-nav-btn {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+.day-nav-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.day-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.day-nav-select {
+  font-size: 10px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 4px;
+  max-width: 140px;
+  cursor: pointer;
+}
+.day-nav-select:hover {
+  border-color: var(--accent);
+}
+.day-nav-auto,
+.day-nav-auto-on {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+.day-nav-auto-on {
+  color: var(--accent);
+  padding: 0 3px;
 }

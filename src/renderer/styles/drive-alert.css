@@ -71,13 +71,29 @@
    keep the info, lose the vertical stack. Pill grows horizontally instead.
    2026-05-04: nowrap caused the pill to dominate the topband — operator
    wanted it constrained to a card-shape. Cap max-width and ellipsis the
-   overflow so the pill stays single-line but proportionate. */
+   overflow so the pill stays single-line but proportionate.
+   2026-05-15 (UDC Cobourg): the 280px cap still truncated the normal
+   "Safe to remove · NNN photos · done H:MM PM" message mid-string
+   ("…done 7:0"). Operator wants the full message readable. Slot now sizes
+   to content (single line) up to a generous 560px safety cap — realistic
+   messages never ellipsize; only pathological lengths clamp. Trade-off:
+   adjacent header stats can shift slightly when the pill appears/clears,
+   which operator accepted over losing the completion time. */
+.import-pill-slot {
+  flex: 0 1 auto;
+  max-width: 560px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
 .import-pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
-  margin: 0 6px;
+  margin: 0;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -86,8 +102,7 @@
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
-  flex-shrink: 1;
-  max-width: 320px;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

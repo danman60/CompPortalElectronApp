@@ -55,11 +55,14 @@ function routineToSlot(r: Routine | null): {
 export async function fire(mode: OverlayFeatureCardMode): Promise<void> {
   const cur = state.getCurrentRoutine()
   const nxt = state.getNextRoutine()
-  // Per Q1 (A+B): UP NEXT main = current pointer, THAT WAS main = current
-  // pointer, THAT WAS bottom strip = pointer + 1. UP NEXT mode does not use
-  // the bottom strip but we populate it harmlessly.
+  const prev = state.getPreviousRoutine()
+  // 2026-05-15 fix: THAT WAS = the just-performed (previous) routine; while a
+  // recording is active the current pointer is the routine being recorded, so
+  // using `cur` made THAT WAS duplicate UP NEXT. UP NEXT main = current
+  // pointer (the upcoming/recording routine). Bottom strip stays pointer+1.
+  const mainSlot = mode === 'thatWas' ? (prev ?? cur) : cur
   overlay.setFeatureCardData({
-    main: routineToSlot(cur),
+    main: routineToSlot(mainSlot),
     next: routineToSlot(nxt),
   })
 

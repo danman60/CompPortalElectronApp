@@ -282,14 +282,21 @@ const BODY_KEY_PATTERNS: Array<{ name: string; re: RegExp; extract: (m: RegExpMa
   { name: 'canon-q53a', re: /^(Q\d{2}[A-Z])\d{4,5}\.(?:jpg|jpeg)$/i, extract: (m) => m[1].toUpperCase() },
 ]
 
+// Legacy in-memory fallback; the authoritative store is state.hasReportedCameraPrefix
+// (persisted across app restarts as of 2026-05-15).
 const reportedUnknownPrefixes = new Set<string>()
 
 function unknownPrefixOf(basename: string): string {
-  // Approximate the camera filename "shape" so we don't spam one banner per
-  // file: take the first 4 alphanumerics + "...".  e.g. "ABCD1234.JPG" →
-  // "ABCD…", "FOO_42.jpg" → "FOO_…". Keeps false-distinct count low.
-  const m = basename.match(/^([A-Za-z0-9_]{1,6})/)
-  return m ? `${m[1]}…` : basename
+  // 2026-05-15 fix: only the LETTERS/underscores at the start define the
+  // camera "shape". The previous regex included digits which made each
+  // sequential file number produce a NEW prefix (P1234567 vs P1239999 ≠
+  // same prefix), spamming hundreds of "Camera body unknown" banners on a
+  // single card. Letters-only: "IMG_1234.JPG" → "IMG_…", "P1234567.JPG"
+  // → "P…", "DSCN0001.JPG" → "DSCN…". Falls back to the first 4 chars if
+  // the filename starts with a digit (rare cameras).
+  const m = basename.match(/^([A-Za-z_]{1,8})/)
+  if (m && m[1].length > 0) return `${m[1]}…`
+  return basename.slice(0, 4) + '…'
 }
 
 export function getCameraBodyKey(filePath: string): string | null {
@@ -304,8 +311,12 @@ export function getCameraBodyKey(filePath: string): string | null {
   // safety net for that card.
   try {
     const prefix = unknownPrefixOf(base)
-    if (!reportedUnknownPrefixes.has(prefix)) {
+    // Persisted check: state.hasReportedCameraPrefix survives app restarts so
+    // the banner only fires for genuinely-new patterns (operator complaint
+    // 2026-05-15 — same warning kept re-firing after every dismissal/restart).
+    if (!reportedUnknownPrefixes.has(prefix) && !state.hasReportedCameraPrefix(prefix)) {
       reportedUnknownPrefixes.add(prefix)
+      state.addReportedCameraPrefix(prefix)
       logger.photos.warn(
         `Camera body unknown for filename pattern '${prefix}' (sample: ${base}) — watermark filter inert for this card; dedup-by-DB still active`,
       )
@@ -1198,6 +1209,165 @@ async function runImport(
       `[volume-cursor] ${cursorByDrive.size} drive partition(s) keyed; ${unknownCardCount} unknown card(s)`,
     )
   }
+
+  // ── 2026-05-16: per-(serial,subfolder) filename PRE-READ bookmark ──────────
+  //
+  // FAIL-SAFE OPTIMIZATION LAYER. This sits IN FRONT OF the per-volume EXIF
+  // cursor + DB dedup + ±30s window gate. It NEVER replaces or weakens them:
+  // every file it does NOT pre-skip flows through the UNCHANGED EXIF loop /
+  // cursor / dedup below. Its ONLY job is to avoid OPENING (128KB read +
+  // EXIF parse) the clearly-old contiguous filename prefix of a subfolder on
+  // a re-inserted large card — camera filenames are monotonic within a DCIM
+  // subfolder, so a file whose name sorts strictly below the last-imported
+  // name (and below a safety boundary band) was provably imported already.
+  //
+  // ABSOLUTE INVARIANT: a not-yet-imported photo must NEVER be skipped
+  // unread. Failure direction is always "read more than necessary," never
+  // "skip something new." Enforced by:
+  //   • Eligibility gates: known volume serial, existing bookmark for THIS
+  //     (serial,subfolder), NOT previewOnly, NOT allowlist/bypass mode.
+  //   • Boundary re-read band: the bookmark file itself + BAND files
+  //     immediately before it (by sort position) are ALWAYS read even though
+  //     they sort ≤ the bookmark — catches out-of-order / backfilled writes.
+  //   • Rollover guard: if a subfolder's MAX basename sorts ≤ the bookmark
+  //     (sequence wrap / new prefix), the whole subfolder is full-read this
+  //     pass and the bookmark cleared + re-established (no skip on a wrap).
+  //   • Slightest ambiguity (no serial / no bookmark / wrap / band) → READ
+  //     the file; the existing EXIF cursor + DB dedup decide.
+  //
+  // The filename compare is timezone-immune (string compare of monotonic
+  // camera names — no time math), so it is robust regardless of the
+  // EXIF-vs-cursor TZ basis. The bookmark also stores the file's EXIF
+  // capture-time (same `.toISOString()` projection the EXIF cursor uses) but
+  // ONLY for wrap diagnostics — never as a standalone skip criterion.
+  const BOUNDARY_REREAD_BAND = 5
+  // Eligible only for normal imports: allowlist (scoped backfill / "bypass
+  // watermark for specific frames", ImportPhotosOptions.filenameAllowlist)
+  // and previewOnly both DISABLE the pre-skip entirely (existing contracts).
+  const filenamePreSkipEnabled = !previewOnly && !opts.filenameAllowlist
+  let skippedByFilenameBookmark = 0
+  let preSkipEligibleGroups = 0
+  let preSkipRolloverGroups = 0
+  if (filenamePreSkipEnabled && partitionedPaths.length > 0) {
+    // Re-group the post-allowlist path list by (volume serial, DCIM
+    // subfolder). The volume serial comes from cursorByDrive (already
+    // resolved per {drive}::{dcim} partition); the subfolder is the DCIM
+    // folder key. We MUST use the volume serial (stable across reader swaps),
+    // never the drive letter, for the persisted bookmark key.
+    interface PreSkipGroup {
+      serial: string
+      subfolder: string
+      paths: string[]
+    }
+    const groups = new Map<string, PreSkipGroup>()
+    for (const fp of partitionedPaths) {
+      const dk = driveKeyFor(fp)
+      const cd = cursorByDrive.get(dk)
+      const serial = cd?.serial || ''
+      const subfolder = getDcimFolderKey(fp) // '' if not under a DCIM-style folder
+      // Unknown card / no serial → no stable bookmark key → NEVER pre-skip
+      // (behave exactly as today: every file read, EXIF cursor decides).
+      if (!serial) continue
+      const gkey = state.sdFilenameBookmarkKey(serial, subfolder)
+      let g = groups.get(gkey)
+      if (!g) { g = { serial, subfolder, paths: [] }; groups.set(gkey, g) }
+      g.paths.push(fp)
+    }
+
+    // Decide which paths to drop. Build the set of survivors; anything not a
+    // proven-old prefix file stays. We rebuild partitionedPaths from this.
+    const dropSet = new Set<string>()
+    const groupList: PreSkipGroup[] = Array.from(groups.values())
+    for (const g of groupList) {
+      const bm = state.getSdFilenameBookmark(g.serial, g.subfolder)
+      if (!bm || !bm.lastFilename) {
+        // First time we've imported this (serial,subfolder) — nothing to
+        // skip. Every file read; bookmark established post-import.
+        continue
+      }
+      preSkipEligibleGroups++
+      // Sort by basename (monotonic camera sequence). Stable, upper-cased.
+      const sorted: Array<{ p: string; bn: string }> = g.paths
+        .map((p: string) => ({ p, bn: path.basename(p).toUpperCase() }))
+        .sort((a: { p: string; bn: string }, b: { p: string; bn: string }) =>
+          a.bn < b.bn ? -1 : a.bn > b.bn ? 1 : 0)
+      const maxBn = sorted.length ? sorted[sorted.length - 1].bn : ''
+      const wm = bm.lastFilename // already upper-cased in state
+      // Rollover / wrap: the WHOLE subfolder's max basename sorts ≤ the
+      // bookmark. That means the sequence reset (counter wrap 9999→0000) or
+      // the card was reformatted / a new prefix took over. Filename order is
+      // no longer monotonic relative to the bookmark → DO NOT skip anything;
+      // full-read this subfolder and clear the bookmark so it re-establishes
+      // from the EXIF cursor's result. (The EXIF cursor still dedups every
+      // file we read, so a wrap cannot cause a re-import wave either.)
+      if (maxBn <= wm) {
+        preSkipRolloverGroups++
+        state.clearSdFilenameBookmark(g.serial, g.subfolder)
+        logger.photos.warn(
+          `[fn-bookmark] rollover detected for ${g.serial}::${g.subfolder} ` +
+          `(maxName=${maxBn} ≤ bookmark=${wm}) — full-reading subfolder, ` +
+          `bookmark cleared; EXIF cursor remains the dedup authority`,
+        )
+        continue
+      }
+      // Normal case: skip ONLY the contiguous run of files whose basename
+      // sorts STRICTLY BELOW the bookmark, EXCLUDING the last
+      // BOUNDARY_REREAD_BAND of them (always re-read the band + the bookmark
+      // file + everything after). i.e. find the index of the first file
+      // whose name >= bookmark; everything from (that index - BAND) onward is
+      // read; only [0, cutoff) is skipped.
+      let firstGE = sorted.length
+      for (let i = 0; i < sorted.length; i++) {
+        if (sorted[i].bn >= wm) { firstGE = i; break }
+      }
+      const cutoff = Math.max(0, firstGE - BOUNDARY_REREAD_BAND)
+      for (let i = 0; i < cutoff; i++) {
+        dropSet.add(sorted[i].p)
+      }
+      skippedByFilenameBookmark += cutoff
+      logger.photos.info(
+        `[fn-bookmark] ${g.serial}::${g.subfolder}: ${g.paths.length} files, ` +
+        `bookmark=${wm}; pre-skipping ${cutoff} proven-old (firstGE=${firstGE}, ` +
+        `band=${BOUNDARY_REREAD_BAND}) — ${g.paths.length - cutoff} will be EXIF-read`,
+      )
+    }
+
+    if (dropSet.size > 0) {
+      const before = partitionedPaths.length
+      const kept = partitionedPaths.filter((p) => !dropSet.has(p))
+      partitionedPaths.length = 0
+      partitionedPaths.push(...kept)
+      logger.photos.info(
+        `[fn-bookmark] pre-read skip applied: ${dropSet.size}/${before} files NOT opened ` +
+        `(${preSkipEligibleGroups} eligible group(s), ${preSkipRolloverGroups} rollover); ` +
+        `${partitionedPaths.length} flow to EXIF cursor + DB dedup unchanged. ` +
+        `TZ basis: filename compare is timezone-immune; EXIF cursor backstop ` +
+        `uses .toISOString() (same projection as existing sdCardCursors).`,
+      )
+      events.emit('import.fnbookmark.preskip', {
+        folderPath,
+        skipped: dropSet.size,
+        scannedBefore: before,
+        keptForExif: partitionedPaths.length,
+        eligibleGroups: preSkipEligibleGroups,
+        rolloverGroups: preSkipRolloverGroups,
+        boundaryBand: BOUNDARY_REREAD_BAND,
+      })
+    } else if (preSkipEligibleGroups > 0 || preSkipRolloverGroups > 0) {
+      logger.photos.info(
+        `[fn-bookmark] no files pre-skipped ` +
+        `(${preSkipEligibleGroups} eligible, ${preSkipRolloverGroups} rollover) — ` +
+        `everything flows to EXIF cursor (band/wrap kept all files)`,
+      )
+    }
+  } else if (!filenamePreSkipEnabled && partitionedPaths.length > 0) {
+    logger.photos.info(
+      `[fn-bookmark] pre-skip DISABLED (${previewOnly ? 'previewOnly' : ''}` +
+      `${opts.filenameAllowlist ? 'filenameAllowlist/bypass' : ''}) — ` +
+      `full read; existing dedup path unchanged`,
+    )
+  }
+
   // Retired by build9o: skippedByFilenameDedup (no longer used as a dedup
   // tier; cursor is the sole authority). Variable kept at 0 for log-parser
   // compatibility downstream.
@@ -2164,7 +2334,7 @@ async function runImport(
   })
 
   logger.photos.info(
-    `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s${dedupSkippedCount > 0 ? `, dedup-skipped: ${dedupSkippedCount}` : ''}${skippedDiskExists > 0 ? `, disk-exists-skipped: ${skippedDiskExists}` : ''}`,
+    `Import complete: ${result.matched} matched, ${result.unmatched} unmatched, offset: ${Math.round(clockOffsetMs / 1000)}s${dedupSkippedCount > 0 ? `, dedup-skipped: ${dedupSkippedCount}` : ''}${skippedDiskExists > 0 ? `, disk-exists-skipped: ${skippedDiskExists}` : ''}${skippedByFilenameBookmark > 0 ? `, fn-bookmark-preskipped: ${skippedByFilenameBookmark} (NOT opened; EXIF cursor still authority for the rest)` : ''}`,
   )
 
   // Advance SD watermark per camera body to the latest EXIF capture time we
@@ -2198,6 +2368,52 @@ async function runImport(
         `[volume-cursor] advanced ${maxByVolumeSerial.size} cursor(s): ` +
         Array.from(maxByVolumeSerial.entries()).map(([s, e]) => `${s}=${e.iso}`).join(', '),
       )
+    }
+
+    // 2026-05-16 — advance the per-(serial,subfolder) filename bookmark to the
+    // MAX basename among photos ACCEPTED into the match set (`photos[]`),
+    // keyed by (serial, DCIM subfolder). Anchoring to the accepted set (not
+    // merely "files we opened") is the conservative choice: the bookmark can
+    // only ever point at a file we definitively processed. A file dropped by
+    // the cross-day guard or skipped by the EXIF cursor does NOT advance the
+    // bookmark, so a later legitimate import of a not-yet-imported file with
+    // a lower name is still read (failure direction = read more, never skip
+    // new). setSdFilenameBookmark itself is forward-only on filename.
+    //
+    // Gated by `filenamePreSkipEnabled` (= !previewOnly && !filenameAllowlist):
+    //   • previewOnly → no state writes (also the enclosing block guard).
+    //   • filenameAllowlist (scoped backfill / "bypass watermark for specific
+    //     frames") → DO NOT advance the card's general bookmark; a scoped
+    //     recovery import must not move the bookmark forward and cause a later
+    //     full import to pre-skip files the scoped run never touched.
+    if (filenamePreSkipEnabled) {
+      interface BmMax { serial: string; subfolder: string; bn: string; iso: string }
+      const bmMax = new Map<string, BmMax>()
+      for (const photo of photos) {
+        const dk = driveKeyFor(photo.path)
+        const cd = cursorByDrive.get(dk)
+        if (!cd || !cd.serial) continue
+        const subfolder = getDcimFolderKey(photo.path)
+        const key = state.sdFilenameBookmarkKey(cd.serial, subfolder)
+        const bn = path.basename(photo.path).toUpperCase()
+        const iso = photo.captureTime.toISOString()
+        const cur = bmMax.get(key)
+        if (!cur || bn > cur.bn) {
+          bmMax.set(key, { serial: cd.serial, subfolder, bn, iso })
+        }
+      }
+      let bmAdvanced = 0
+      for (const { serial, subfolder, bn, iso } of bmMax.values()) {
+        if (state.setSdFilenameBookmark(serial, subfolder, { lastFilename: bn, lastCaptureTime: iso })) {
+          bmAdvanced++
+        }
+      }
+      if (bmMax.size > 0) {
+        logger.photos.info(
+          `[fn-bookmark] advanced ${bmAdvanced}/${bmMax.size} filename bookmark(s): ` +
+          Array.from(bmMax.values()).map((b) => `${b.serial}::${b.subfolder}=${b.bn}`).join(', '),
+        )
+      }
     }
   }
 

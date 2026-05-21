@@ -146,9 +146,6 @@ export default function Controls(): React.ReactElement {
     <div className="section controls-section">
       {primaryBtn}
       <div className="control-row">
-        <button className="ctrl-btn" onClick={handlePrev}>
-          Prev
-        </button>
         <button
           className={`ctrl-btn${isRecording && !isAwardsNext ? '' : ' disabled-muted'}${shouldFlash && flashAltPhase && !isAwardsNext ? ' next-flash-alert' : ''}${shouldFlash && !isAwardsNext ? ' next-flash-base' : ''}`}
           onClick={isRecording && !isAwardsNext ? handleNextFull : undefined}
@@ -161,8 +158,6 @@ export default function Controls(): React.ReactElement {
         >
           Next
         </button>
-      </div>
-      <div className="control-row">
         <button
           className={`ctrl-btn stream ${obsState.isStreaming ? 'is-live' : ''}`}
           onClick={handleToggleStream}
@@ -176,14 +171,8 @@ export default function Controls(): React.ReactElement {
             'Start Stream'
           )}
         </button>
-        <button
-          className="ctrl-btn"
-          onClick={handleSaveReplay}
-          disabled={!isConnected}
-          style={{ color: 'var(--warning)' }}
-        >
-          Save Replay
-        </button>
+      </div>
+      <div className="control-row">
         <button
           className="ctrl-btn"
           onClick={handleStartEmpty}
@@ -201,7 +190,7 @@ export default function Controls(): React.ReactElement {
             opacity: !isConnected ? 0.4 : 1,
           }}
         >
-          {isRecording ? 'SAVE AS EMPTY ROUTINE' : 'START EMPTY ROUTINE'}</button>
+          {isRecording ? 'SAVE EMPTY' : 'START EMPTY'}</button>
         <button className="ctrl-btn" onClick={handleClockSync}>
           Clock Sync
         </button>

@@ -542,11 +542,112 @@ async function archiveExistingFiles(routineDir: string): Promise<void> {
   logger.app.info(`Archived existing files to ${versionDir}`)
 }
 
+/**
+ * Operator-invoked "Archive Media" row action (scope A — CSE-local only).
+ *
+ * Moves the routine's local recording folder contents into the SAME
+ * `_archive/v{N}/` versioned structure that the re-record path
+ * (`archiveExistingFiles`) already uses — files are RENAMED, never
+ * deleted — then resets the routine's pipeline state back to its
+ * pre-record `pending` state so a fresh recording can be made into the
+ * cleared slot. Reuses the exact field-clearing pattern from
+ * `state.scratchRoutine` (recordingStartedAt/StoppedAt/output/encoded/
+ * keyframes/uploadProgress/error), but lands on `pending` (the normal
+ * pre-record state) instead of `scratched`.
+ *
+ * NEVER touches CompPortal / the uploaded or published copy (scope B,
+ * deferred). NEVER deletes media. Returns a result the IPC handler can
+ * surface; throws only on a true failure (missing routine).
+ */
+export async function archiveRoutineMedia(
+  routineId: string,
+): Promise<{ ok: true; archivedDir: string | null; routine: Routine } | { ok: false; reason: string }> {
+  const comp = state.getCompetition()
+  if (!comp) return { ok: false, reason: 'no-competition' }
+  const routine = comp.routines.find((r) => r.id === routineId)
+  if (!routine) return { ok: false, reason: 'routine-not-found' }
+
+  // Authoritative routine folder: `routine.outputDir` is set when recording
+  // finishes (recording.ts:958/998). Fall back to the deterministic
+  // share-code/entry path resolver so an archive still works even if a
+  // boot-recovery cleared outputDir but the folder still has files on disk.
+  let routineDir = routine.outputDir
+  if (!routineDir || !fs.existsSync(routineDir)) {
+    const resolved = getRoutineOutputDir(routine)
+    if (resolved && fs.existsSync(resolved)) routineDir = resolved
+  }
+
+  let archivedDir: string | null = null
+  if (routineDir && fs.existsSync(routineDir)) {
+    // Only count non-`_archive` entries — an already-emptied folder (only
+    // `_archive/`) means there's nothing new to archive; still reset state.
+    const top = (await fs.promises.readdir(routineDir)).filter((e) => e !== '_archive')
+    if (top.length > 0) {
+      // Reuse the exact versioned-archive mechanism from the re-record path.
+      // archiveExistingFiles moves every top-level entry into
+      // `_archive/v{N}/` and updates any prior Take.archivedPath via
+      // state.setTakeArchived — identical guarantees, no media deleted.
+      await archiveExistingFiles(routineDir)
+      // Recompute the version dir it just wrote to for the report/log.
+      try {
+        const archiveRoot = path.join(routineDir, '_archive')
+        const versions = (await fs.promises.readdir(archiveRoot))
+          .filter((d) => d.startsWith('v'))
+          .map((v) => parseInt(v.slice(1), 10))
+          .filter((n) => !isNaN(n))
+        if (versions.length > 0) {
+          archivedDir = path.join(archiveRoot, `v${Math.max(...versions)}`)
+        }
+      } catch { /* report-only; archive itself already succeeded */ }
+      logger.app.info(
+        `Archive Media: R${routine.entryNumber} "${routine.routineTitle}" → ${archivedDir ?? path.join(routineDir, '_archive')} (${top.length} entr${top.length === 1 ? 'y' : 'ies'})`,
+      )
+    } else {
+      logger.app.info(
+        `Archive Media: R${routine.entryNumber} folder ${routineDir} had no media to archive — resetting state only`,
+      )
+    }
+  } else {
+    logger.app.info(
+      `Archive Media: R${routine.entryNumber} has no local routine folder on disk — resetting state only`,
+    )
+  }
+
+  // Reset the routine for a fresh record. Same field-clearing set as
+  // state.scratchRoutine (state.ts:1228) but target = 'pending' (the
+  // pre-record state) so the operator can immediately record again.
+  const updated = state.updateRoutineStatus(routineId, 'pending', {
+    recordingStartedAt: undefined,
+    recordingStoppedAt: undefined,
+    outputPath: undefined,
+    outputDir: undefined,
+    encodedFiles: undefined,
+    keyframes: undefined,
+    uploadProgress: undefined,
+    error: undefined,
+    encodeSkipReason: undefined,
+  })
+  if (!updated) return { ok: false, reason: 'reset-failed' }
+
+  return { ok: true, archivedDir, routine: updated }
+}
+
 export async function handleRecordingStopped(
   outputPath: string,
   timestamp: string,
 ): Promise<void> {
   let stoppedRoutineId: string | null = null
+  // Operator rule (2026-05-17): a plain Stop (NOT Next/NextFull) of a real
+  // take (>=15s) advances the routine SELECTION to the next routine without
+  // starting a recording; a short take (<15s) stays on the current routine.
+  // next()/nextFull() are the only paths that route through
+  // stopRecordingAndWait(), which sets the pendingStopProcessing barrier
+  // before stopping; they do their own state.advanceToNext() afterward. So a
+  // nav-initiated stop (barrier present at entry) must NOT advance here, or
+  // the slot would be skipped (double-advance). A plain Stop / hotkey /
+  // OBS auto-stop never sets the barrier -> pendingStopProcessing === null.
+  const navInitiatedStop = pendingStopProcessing !== null
+  let advanceAfterStop = false
   try {
     let routineId = activeRecordingRoutineId
     stoppedRoutineId = routineId
@@ -684,6 +785,11 @@ export async function handleRecordingStopped(
         entryNumber: routine.entryNumber,
         durationSec,
       })
+      // Plain-Stop auto-advance gate. Real take (>=15s) on a non-nav stop
+      // -> advance selection in the finally block (after this routine's stop
+      // processing fully completes, so getCurrentRoutine() stays correct for
+      // encode/upload/take finalization below). <15s stays put.
+      advanceAfterStop = !navInitiatedStop && durationSec !== null && durationSec >= 15
     }
 
     // Phase 2.8: finalize the Take entity. mkvPath gets corrected to the
@@ -1051,6 +1157,18 @@ export async function handleRecordingStopped(
     sendToRenderer(IPC_CHANNELS.RECORDING_ACTIVE_TAKE, null)
     pendingStopProcessing?.resolve()
     pendingStopProcessing = null
+    // Operator rule (2026-05-17): >=15s plain Stop advances the routine
+    // selection (no recording started). Done here so all stop processing for
+    // the just-stopped routine ran first with getCurrentRoutine() still
+    // pointing at it; the broadcast below carries the new selection to the UI.
+    if (advanceAfterStop) {
+      const adv = state.advanceToNext()
+      if (adv) {
+        logger.app.info(`Stop auto-advance: >=15s plain Stop — selection advanced to #${adv.entryNumber} "${adv.routineTitle}" (no recording started)`)
+      } else {
+        logger.app.info('Stop auto-advance: >=15s plain Stop — already at last routine, selection unchanged')
+      }
+    }
     broadcastFullStateImmediate()
   }
 }

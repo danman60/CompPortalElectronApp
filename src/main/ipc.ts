@@ -146,6 +146,18 @@ export function registerAllHandlers(): void {
     recording.broadcastFullState()
   })
 
+  // Operator "Archive Media" row action (scope A — CSE-local only).
+  // Archives the routine's local media into `_archive/v{N}/` (never
+  // deletes) then resets the routine to pre-record `pending`. Returns the
+  // result so the renderer can confirm; broadcasts full state so the table
+  // reflects the reset immediately.
+  safeHandle(IPC_CHANNELS.ROUTINE_ARCHIVE_MEDIA, async (routineId: unknown) => {
+    logIPC(IPC_CHANNELS.ROUTINE_ARCHIVE_MEDIA, { routineId })
+    const result = await recording.archiveRoutineMedia(routineId as string)
+    recording.broadcastFullState()
+    return result
+  })
+
   safeHandle(IPC_CHANNELS.RECORDING_NEXT_FULL, async () => {
     logIPC(IPC_CHANNELS.RECORDING_NEXT_FULL)
     await recording.nextFull()
@@ -212,23 +224,9 @@ export function registerAllHandlers(): void {
   // --- FFmpeg ---
   safeHandle(IPC_CHANNELS.FFMPEG_ENCODE, async (routineId: unknown) => {
     logIPC(IPC_CHANNELS.FFMPEG_ENCODE, { routineId })
-    const comp = stateService.getCompetition()
-    if (!comp) return { error: 'No competition loaded' }
-    const routine = comp.routines.find((r) => r.id === routineId)
-    if (!routine || !routine.outputPath) return { error: 'Routine not found or not recorded' }
-    const s = settings.getSettings()
-    const dir = routine.outputDir || path.dirname(routine.outputPath)
-    // Upload the longest take across current + _archive/vN.
-    const encodeInput = recording.pickLongestMkv(dir, routine.outputPath)
-    ffmpegService.enqueueJob({
-      routineId: routine.id,
-      inputPath: encodeInput,
-      outputDir: dir,
-      judgeCount: s.competition.judgeCount,
-      trackMapping: s.audioTrackMapping,
-      processingMode: s.ffmpeg.processingMode,
-      filePrefix: schedule.buildFilePrefix(routine.entryNumber),
-    })
+    const result = ffmpegService.nudgeRoutineEncode(String(routineId))
+    if (!result.ok) return { error: result.reason || 'Encode nudge failed' }
+    return result
   })
 
   safeHandle(IPC_CHANNELS.FFMPEG_PAUSE, () => {
@@ -781,6 +779,9 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS, async () => {
     logIPC(IPC_CHANNELS.PHOTOS_CLEAR_SD_WATERMARKS)
     stateService.clearSdWatermarks()
+    // Also clear the persisted "reported camera prefix" set so operator can
+    // re-see the unknown-pattern banner if they want to validate a new card.
+    stateService.clearReportedCameraPrefixes()
     return { ok: true }
   })
 
@@ -1356,10 +1357,23 @@ export function registerAllHandlers(): void {
   safeHandle(IPC_CHANNELS.JOB_QUEUE_KICK, async () => {
     logIPC(IPC_CHANNELS.JOB_QUEUE_KICK)
     let importKicked = 0
+    let encodesResumed = 0
     try {
       const ffmpegMod = await import('./services/ffmpeg')
-      ffmpegMod.resumeRecordedRoutines()
+      // Manual kick = explicit operator intent to force encode recovery.
+      // resumeRecordedRoutines() has no internal sd-import guard (the only
+      // sd-import-in-progress gate lives in mediaReconciler.reconcileMedia,
+      // on the startup UPLOAD-resume path — autoResumeUnfinished → boot
+      // reconcile — NOT here). Incident: a boot during sd-import left ~26
+      // recorded routines un-enqueued because the startup encode-resume
+      // never retried. This call path is deliberately NOT sd-gated so the
+      // operator can recover stuck encodes on demand even while a photo
+      // import runs. Capture + log the count so the recovery is observable.
+      encodesResumed = ffmpegMod.resumeRecordedRoutines()
       ffmpegMod.resumeEncoding()
+      logger.app.info(
+        `kick: encode-resume enqueued ${encodesResumed} recorded routine(s) (sd-import gate bypassed — manual kick)`,
+      )
     } catch (err) {
       logger.app.warn(`kick: ffmpeg resume failed: ${err instanceof Error ? err.message : err}`)
     }
@@ -1379,7 +1393,7 @@ export function registerAllHandlers(): void {
     } catch (err) {
       logger.app.warn(`kick: photo-import resume failed: ${err instanceof Error ? err.message : err}`)
     }
-    return { ok: true, importKicked }
+    return { ok: true, importKicked, encodesResumed }
   })
 
   // Phase 1.4 / 1.6: drift refresh + dismiss handlers.

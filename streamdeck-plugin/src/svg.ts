@@ -108,6 +108,25 @@ export function cycleTransition(currentName: string | null): string {
   `, '#181826')
 }
 
+export function udcStinger(flash = false): string {
+  const bg = flash ? '#3a0707' : '#2a0a0a'
+  const stroke = flash ? '#ffffff' : '#ff6b6b'
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
+    <defs>
+      <filter id="stingerGlow" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="3.5"/>
+      </filter>
+    </defs>
+    <rect width="144" height="144" rx="12" fill="${bg}"/>
+    <rect x="4" y="4" width="136" height="136" rx="10" fill="none" stroke="#ef4444" stroke-width="8" filter="url(#stingerGlow)" opacity="${flash ? '1' : '0.82'}"/>
+    <rect x="4" y="4" width="136" height="136" rx="10" fill="none" stroke="${stroke}" stroke-width="3"/>
+    <text x="72" y="32" text-anchor="middle" fill="#ffb0b0" font-size="18" font-weight="900" font-family="sans-serif" letter-spacing="2.5">UDC</text>
+    <text x="72" y="74" text-anchor="middle" fill="#ffffff" font-size="28" font-weight="900" font-family="sans-serif" letter-spacing="1.5">STINGER</text>
+    <text x="72" y="106" text-anchor="middle" fill="#ff8a8a" font-size="15" font-weight="800" font-family="sans-serif" letter-spacing="1.5">SET TRANS</text>
+    <text x="72" y="130" text-anchor="middle" fill="#ff6b6b" font-size="19" font-weight="900" font-family="sans-serif">AUTO CUT</text>
+  </svg>`
+}
+
 export function prev(entryNumber: string | null): string {
   const num = entryNumber || '\u2014'
   const display = `#${num}`

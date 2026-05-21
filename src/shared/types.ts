@@ -158,6 +158,9 @@ export interface UploadProgress {
   currentFile?: string
   filesCompleted: number
   filesTotal: number
+  bytesUploaded?: number
+  bytesTotal?: number
+  bytesPerSecond?: number
   error?: string
 }
 
@@ -756,6 +759,10 @@ export const IPC_CHANNELS = {
   RECORDING_UNSKIP: 'recording:unskip',
   RECORDING_SCRATCH: 'recording:scratch',
   RECORDING_UNSCRATCH: 'recording:unscratch',
+  // Operator "Archive Media" row action (scope A — CSE-local only).
+  // Moves the routine's local media into `_archive/v{N}/` (never deletes)
+  // and resets the routine to pre-record `pending` for a fresh recording.
+  ROUTINE_ARCHIVE_MEDIA: 'routine:archive-media',
   RECORDING_REREC_SUSPECTED: 'recording:rerec-suspected',
   RECORDING_REREC_DECISION_REQUESTED: 'recording:rerec-decision-requested',
   RECORDING_REREC_DECISION: 'recording:rerec-decision',
@@ -1452,7 +1459,7 @@ export interface WSCommandMessage {
     | 'pinChatMessage' | 'unpinChatMessage'
     | 'setCameraOffset' | 'clearCameraOffsets'
     | 'toggleOverlay' | 'loadShareCode'
-    | 'cycleTransition' | 'kickQueue'
+    | 'cycleTransition' | 'setUdcStingerTransition' | 'kickQueue'
     | 'slowZoomWideToggle' | 'slowZoomTightToggle'
     | 'featureCardUpNext' | 'featureCardThatWas' | 'featureCardHide'
     // CompPortal admin livestream parity (2026-05-05) — explicit overlay verbs
@@ -1766,7 +1773,7 @@ export interface RecordingReassignTargetPayload {
 
 // --- Pipeline Health (A56) ---
 
-export type PipelineStageId = 'recording' | 'photoImport' | 'photoUpload' | 'videoUpload'
+export type PipelineStageId = 'recording' | 'encode' | 'photoImport' | 'photoUpload' | 'videoUpload'
 
 export interface PipelineStageState {
   id: PipelineStageId

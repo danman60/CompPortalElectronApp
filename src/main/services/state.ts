@@ -75,6 +75,13 @@ interface PersistedState {
   // Per-volume EXIF cursor replaces source-hash compute as the primary dedup
   // authority. Keyed by Windows volume serial number (uppercase, no dash).
   sdCardCursors?: Record<string, SdCardCursorEntry>
+  // 2026-05-16 — per-(serial,subfolder) filename pre-read bookmark. Optional
+  // for back-compat: a state file written by an older build has none, which
+  // makes the pre-skip inert (full read = exactly today's behavior).
+  sdFilenameBookmarks?: Record<string, SdFilenameBookmarkEntry>
+  // 2026-05-15 — operator-dismissed "Camera body unknown" prefixes. Persisted
+  // so the banner doesn't re-fire on every app restart once acknowledged.
+  reportedCameraPrefixes?: string[]
   // Phase 2.8 Take entity architecture (2026-04-29). First-class takes
   // collection — see Take type docs in shared/types.ts.
   takes?: Take[]
@@ -95,6 +102,31 @@ export interface SdCardCursorEntry {
   seededFromRoutines?: boolean
 }
 
+// 2026-05-16 — per-(volume serial, DCIM subfolder) filename pre-read
+// bookmark. This is a FAIL-SAFE OPTIMIZATION LAYER in front of the EXIF
+// cursor (SdCardCursorEntry above), DB dedup, and the ±30s window gate — it
+// NEVER replaces or weakens them. It lets the import skip OPENING the
+// clearly-old contiguous filename prefix in a subfolder (camera filenames
+// are monotonic), avoiding tens of thousands of redundant 128KB EXIF reads
+// on re-insert of a large card. Correctness backstop: the existing EXIF
+// cursor still gates every file that IS read. Key = `${SERIAL}::${SUBFOLDER}`
+// (both upper-cased) — same partition dimension as the {drive}::{dcim}
+// partition model in photos.ts, but keyed by the stable volume serial (not
+// the volatile drive letter) so it survives reader swaps.
+export interface SdFilenameBookmarkEntry {
+  volumeSerial: string         // uppercase hex no dash
+  subfolder: string            // DCIM subfolder name, upper-cased (e.g. "129EOSR6")
+  lastFilename: string         // basename, upper-cased, of the last file imported from this subfolder
+  // The EXIF capture-time of lastFilename, stored with the SAME
+  // `.toISOString()` projection the EXIF cursor uses (see TZ note in
+  // tests/exif-bookmark/CURRENT-DEDUP-MAP.md). This is the correctness
+  // cross-check — the filename skip is timezone-immune; this field only
+  // exists so the rollover/sanity logic can detect a name wrap. NEVER used
+  // to skip a file on its own.
+  lastCaptureTime: string      // ISO; '' if EXIF was unreadable for that file
+  setAt: string                // ISO when last advanced
+}
+
 let currentCompetition: Competition | null = null
 let currentRoutineId: string | null = null
 let saveTimer: NodeJS.Timeout | null = null
@@ -103,6 +135,12 @@ let cameraOffsets: Record<string, CameraOffsetEntry> = {}
 let sdWatermarks: Record<string, SdWatermarkEntry> = {}
 // build9o — per-volume EXIF cursors for dedup (Item #2)
 let sdCardCursors: Record<string, SdCardCursorEntry> = {}
+// 2026-05-16 — per-(serial,subfolder) filename pre-read bookmark (fail-safe
+// optimization in front of sdCardCursors). Key = `${SERIAL}::${SUBFOLDER}`.
+let sdFilenameBookmarks: Record<string, SdFilenameBookmarkEntry> = {}
+// 2026-05-15 — persisted set of unknown-camera prefixes already reported. The
+// "Camera body unknown" banner only fires once per genuinely-new prefix.
+let reportedCameraPrefixes: Set<string> = new Set()
 let takes: Take[] = []
 
 // Fix 8: Cached counts for WS broadcasts — updated incrementally
@@ -163,6 +201,8 @@ function doSave(): void {
     cameraOffsets,
     sdWatermarks,
     sdCardCursors,
+    sdFilenameBookmarks,
+    reportedCameraPrefixes: Array.from(reportedCameraPrefixes),
     takes,
   }
 
@@ -232,6 +272,21 @@ function applyLoadedState(data: PersistedState): void {
   if (cursorCount > 0) {
     logger.app.info(`Hydrated ${cursorCount} SD-card cursor(s): ` +
       Object.entries(sdCardCursors).map(([k, v]) => `${k}=${v.lastCaptureTime}`).join(', '))
+  }
+  // 2026-05-16 — hydrate per-(serial,subfolder) filename bookmarks. Like
+  // cursors these never expire on a day boundary. Absent in older state
+  // files → empty map → pre-skip inert (full read, today's behavior).
+  sdFilenameBookmarks = { ...(data.sdFilenameBookmarks ?? {}) }
+  const bookmarkCount = Object.keys(sdFilenameBookmarks).length
+  if (bookmarkCount > 0) {
+    logger.app.info(`Hydrated ${bookmarkCount} SD filename bookmark(s): ` +
+      Object.entries(sdFilenameBookmarks).map(([k, v]) => `${k}=${v.lastFilename}`).join(', '))
+  }
+  // 2026-05-15 — restore the set of unknown camera prefixes already reported
+  // so the operator doesn't get the same banner every app restart.
+  reportedCameraPrefixes = new Set((data.reportedCameraPrefixes ?? []).filter((s): s is string => typeof s === 'string'))
+  if (reportedCameraPrefixes.size > 0) {
+    logger.app.info(`Hydrated ${reportedCameraPrefixes.size} reported camera prefix(es): ${Array.from(reportedCameraPrefixes).join(', ')}`)
   }
   // Phase 2.8: hydrate takes + boot migration. For any routine with a
   // recordingStartedAt+stoppedAt that has no corresponding take row yet,
@@ -717,6 +772,16 @@ export function getNextRoutine(): Routine | null {
   const visible = getVisibleRoutines()
   const idx = getCurrentIndex()
   return visible[idx + 1] || null
+}
+
+// 2026-05-15: THAT WAS feature card must show the just-performed routine,
+// not the current pointer (operator: both UP NEXT and THAT WAS were showing
+// the same routine while a recording was active).
+export function getPreviousRoutine(): Routine | null {
+  if (!currentCompetition) return null
+  const visible = getVisibleRoutines()
+  const idx = getCurrentIndex()
+  return idx > 0 ? (visible[idx - 1] || null) : null
 }
 
 export function getUpcomingRoutines(count: number): Routine[] {
@@ -1468,6 +1533,27 @@ export function listSdWatermarks(): Record<string, SdWatermarkEntry> {
   return { ...sdWatermarks }
 }
 
+// --- 2026-05-15: persisted "unknown camera prefix" set ---
+
+/** True if this prefix has already been surfaced to the operator. */
+export function hasReportedCameraPrefix(prefix: string): boolean {
+  return reportedCameraPrefixes.has(prefix)
+}
+
+/** Mark a prefix as reported; persists across app restarts. */
+export function addReportedCameraPrefix(prefix: string): void {
+  if (reportedCameraPrefixes.has(prefix)) return
+  reportedCameraPrefixes.add(prefix)
+  saveState()
+}
+
+export function clearReportedCameraPrefixes(): void {
+  const count = reportedCameraPrefixes.size
+  reportedCameraPrefixes = new Set()
+  logger.app.info(`Cleared ${count} reported camera prefix(es)`)
+  saveState()
+}
+
 // --- build9o (Item #2): per-volume EXIF cursor API ---
 
 /**
@@ -1532,6 +1618,96 @@ export function clearAllSdCardCursors(): void {
   const count = Object.keys(sdCardCursors).length
   sdCardCursors = {}
   logger.app.info(`Cleared ${count} SD-card cursor(s)`)
+  saveState()
+}
+
+// --- 2026-05-16: per-(serial,subfolder) filename pre-read bookmark API ---
+//
+// FAIL-SAFE OPTIMIZATION ONLY. The EXIF cursor (sdCardCursors) remains the
+// correctness authority. Read tests/exif-bookmark/CURRENT-DEDUP-MAP.md before
+// touching this. Invariant: a bookmark must NEVER be the sole reason a file is
+// skipped without being read — photos.ts always keeps a boundary re-read band
+// and runs the full EXIF cursor on everything it does read.
+
+/** Compose the bookmark key. Both parts upper-cased; '' subfolder allowed. */
+export function sdFilenameBookmarkKey(volumeSerial: string, subfolder: string): string {
+  return `${(volumeSerial || '').toUpperCase()}::${(subfolder || '').toUpperCase()}`
+}
+
+/**
+ * Read the filename bookmark for a (volume serial, DCIM subfolder). Returns
+ * null when none exists (first import of this subfolder on this card, OR an
+ * older state file with no bookmarks → caller must full-read).
+ */
+export function getSdFilenameBookmark(
+  volumeSerial: string,
+  subfolder: string,
+): SdFilenameBookmarkEntry | null {
+  if (!volumeSerial) return null
+  return sdFilenameBookmarks[sdFilenameBookmarkKey(volumeSerial, subfolder)] ?? null
+}
+
+/**
+ * Advance (or seed) the filename bookmark for a (serial, subfolder). Forward-
+ * only on filename: refuses to write if the new basename sorts STRICTLY BELOW
+ * the existing one (mirrors setSdCardCursor's never-roll-back guarantee, so a
+ * rollover/out-of-order import can never lower the bookmark and accidentally
+ * re-skip-forward). A wrap is handled by the caller, which clears the
+ * bookmark before re-establishing it. Returns true if written.
+ */
+export function setSdFilenameBookmark(
+  volumeSerial: string,
+  subfolder: string,
+  entry: { lastFilename: string; lastCaptureTime: string },
+): boolean {
+  if (!volumeSerial) return false
+  const key = sdFilenameBookmarkKey(volumeSerial, subfolder)
+  const fnUpper = (entry.lastFilename || '').toUpperCase()
+  if (!fnUpper) return false
+  const existing = sdFilenameBookmarks[key]
+  if (existing && existing.lastFilename > fnUpper) {
+    // Never regress the filename watermark. (Caller clears explicitly on a
+    // detected rollover before re-establishing — see photos.ts.)
+    return false
+  }
+  sdFilenameBookmarks[key] = {
+    volumeSerial: volumeSerial.toUpperCase(),
+    subfolder: (subfolder || '').toUpperCase(),
+    lastFilename: fnUpper,
+    lastCaptureTime: entry.lastCaptureTime || '',
+    setAt: new Date().toISOString(),
+  }
+  logger.app.info(
+    `SD filename bookmark set: ${key} lastFilename=${fnUpper}` +
+    (entry.lastCaptureTime ? ` captureTime=${entry.lastCaptureTime}` : ' (no EXIF)'),
+  )
+  saveState()
+  return true
+}
+
+/**
+ * Drop a single (serial,subfolder) bookmark. Used by the rollover path in
+ * photos.ts to force a full re-read of a wrapped subfolder and by operator
+ * overrides.
+ */
+export function clearSdFilenameBookmark(volumeSerial: string, subfolder: string): boolean {
+  if (!volumeSerial) return false
+  const key = sdFilenameBookmarkKey(volumeSerial, subfolder)
+  if (!sdFilenameBookmarks[key]) return false
+  delete sdFilenameBookmarks[key]
+  logger.app.info(`SD filename bookmark cleared: ${key}`)
+  saveState()
+  return true
+}
+
+export function listSdFilenameBookmarks(): Record<string, SdFilenameBookmarkEntry> {
+  return { ...sdFilenameBookmarks }
+}
+
+export function clearAllSdFilenameBookmarks(): void {
+  const count = Object.keys(sdFilenameBookmarks).length
+  sdFilenameBookmarks = {}
+  logger.app.info(`Cleared ${count} SD filename bookmark(s)`)
   saveState()
 }
 

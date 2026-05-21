@@ -54,9 +54,12 @@ export function setOnTransitionChanged(cb: (name: string | null) => void): void 
   onTransitionChangedCb = cb
 }
 
-let onSceneChangedCb: ((name: string | null) => void) | null = null
+// 2026-05-15: multiple subscribers (featureCard + slowZoom). Was a single
+// callback — slowZoom needs to also react to scene changes to clear its
+// stuck zoom state, so this is now a listener list.
+const sceneChangedCbs: Array<(name: string | null) => void> = []
 export function setOnSceneChanged(cb: (name: string | null) => void): void {
-  onSceneChangedCb = cb
+  sceneChangedCbs.push(cb)
 }
 
 // Fix 11: reconcile hook invoked after (re)sync so recording.ts can fix up orphan state
@@ -563,6 +566,16 @@ export async function setSceneItemTransform(
 // auto-switch back to Cut so operator can't forget to change it.
 const transitionKindByName = new Map<string, string>()
 
+// 2026-05-15 — busy-gate. SceneTransitionStarted sets true, SceneTransitionEnded
+// + a short settle clears it. setCurrentScene() rejects new fires while busy so
+// operator clicks during a 10s slow-zoom or 4s fade don't stack / interrupt /
+// break the in-flight transition. Cut transitions complete instantly so they
+// don't get blocked in practice.
+let transitionInFlight = false
+let transitionInFlightSince = 0
+const TRANSITION_GATE_MAX_MS = 12_000 // hard ceiling — even slow zoom is 10s
+const TRANSITION_GATE_SETTLE_MS = 250
+
 export async function getTransitionList(): Promise<string[]> {
   try {
     const result = await obs.call('GetSceneTransitionList')
@@ -583,6 +596,16 @@ function findFirstTransitionByKind(kind: string): string | null {
     if (k === kind) return name
   }
   return null
+}
+
+/** Public lookup for the configured Cut transition name (kind=cut_transition). */
+export function getCutTransitionName(): string | null {
+  return findFirstTransitionByKind('cut_transition')
+}
+
+/** Public lookup for a transition's kind by name (e.g. 'fade_transition'). */
+export function getTransitionKind(name: string): string | null {
+  return transitionKindByName.get(name) ?? null
 }
 
 export async function getCurrentTransitionName(): Promise<string | null> {
@@ -606,6 +629,17 @@ export async function getCurrentSceneName(): Promise<string | null> {
 }
 
 export async function setCurrentScene(name: string): Promise<void> {
+  // Busy-gate: block new transitions while another is in flight. Hard
+  // ceiling at 12s in case OBS misses SceneTransitionEnded for some reason.
+  if (transitionInFlight) {
+    const ageMs = Date.now() - transitionInFlightSince
+    if (ageMs < TRANSITION_GATE_MAX_MS) {
+      logger.obs.warn(`SetCurrentProgramScene(${name}) BLOCKED — transition in flight ${ageMs}ms`)
+      return
+    }
+    logger.obs.warn(`transition gate stuck ${ageMs}ms — force-clearing and proceeding with ${name}`)
+    transitionInFlight = false
+  }
   try {
     await obs.call('SetCurrentProgramScene', { sceneName: name })
   } catch (err) {
@@ -786,8 +820,10 @@ function registerOBSEvents(): void {
     }],
     ['CurrentProgramSceneChanged', (event: any) => {
       const name = (event?.sceneName as string) ?? null
-      try { onSceneChangedCb?.(name) } catch (err) {
-        logger.obs.warn(`onSceneChanged callback threw: ${err instanceof Error ? err.message : err}`)
+      for (const cb of sceneChangedCbs) {
+        try { cb(name) } catch (err) {
+          logger.obs.warn(`onSceneChanged callback threw: ${err instanceof Error ? err.message : err}`)
+        }
       }
     }],
     // Auto-revert to Cut after ANY transition fires. Operator workflow: they
@@ -803,13 +839,27 @@ function registerOBSEvents(): void {
     // them. Benefit: no transition is ever armed when the operator doesn't
     // expect it. Diagnostic log on every event so we can see exactly what
     // OBS reported.
+    ['SceneTransitionStarted', (event: any) => {
+      const startedName = (event?.transitionName as string) ?? null
+      const kind = startedName ? (transitionKindByName.get(startedName) ?? '(unknown)') : '(no-name)'
+      // Cut completes in the same frame — don't gate on it.
+      if (kind === 'cut_transition') return
+      transitionInFlight = true
+      transitionInFlightSince = Date.now()
+      logger.obs.info(`SceneTransitionStarted: name="${startedName}" kind=${kind} — gate ON`)
+    }],
     ['SceneTransitionEnded', (event: any) => {
       const endedName = (event?.transitionName as string) ?? null
+      // Clear gate after a brief settle so back-to-back fires within ~250ms
+      // still count as collisions.
+      if (transitionInFlight) {
+        setTimeout(() => { transitionInFlight = false }, TRANSITION_GATE_SETTLE_MS)
+      }
       if (!endedName) return
       const kind = transitionKindByName.get(endedName) ?? '(unknown)'
       const cutName = findFirstTransitionByKind('cut_transition')
       const willRevert = !!cutName && endedName !== cutName
-      logger.obs.info(`SceneTransitionEnded: name="${endedName}" kind=${kind} willRevert=${willRevert}`)
+      logger.obs.info(`SceneTransitionEnded: name="${endedName}" kind=${kind} willRevert=${willRevert} — gate clearing in ${TRANSITION_GATE_SETTLE_MS}ms`)
       if (!cutName) {
         logger.obs.warn(`Transition "${endedName}" ended but no cut_transition found in list — leaving as-is`)
         return
@@ -838,6 +888,31 @@ function removeOBSEvents(): void {
 
 export function getState(): OBSState {
   return { ...state }
+}
+
+// ── TEST-ONLY state injectors (debug harness, gated upstream by the debug
+// route's testHooksEnabled check). Additive helpers so the screenshot/test
+// surface can drive the record-glow + judge meters with no OBS connected.
+// Pushes through the SAME pipeline production uses: OBS_STATE IPC for the
+// record glow, OBS_AUDIO_LEVELS IPC + onAudioLevelsCb (wsHub) for the meters.
+export function setTestState(partial: Partial<OBSState>): OBSState {
+  // Freeze the auto-reconnect loop — otherwise a failed reconnect attempt
+  // (no OBS in the headless harness) flips connectionStatus back to 'error'
+  // and clobbers the injected recording state within the backoff window.
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  reconnectAttempts = 999
+  // Stop the live record timer so recordTimeSec doesn't drift off the
+  // injected value between injection and capture.
+  if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null }
+  state = { ...state, ...partial }
+  broadcastState()
+  return { ...state }
+}
+
+export function pushTestAudioLevels(levels: AudioLevel[]): void {
+  lastAudioLevels = levels
+  sendToRenderer(IPC_CHANNELS.OBS_AUDIO_LEVELS, levels)
+  try { onAudioLevelsCb?.(levels) } catch { /* wsHub broadcast best-effort */ }
 }
 
 // --- Preview Polling ---

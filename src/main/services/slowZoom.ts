@@ -53,6 +53,21 @@ async function trigger(
     logger.app.info(
       `Slow zoom (${label}): ${isZoomed ? 'OUT' : 'IN'} via "${transition}" (${SLOW_ZOOM_DURATION_MS}ms) → "${target}"`,
     )
+    // Force-revert to Cut after the zoom completes. The Move Transition plugin
+    // does not reliably fire SceneTransitionEnded, so the global auto-revert
+    // in obs.ts (which catches stinger/fade/wipe) cannot rescue us. Without
+    // this, the next scene change after a slow zoom uses the 10s Slow Zoom
+    // transition by mistake (operator complaint 2026-05-15).
+    const cutName = obs.getCutTransitionName()
+    if (cutName) {
+      setTimeout(() => {
+        obs.setCurrentTransitionByName(cutName)
+          .then(() => logger.app.info(`Slow zoom (${label}): reverted "${transition}" → "${cutName}"`))
+          .catch((err) => logger.app.warn(`Slow zoom (${label}): revert to ${cutName} failed: ${err instanceof Error ? err.message : err}`))
+      }, SLOW_ZOOM_DURATION_MS + 500)
+    } else {
+      logger.app.warn(`Slow zoom (${label}): no cut_transition found, leaving "${transition}" armed`)
+    }
     return newState
   } catch (err) {
     logger.app.warn(
@@ -80,4 +95,32 @@ export async function triggerTight(): Promise<void> {
 export function reset(): void {
   zoomedInWide = false
   zoomedInTight = false
+}
+
+/**
+ * 2026-05-15 operator fix: when the operator manually switches to a scene
+ * OTHER than the camera's zoomed scene (e.g. cuts to a different camera or
+ * a graphics scene after a slow zoom), the cached zoom flag stayed stuck
+ * "zoomed", so the next Stream Deck press toggled the wrong way and needed
+ * an extra transition. Now we follow the live program scene: if the current
+ * scene isn't this camera's Zoomed scene, the flag resets to "not zoomed".
+ */
+export function onSceneChanged(sceneName: string | null): void {
+  if (!sceneName) return
+  const settings = getSettings()
+  const wideZoomed = settings.obs?.slowZoomWideZoomedScene || 'Wide Zoomed'
+  const tightZoomed = settings.obs?.slowZoomTightZoomedScene || 'Tight Zoomed'
+  if (sceneName !== wideZoomed && zoomedInWide) {
+    zoomedInWide = false
+    logger.app.info(`Slow zoom (wide): scene → "${sceneName}" (not "${wideZoomed}") — zoom state reset`)
+  }
+  if (sceneName !== tightZoomed && zoomedInTight) {
+    zoomedInTight = false
+    logger.app.info(`Slow zoom (tight): scene → "${sceneName}" (not "${tightZoomed}") — zoom state reset`)
+  }
+}
+
+/** Wire the scene-change reset. Call once at startup. */
+export function registerSceneWatcher(): void {
+  obs.setOnSceneChanged(onSceneChanged)
 }

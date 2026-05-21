@@ -13,6 +13,7 @@ import * as recording from './services/recording'
 import * as overlay from './services/overlay'
 import * as featureCard from './services/featureCard'
 import * as wsHub from './services/wsHub'
+import * as slowZoom from './services/slowZoom'
 import * as hotkeys from './services/hotkeys'
 import * as jobQueue from './services/jobQueue'
 import * as ffmpegService from './services/ffmpeg'
@@ -389,7 +390,26 @@ app.whenReady().then(async () => {
   // during early startup (debugServer.started, etc) are not lost — they'll
   // arrive at the renderer once it subscribes via the EVENTS_GET_RECENT
   // backfill. Best-effort fanout; never throws.
+  //
+  // 2026-05-15: skip IPC fanout for high-volume kinds that the Activity panel
+  // permanently hides anyway (HIDDEN_KINDS in EventLogPanel.tsx). The 5s chat
+  // backfill poll + per-job-state queue.status emits were producing ~230
+  // events/sec → renderer freeze (75s lag on Next button). These kinds are
+  // still recorded in the in-memory ring and on disk for /debug/events use.
+  const NEVER_STREAM_TO_RENDERER = new Set<string>([
+    'chat.backfill.ok',
+    'chat.message.received',
+    'queue.status',
+    'recording.started',
+    'recording.stopped',
+    'encode.started',
+    'upload.started',
+    'import.requested',
+    'import.match.summary',
+    'import.match.warning',
+  ])
   events.setOnEmit((record) => {
+    if (NEVER_STREAM_TO_RENDERER.has(record.kind)) return
     try { sendToRenderer(IPC_CHANNELS.EVENT_STREAM, record) } catch { /* swallow */ }
   })
 
@@ -400,6 +420,7 @@ app.whenReady().then(async () => {
   overlay.startServer()
   featureCard.init()
   wsHub.start()
+  slowZoom.registerSceneWatcher()
 
   // build9p (Item #13 fix 2026-05-06) — push overlay state to renderer on
   // every notifyChange. Drops the 2s setInterval poll in OverlayControls /

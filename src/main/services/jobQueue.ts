@@ -240,17 +240,27 @@ export function getNext(type: JobType): JobRecord | null {
   if (eligible.length === 0) return null
   if (type !== 'upload') return eligible[0]
 
-  // ── Burlington UDC 2026-05-01 priority rule ──
-  // Operator-locked: VIDEO uploads ALWAYS drain before any photo upload.
-  // Latest videos go first (highest entry_number wins). Photos lag behind
-  // because photo backlogs (~344 per SD card) flood the queue and starve
-  // newly-encoded videos otherwise.
+  // ── Burlington UDC 2026-05-16 photo-tier rule — ORDER A ──
+  // Operator-locked: each routine's photos split into a PRIORITY slice (the
+  // first ~1/3, tagged payload.photoTier='priority' at enqueue) and a
+  // REMAINING slice (the other ~2/3, photoTier='remaining').
   //
-  // Order of preference:
-  //   1. Pending VIDEO uploads — newest entry_number first.
-  //   2. Pending PHOTO uploads — round-robin newest-routine-first (existing
-  //      logic preserved below).
-  //   3. Other (keyframes, thumb-repairs) — FIFO via eligible[0] fallback.
+  // Order of preference (ORDER A — priority photos beat videos):
+  //   1. PRIORITY photos — beat EVERYTHING, including video uploads. A MISSING
+  //      photoTier is treated as 'priority' so legacy / in-flight jobs never
+  //      deadlock. Round-robin newest-routine-first within the slice.
+  //   2. Pending VIDEO uploads — newest entry_number first.
+  //   3. REMAINING photos — still gated behind video work: released ONLY when
+  //      no video work is outstanding (zero pending+running 'encode' AND zero
+  //      pending 'videos'-type 'upload'). Otherwise withheld; getNext may
+  //      return null and the caller (processLoop) re-checks once video work
+  //      drains.
+  //   4. Other (keyframes, thumb-repairs) — FIFO via eligible[0] fallback.
+  //
+  // Rationale: the priority slice is the operator-facing "first looks" set;
+  // it must reach the portal ahead of full-length video encodes. The bulk
+  // remaining slice still lags behind video work so newly-encoded videos are
+  // not starved by ~344-per-SD-card photo backlogs.
   const comp = state.getCompetition()
   const entryByRoutineId = new Map<string, number>()
   if (comp) {
@@ -260,6 +270,64 @@ export function getNext(type: JobType): JobRecord | null {
     }
   }
 
+  const priority = getSettings().upload?.photoPriority ?? 'newest-first'
+
+  // Count done+running photo uploads per routine from the FULL job list
+  // (not just eligible) — served count reflects actual progress. Shared by
+  // both photo tiers so round-robin fairness spans the priority→remaining
+  // handoff (a routine fully served in tier 1 stays fairly ordered in tier 3).
+  let servedByRoutine: Map<string, number> | null = null
+  const ensureServedByRoutine = (): Map<string, number> => {
+    if (servedByRoutine) return servedByRoutine
+    const m = new Map<string, number>()
+    for (const j of jobs) {
+      if (j.type !== 'upload') continue
+      if (j.status !== 'done' && j.status !== 'running') continue
+      const p = j.payload as Record<string, unknown>
+      if (p.type !== 'photos' || p.isPhotoThumbRepair === true) continue
+      const rid = p.routineId as string
+      m.set(rid, (m.get(rid) ?? 0) + 1)
+    }
+    servedByRoutine = m
+    return m
+  }
+
+  // Existing least-served-routine-first round-robin sort, unchanged math —
+  // applied per tier. entryByRoutineId reuses the map built above.
+  const pickRoundRobin = (candidates: JobRecord[]): JobRecord => {
+    const served = ensureServedByRoutine()
+    candidates.sort((a, b) => {
+      const aRid = (a.payload as Record<string, unknown>).routineId as string
+      const bRid = (b.payload as Record<string, unknown>).routineId as string
+      const aServed = served.get(aRid) ?? 0
+      const bServed = served.get(bRid) ?? 0
+      if (aServed !== bServed) return aServed - bServed
+      const aEn = entryByRoutineId.get(aRid) ?? 0
+      const bEn = entryByRoutineId.get(bRid) ?? 0
+      if (aEn !== bEn) return bEn - aEn
+      return priority === 'oldest-first'
+        ? getPhotoPriorityTs(a) - getPhotoPriorityTs(b)
+        : getPhotoPriorityTs(b) - getPhotoPriorityTs(a)
+    })
+    return candidates[0]
+  }
+
+  const realPhotoJobs = eligible.filter((job) => {
+    const payload = job.payload as Record<string, unknown>
+    return payload.type === 'photos' && payload.isPhotoThumbRepair !== true
+  })
+
+  // Tier 1 — PRIORITY photos (photoTier !== 'remaining'; missing => priority).
+  // ORDER A: these beat video uploads.
+  const priorityPhotoJobs = realPhotoJobs.filter((job) => {
+    const tier = (job.payload as Record<string, unknown>).photoTier
+    return tier !== 'remaining'
+  })
+  if (priorityPhotoJobs.length > 0) {
+    return pickRoundRobin(priorityPhotoJobs)
+  }
+
+  // Tier 2 — VIDEO uploads. Newest entry_number first.
   const videoJobs = eligible.filter((job) => {
     const payload = job.payload as Record<string, unknown>
     return payload.type === 'videos'
@@ -275,52 +343,77 @@ export function getNext(type: JobType): JobRecord | null {
     return videoJobs[0]
   }
 
-  // Photo drain: latest-routine-first, with round-robin interleave across
-  // routines. For each getNext call, pick the routine that has been served
-  // LEAST (fewest done+running photo jobs), tie-broken by highest
-  // entry_number. Within that routine, return the newest pending photo.
-  //
-  // Strict FIFO is dropped for photos because it caused R160+ jobs to sit
-  // 15+ min behind R116-R145 at UDC Toronto 2026-04-24.
-  //
-  // Other uploads (keyframes, thumb repairs) fall through to eligible[0].
-  const priority = getSettings().upload?.photoPriority ?? 'newest-first'
-  const photoJobs = eligible.filter((job) => {
-    const payload = job.payload as Record<string, unknown>
-    return payload.type === 'photos' && payload.isPhotoThumbRepair !== true
+  // Tier 3 — REMAINING photos. Still gated on video work being fully drained
+  // (unchanged from order B — only the priority/video order swapped).
+  const remainingPhotoJobs = realPhotoJobs.filter((job) => {
+    return (job.payload as Record<string, unknown>).photoTier === 'remaining'
   })
-
-  if (photoJobs.length > 0) {
-    // Count done+running photo uploads per routine from the FULL job list
-    // (not just eligible) — served count reflects actual progress.
-    const servedByRoutine = new Map<string, number>()
-    for (const j of jobs) {
-      if (j.type !== 'upload') continue
-      if (j.status !== 'done' && j.status !== 'running') continue
-      const p = j.payload as Record<string, unknown>
-      if (p.type !== 'photos' || p.isPhotoThumbRepair === true) continue
-      const rid = p.routineId as string
-      servedByRoutine.set(rid, (servedByRoutine.get(rid) ?? 0) + 1)
-    }
-
-    // entryByRoutineId reuses the map built above for the video-priority pass.
-    photoJobs.sort((a, b) => {
-      const aRid = (a.payload as Record<string, unknown>).routineId as string
-      const bRid = (b.payload as Record<string, unknown>).routineId as string
-      const aServed = servedByRoutine.get(aRid) ?? 0
-      const bServed = servedByRoutine.get(bRid) ?? 0
-      if (aServed !== bServed) return aServed - bServed
-      const aEn = entryByRoutineId.get(aRid) ?? 0
-      const bEn = entryByRoutineId.get(bRid) ?? 0
-      if (aEn !== bEn) return bEn - aEn
-      return priority === 'oldest-first'
-        ? getPhotoPriorityTs(a) - getPhotoPriorityTs(b)
-        : getPhotoPriorityTs(b) - getPhotoPriorityTs(a)
-    })
-    return photoJobs[0]
+  if (remainingPhotoJobs.length > 0 && !hasOutstandingVideoWork()) {
+    return pickRoundRobin(remainingPhotoJobs)
   }
 
-  return eligible[0]
+  // Either no photos at all, or remaining photos are withheld behind video
+  // work. Fall through: a non-photo eligible job (keyframe/thumb-repair) may
+  // still run; if none, return null and let processLoop re-check later.
+  const nonPhotoEligible = eligible.filter((job) => {
+    const payload = job.payload as Record<string, unknown>
+    return !(payload.type === 'photos' && payload.isPhotoThumbRepair !== true)
+  })
+  if (nonPhotoEligible.length > 0) return nonPhotoEligible[0]
+  return null
+}
+
+/**
+ * True while any video work is still outstanding — i.e. there is at least one
+ * pending OR running 'encode' job, OR at least one pending 'videos'-type
+ * 'upload' job. While this is true, REMAINING-tier photos (the ~2/3 slice)
+ * are withheld by getNext('upload') so the priority slice + all video work
+ * win. Exported so the upload loop can decide whether withheld remaining
+ * photos can ever progress yet (deadlock-avoidance re-check), and so the
+ * proof harness can assert against the real gate (primary source, not a
+ * re-implementation).
+ */
+export function hasOutstandingVideoWork(): boolean {
+  for (const j of jobs) {
+    if (j.type === 'encode' && (j.status === 'pending' || j.status === 'running')) {
+      return true
+    }
+    if (j.type === 'upload' && j.status === 'pending') {
+      const p = j.payload as Record<string, unknown>
+      if (p.type === 'videos') return true
+    }
+  }
+  return false
+}
+
+/**
+ * True when there is at least one pending REMAINING-tier photo upload job.
+ * Used by processLoop to distinguish "queue genuinely empty" (exit) from
+ * "only remaining photos left, withheld behind video work" (sleep + re-check)
+ * so the loop never busy-spins and never permanently strands the ~2/3 slice.
+ */
+export function hasPendingRemainingPhotos(): boolean {
+  const now = Date.now()
+  for (const j of jobs) {
+    if (j.type !== 'upload' || j.status !== 'pending') continue
+    const p = j.payload as Record<string, unknown>
+    if (p.type !== 'photos' || p.isPhotoThumbRepair === true) continue
+    if (p.photoTier !== 'remaining') continue
+    // Mirror getNext's backoff filter so a job stuck in backoff doesn't make
+    // this report "work pending" forever (it can't be selected yet anyway,
+    // but it WILL become selectable — so it still warrants a re-check, just
+    // not a tight one; processLoop's fixed sleep covers that cadence).
+    if (j.attempts > 0) {
+      const backoffMs = Math.min(5000 * Math.pow(2, j.attempts - 1), 60000)
+      const lastUpdate = new Date(j.updatedAt).getTime()
+      if (now - lastUpdate < backoffMs) {
+        // still counts as pending remaining work that will need a re-check
+        return true
+      }
+    }
+    return true
+  }
+  return false
 }
 
 function getPhotoPriorityTs(job: JobRecord): number {

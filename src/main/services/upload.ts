@@ -18,7 +18,7 @@ import { generatePhotoThumbnail } from './ffmpeg'
 import * as events from './events'
 import os from 'os'
 import { spawn } from 'child_process'
-import { app } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 
 interface UploadPayload {
   routineId: string
@@ -38,6 +38,52 @@ interface UploadPayload {
   isPhotoThumbRepair?: boolean
   sourcePhotoStoragePath?: string
   photoCaptureTime?: string
+  // Photo upload priority tier (2026-05-16 Burlington UDC). Set at enqueue
+  // for real photo jobs only (NOT keyframes/videos/thumb-repairs):
+  //   'priority'  = first ~1/3 of THIS routine's ordered pending photos —
+  //                 round-robin interleaved across routines, beats all video
+  //                 work in getNext('upload').
+  //   'remaining' = the other ~2/3 — withheld until ALL video work drains.
+  // A MISSING photoTier is treated as 'priority' by getNext (legacy / in-
+  // flight jobs must never be stranded behind the video gate).
+  photoTier?: 'priority' | 'remaining'
+}
+
+/**
+ * Tier index → photoTier. Given a photo's zero-based position within its
+ * routine's ORDERED PENDING photo sequence and that sequence's length, the
+ * first ceil(length/3) are 'priority', the rest 'remaining'. Single source
+ * of truth so both enqueue paths split identically.
+ */
+function photoTierFor(indexInPending: number, pendingCount: number): 'priority' | 'remaining' {
+  const threshold = Math.ceil(pendingCount / 3)
+  return indexInPending < threshold ? 'priority' : 'remaining'
+}
+
+interface UploadUrlResponse {
+  signedUrl: string
+  storagePath: string
+}
+
+interface UploadKeyExistsBody {
+  error?: string
+  message?: string
+  existing?: {
+    size?: number
+    lastModified?: string
+    etag?: string
+  }
+  storagePath?: string
+}
+
+class UploadKeyExistsError extends Error {
+  readonly body: UploadKeyExistsBody
+
+  constructor(body: UploadKeyExistsBody) {
+    super(body.message || 'A file already exists at this path')
+    this.name = 'UploadKeyExistsError'
+    this.body = body
+  }
 }
 
 export interface EnqueueRoutineResult {
@@ -149,6 +195,7 @@ let idleReconcileTimer: NodeJS.Timeout | null = null
 // Tracks photos already included in a plugin/complete call per routine,
 // so incremental mode knows when the threshold has been crossed again.
 const publishedPhotoCountByRoutine = new Map<string, number>()
+const forceOverwriteUploadRuns = new Set<string>()
 
 // Fix 8/9: external pause flags (disk space low / drive lost)
 let pausedByDiskSpace = false
@@ -298,12 +345,19 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
     jobCount++
   }
 
-  // Queue photos
+  // Queue photos. Photo-tier split (2026-05-16): the ordered PENDING photos
+  // for this routine (same routine.photos order this path already used, minus
+  // already-uploaded and dupe-skip) are the unit the 1/3 threshold applies
+  // to. Pre-compute the pending list so the priority/remaining boundary is
+  // ceil(pending/3) within THAT sequence — exactly as the operator spec'd.
   if (routine.photos) {
-    for (const photo of routine.photos) {
-      if (!force && photo.uploaded) continue
+    const pendingPhotos = routine.photos.filter((photo) => {
+      if (!force && photo.uploaded) return false
+      if (skipObjectNames.has(path.basename(photo.filePath))) return false
+      return true
+    })
+    pendingPhotos.forEach((photo, idx) => {
       const photoObjectName = path.basename(photo.filePath)
-      if (skipObjectNames.has(photoObjectName)) continue
       jobQueue.enqueue('upload', routine.id, {
         routineId: routine.id,
         entryId: routine.id,
@@ -317,9 +371,10 @@ export function enqueueRoutine(routine: Routine, force = false): EnqueueRoutineR
         // to the original. Only SD-import photos have this; tether-flow photos
         // skip the thumb upload (thumbnailPath undefined).
         thumbnailPath: photo.thumbnailPath,
+        photoTier: photoTierFor(idx, pendingPhotos.length),
       } satisfies UploadPayload as unknown as Record<string, unknown>)
       jobCount++
-    }
+    })
   }
 
   if (jobCount === 0) return { queuedJobs: 0, skippedReason: 'no-files' }
@@ -408,14 +463,25 @@ export function enqueueRoundRobin(routines: Routine[]): EnqueueRoutineResult {
     total += res.queuedJobs
   }
 
-  // Pass 2: bucket each routine's unuploaded photos, round-robin pop
-  const buckets: Array<{ routine: Routine; queue: PhotoMatch[] }> = []
+  // Pass 2: bucket each routine's unuploaded photos, round-robin pop.
+  // photoTier (2026-05-16): tier is decided by the photo's index within its
+  // routine's ORDERED PENDING list (the captureTime-asc sequence built here),
+  // NOT the interleaved global enqueue order. pendingCount snapshots that
+  // list's length; popped counts front-shifts from THIS bucket, so popped is
+  // exactly the photo's index in the routine's ordered pending sequence —
+  // matching enqueueRoutine's split semantics.
+  const buckets: Array<{
+    routine: Routine
+    queue: PhotoMatch[]
+    pendingCount: number
+    popped: number
+  }> = []
   for (const routine of routines) {
     const pending = (routine.photos || [])
       .filter((p) => !p.uploaded && p.confidence !== 'unmatched')
       .sort((a, b) => (a.captureTime || '').localeCompare(b.captureTime || ''))
     if (pending.length > 0) {
-      buckets.push({ routine, queue: pending })
+      buckets.push({ routine, queue: pending, pendingCount: pending.length, popped: 0 })
     }
   }
 
@@ -441,6 +507,10 @@ export function enqueueRoundRobin(routines: Routine[]): EnqueueRoutineResult {
       buckets.splice(idx, 1)
       continue
     }
+    // Index within this routine's ordered pending sequence == #front-shifts
+    // already taken from this bucket (shift() always pops the head).
+    const photoTier = photoTierFor(bucket.popped, bucket.pendingCount)
+    bucket.popped++
     const objectName = path.basename(photo.filePath)
     const skip = skipByRoutine.get(bucket.routine.id)!
     if (!skip.has(objectName)) {
@@ -454,6 +524,7 @@ export function enqueueRoundRobin(routines: Routine[]): EnqueueRoutineResult {
         type: 'photos',
         photoCaptureTime: photo.captureTime,
         thumbnailPath: photo.thumbnailPath,
+        photoTier,
       } satisfies UploadPayload as unknown as Record<string, unknown>)
       photoJobs++
     }
@@ -570,7 +641,39 @@ async function processLoop(): Promise<void> {
 
   while (!isPaused) {
     const job = jobQueue.getNext('upload')
-    if (!job) break
+    if (!job) {
+      // 2026-05-16 Burlington UDC photo-tier rule: getNext('upload') now
+      // WITHHOLDS the REMAINING-tier photo slice (~2/3 per routine) while any
+      // video work is outstanding (pending/running encode OR pending video
+      // upload). When that's the only pending upload work, getNext returns
+      // null even though the queue is NOT empty — those photos must run once
+      // video work drains.
+      //
+      // Pre-tier behavior: the loop broke on null and exited (isUploading
+      // ← false). The ONLY re-kick of the loop was ffmpeg.ts's
+      // startUploads() after a successful encode + autoUpload enqueue. That
+      // re-kick does NOT fire when: autoUploadAfterEncoding is false, the
+      // final encode FAILS (ffmpeg.ts error path has no startUploads), or
+      // encodes drain via the backoff-retry timer. In all those cases the
+      // withheld remaining photos would strand forever (deadlock).
+      //
+      // Fix (surgical, bounded, self-terminating): if the only thing
+      // blocking us is the video-work gate AND remaining photos are pending,
+      // sleep briefly then re-loop. No tight spin (fixed 3s wait, not a
+      // 0-delay busy poll). Self-terminating: once video work drains,
+      // getNext returns the remaining photo and the loop proceeds; once the
+      // remaining photos are exhausted, hasPendingRemainingPhotos() goes
+      // false and we break normally. isPaused still wins immediately.
+      if (
+        !isPaused &&
+        jobQueue.hasPendingRemainingPhotos() &&
+        jobQueue.hasOutstandingVideoWork()
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        continue
+      }
+      break
+    }
 
     const activeCompetitionId = state.getCompetition()?.competitionId
     const payload = job.payload as unknown as UploadPayload
@@ -687,6 +790,7 @@ async function processLoop(): Promise<void> {
           payload.objectName,
           'image/webp',
           uploadRunId,
+          payload,
         )
         await uploadFileToSignedUrl(repair.signedUrl, {
           ...payload,
@@ -704,6 +808,7 @@ async function processLoop(): Promise<void> {
           payload.objectName,
           payload.contentType,
           uploadRunId,
+          payload,
         )
         storagePath = signed.storagePath
 
@@ -738,6 +843,7 @@ async function processLoop(): Promise<void> {
               thumbObjectName,
               'image/webp',
               uploadRunId,
+              { ...payload, objectName: thumbObjectName, contentType: 'image/webp' },
             )
             const headStatus = await checkR2ObjectExists(thumbSignedUrl)
             if (headStatus === 'exists') {
@@ -1105,13 +1211,73 @@ async function getSignedUploadUrl(
   filename: string,
   contentType: string,
   uploadRunId: string,
-): Promise<{ signedUrl: string; storagePath: string }> {
+  payload?: UploadPayload,
+): Promise<UploadUrlResponse> {
   // Late-insert resolution: if entryId is a synthetic `empty-*` id, mint
   // the real CompPortal uuid first, then proceed with the standard upload
   // flow against the resolved uuid.
   if (entryId.startsWith('empty-')) {
     entryId = await resolveLateInsertEntryId(entryId, competitionId)
   }
+  const routineId = payload?.routineId
+  const forceKey = routineId ? `${routineId}:${uploadRunId}` : ''
+  const force = !!forceKey && forceOverwriteUploadRuns.has(forceKey)
+
+  try {
+    return await requestSignedUploadUrl({
+      entryId,
+      competitionId,
+      type,
+      filename,
+      contentType,
+      uploadRunId,
+      force,
+    })
+  } catch (err) {
+    if (
+      !(err instanceof UploadKeyExistsError) ||
+      !payload ||
+      payload.type !== 'videos' ||
+      !routineId
+    ) {
+      throw err
+    }
+
+    const confirmed = await confirmReplaceExistingRecording(payload, err.body)
+    if (!confirmed) {
+      throw new Error(`Upload cancelled: existing recording kept at ${err.body.storagePath || filename}`)
+    }
+
+    logger.upload.warn(`Operator confirmed overwrite for routine ${routineId}: ${err.body.storagePath || filename}`)
+    forceOverwriteUploadRuns.add(forceKey)
+    events.emit('upload.replace-confirmed', {
+      routineId,
+      storagePath: err.body.storagePath || null,
+      existingSize: err.body.existing?.size ?? null,
+      existingLastModified: err.body.existing?.lastModified ?? null,
+    })
+
+    return requestSignedUploadUrl({
+      entryId,
+      competitionId,
+      type,
+      filename,
+      contentType,
+      uploadRunId,
+      force: true,
+    })
+  }
+}
+
+async function requestSignedUploadUrl(input: {
+  entryId: string
+  competitionId: string
+  type: 'videos' | 'photos'
+  filename: string
+  contentType: string
+  uploadRunId: string
+  force?: boolean
+}): Promise<UploadUrlResponse> {
   const { apiBase, apiKey } = getConnection()
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), API_TIMEOUT_MS)
@@ -1123,18 +1289,29 @@ async function getSignedUploadUrl(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        entryId,
-        competitionId,
-        type,
-        filename,
-        contentType,
-        uploadRunId,
+        entryId: input.entryId,
+        competitionId: input.competitionId,
+        type: input.type,
+        filename: input.filename,
+        contentType: input.contentType,
+        uploadRunId: input.uploadRunId,
+        ...(input.force ? { force: true } : {}),
       }),
       signal: abort.signal,
     })
 
     if (!response.ok) {
       const text = await response.text()
+      if (response.status === 409) {
+        try {
+          const body = JSON.parse(text) as UploadKeyExistsBody
+          if (body?.error === 'KEY_EXISTS') {
+            throw new UploadKeyExistsError(body)
+          }
+        } catch (parseErr) {
+          if (parseErr instanceof UploadKeyExistsError) throw parseErr
+        }
+      }
       throw new Error(`Failed to get upload URL: ${response.status} ${text}`)
     }
 
@@ -1142,6 +1319,54 @@ async function getSignedUploadUrl(
   } finally {
     clearTimeout(timer)
   }
+}
+
+function formatBytes(bytes: number | undefined): string {
+  if (!Number.isFinite(bytes)) return 'unknown size'
+  const value = bytes as number
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(2)} GiB`
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MiB`
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KiB`
+  return `${value} bytes`
+}
+
+function formatEasternTimestamp(iso: string | undefined): string {
+  if (!iso) return 'unknown time'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(date)
+}
+
+async function confirmReplaceExistingRecording(
+  payload: UploadPayload,
+  body: UploadKeyExistsBody,
+): Promise<boolean> {
+  const routine = state.getCompetition()?.routines.find((r) => r.id === payload.routineId)
+  const entry = routine?.entryNumber ? `#${routine.entryNumber}` : payload.routineId.slice(0, 8)
+  const title = routine?.routineTitle ? ` ${routine.routineTitle}` : ''
+  const existing = body.existing ?? {}
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null
+  const result = await dialog.showMessageBox(win ?? undefined, {
+    type: 'warning',
+    title: 'Replace existing recording?',
+    message: `Routine ${entry}${title} already has a recording uploaded.`,
+    detail:
+      `Existing: ${formatBytes(existing.size)}, last modified ${formatEasternTimestamp(existing.lastModified)}.\n` +
+      `Path: ${body.storagePath || payload.objectName}\n\n` +
+      'Cancel keeps the existing recording. Replace uploads this file as an intentional re-record.',
+    buttons: ['Cancel', 'Replace'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+  return result.response === 1
 }
 
 function uploadFileToSignedUrl(
@@ -1253,7 +1478,14 @@ function uploadFileViaChildProcess(
         stdoutBuf = stdoutBuf.slice(nl + 1)
         if (!line.trim()) continue
         try {
-          const msg = JSON.parse(line) as { type: string; percent?: number; message?: string }
+          const msg = JSON.parse(line) as {
+            type: string
+            percent?: number
+            bytesUploaded?: number
+            bytesTotal?: number
+            bytesPerSecond?: number
+            message?: string
+          }
           if (msg.type === 'progress' && typeof msg.percent === 'number') {
             const milestone = Math.floor(msg.percent / 25) * 25
             if (milestone > lastEmittedMilestone) {
@@ -1266,6 +1498,9 @@ function uploadFileViaChildProcess(
                 currentFile: path.basename(payload.filePath),
                 filesCompleted: cachedCompleted,
                 filesTotal: cachedTotal,
+                bytesUploaded: msg.bytesUploaded,
+                bytesTotal: msg.bytesTotal,
+                bytesPerSecond: msg.bytesPerSecond,
               })
             }
           } else if (msg.type === 'done') {
@@ -1342,6 +1577,7 @@ function uploadFileToSignedUrlMainProcess(
     const fileStream = fs.createReadStream(payload.filePath)
     let bytesUploaded = 0
     let lastLoggedMilestone = 0
+    const startedAt = Date.now()
 
     const url = new URL(signedUrl)
     const httpModule = url.protocol === 'https:' ? https : http
@@ -1410,12 +1646,16 @@ function uploadFileToSignedUrlMainProcess(
         logger.upload.info(`Upload ${payload.objectName}: ${filePercent}%`)
 
         const overallPercent = Math.round(((cachedCompleted + (filePercent / 100)) / cachedTotal) * 100)
+        const elapsedSec = Math.max(0.001, (Date.now() - startedAt) / 1000)
         sendProgress(payload.routineId, {
           state: 'uploading',
           percent: overallPercent,
           currentFile: path.basename(payload.filePath),
           filesCompleted: cachedCompleted,
           filesTotal: cachedTotal,
+          bytesUploaded,
+          bytesTotal: fileSize,
+          bytesPerSecond: Math.round(bytesUploaded / elapsedSec),
         })
       }
     })

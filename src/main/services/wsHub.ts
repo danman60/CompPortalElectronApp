@@ -101,10 +101,15 @@ export function start(): void {
     if (!name) return
     const settings = getSettings()
     const map = parseDurationMap(settings.obs?.transitionDurations || '')
-    const ms = map.get(name)
+    // FADE always 4s — operator decision 2026-05-15. Override the duration
+    // map for any transition of kind fade_transition so it can't be wrong
+    // regardless of what the operator renamed the Fade to in OBS.
+    const kind = obs.getTransitionKind(name)
+    const forcedFadeMs = kind === 'fade_transition' ? 4000 : null
+    const ms = forcedFadeMs ?? map.get(name)
     if (typeof ms === 'number' && ms > 0) {
       void obs.setCurrentTransitionDuration(ms)
-        .then(() => logger.app.info(`Transition "${name}" → enforced duration ${ms}ms`))
+        .then(() => logger.app.info(`Transition "${name}" (kind=${kind ?? '?'}) → enforced duration ${ms}ms${forcedFadeMs ? ' [FADE rule]' : ''}`))
         .catch((err) => logger.app.warn(`enforce duration for "${name}" failed: ${err instanceof Error ? err.message : err}`))
     }
     // Crash Zoom blur gate: enable the listed filters ONLY while Crash Zoom is
@@ -330,6 +335,12 @@ export async function executeCommand(cmd: WSCommandMessage): Promise<void> {
         const next = ordered[(idx + 1 + ordered.length) % ordered.length]
         await obs.setCurrentTransitionByName(next)
         logger.app.info(`Stream Deck cycled OBS transition: ${cur ?? '(none)'} → ${next}`)
+        break
+      }
+      case 'setUdcStingerTransition': {
+        const transitionName = 'UDC Stinger'
+        await obs.setCurrentTransitionByName(transitionName)
+        logger.app.info(`Stream Deck set OBS transition: ${transitionName}`)
         break
       }
       case 'kickQueue': {

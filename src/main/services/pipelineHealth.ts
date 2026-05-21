@@ -1,8 +1,9 @@
 /**
  * A56 — Universal pipeline detector (narrow slice).
  *
- * Tracks last-activity timestamps + pending counts for 4 stages:
+ * Tracks last-activity timestamps + pending counts for 5 stages:
  *   - recording      (zero tolerance — red on first 'recorded' without video)
+ *   - encode         (5 min yellow / 10 min red while encode work is pending/running)
  *   - photoImport    (~30 routine durations until yellow, 60 until red)
  *   - photoUpload    (5 min yellow / 10 min red while comp active)
  *   - videoUpload    (5 min yellow / 10 min red while comp active)
@@ -10,7 +11,7 @@
  * Periodic evaluator (every 30s) classifies each stage and broadcasts the
  * snapshot via PIPELINE_HEALTH IPC. Renderer subscribes for the header chip.
  *
- * Encode + thumb + keyframe stages deferred (not in tonight's slice).
+ * Thumb + keyframe stages deferred.
  *
  * No OS-level notifications (operator picked option (b) at decision 22:01 EDT).
  */
@@ -28,6 +29,7 @@ import * as jobQueue from './jobQueue'
 
 const stages: Record<PipelineStageId, PipelineStageState> = {
   recording:    { id: 'recording',    lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
+  encode:       { id: 'encode',       lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
   photoImport:  { id: 'photoImport',  lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
   photoUpload:  { id: 'photoUpload',  lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
   videoUpload:  { id: 'videoUpload',  lastActivityMs: 0, pendingCount: 0, health: 'unknown' },
@@ -46,6 +48,8 @@ const PHOTO_IMPORT_RED_MS    = 120 * 60_000  // chip → red
 // no audio anywhere in the app, ever).
 const PHOTO_IMPORT_BANNER_MS = 150 * 60_000
 
+const ENCODE_YELLOW_MS = 5 * 60_000
+const ENCODE_RED_MS    = 10 * 60_000
 const UPLOAD_YELLOW_MS = 5 * 60_000
 const UPLOAD_RED_MS    = 10 * 60_000
 
@@ -89,6 +93,8 @@ function classifyStaleness(lastMs: number, yellowMs: number, redMs: number): 'gr
 }
 
 function refreshPendingCounts(): void {
+  stages.encode.pendingCount = jobQueue.getPending('encode').length + jobQueue.getRunning('encode').length
+
   // Photo-import pending: any in-flight 'photo-import' jobs.
   stages.photoImport.pendingCount = jobQueue.getPending('photo-import').length
 
@@ -115,6 +121,19 @@ function evaluate(): void {
   if (stages.recording.health !== 'red') {
     stages.recording.health = stages.recording.lastActivityMs > 0 ? 'green' : 'unknown'
     stages.recording.reason = undefined
+  }
+
+  if (compActive && stages.encode.pendingCount > 0) {
+    stages.encode.health = classifyStaleness(stages.encode.lastActivityMs, ENCODE_YELLOW_MS, ENCODE_RED_MS)
+    if (stages.encode.health !== 'green') {
+      const ageMin = Math.round((Date.now() - stages.encode.lastActivityMs) / 60_000)
+      stages.encode.reason = `${stages.encode.pendingCount} encode job(s) pending/running — no progress in ${ageMin} min`
+    } else {
+      stages.encode.reason = undefined
+    }
+  } else {
+    stages.encode.health = 'green'
+    stages.encode.reason = undefined
   }
 
   // Photo import: PENDING-AWARE rule (Burlington UDC 2026-05-01 redesign).

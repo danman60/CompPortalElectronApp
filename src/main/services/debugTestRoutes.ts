@@ -546,6 +546,67 @@ export async function handleTestExtractKeyframes(req: IncomingMessage, res: Serv
   }
 }
 
+// ── POST /debug/test/obs-state ──────────────────────────────────────────
+// Body: { connectionStatus?, isRecording?, isStreaming?, recordTimeSec? }
+// Forces the OBS state the renderer reads for the record glow / button text /
+// Next-enable, with NO OBS connected. Broadcasts through the real OBS_STATE
+// IPC so the Zustand store + React update exactly as production.
+export async function handleTestObsState(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!gateEnabled(res)) return
+  const body = await readBody(req).catch(() => ({}))
+  const obs = await import('./obs')
+  const partial: Record<string, unknown> = {}
+  if (typeof body.connectionStatus === 'string') partial.connectionStatus = body.connectionStatus
+  if (typeof body.isRecording === 'boolean') partial.isRecording = body.isRecording
+  if (typeof body.isStreaming === 'boolean') partial.isStreaming = body.isStreaming
+  if (typeof body.recordTimeSec === 'number') partial.recordTimeSec = body.recordTimeSec
+  const next = obs.setTestState(partial as Partial<import('../../shared/types').OBSState>)
+  sendJson(res, 200, { ok: true, state: next })
+}
+
+// ── POST /debug/test/audio-levels ───────────────────────────────────────
+// Body: { peak?: number, levels?: { inputName: string, peak: number }[] }
+// Pushes synthetic OBS InputVolumeMeters-shaped levels through the real
+// OBS_AUDIO_LEVELS IPC + wsHub onAudioLevelsCb so the judge meters render
+// full/active. When no explicit levels[] given, synthesizes one near-peak
+// input per role mapped in settings.audioInputMapping (the exact inputNames
+// VerticalMeters resolves via wsHub.broadcastAudioLevels role mapping).
+export async function handleTestAudioLevels(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!gateEnabled(res)) return
+  const body = await readBody(req).catch(() => ({}))
+  const obs = await import('./obs')
+  const peak = typeof body.peak === 'number' ? body.peak : 0.92
+  type Lvl = { inputName: string; levels: number[] }
+  let levels: Lvl[]
+  if (Array.isArray(body.levels)) {
+    levels = (body.levels as Array<{ inputName: string; peak?: number }>)
+      .filter((l) => l && typeof l.inputName === 'string')
+      .map((l) => ({ inputName: l.inputName, levels: [typeof l.peak === 'number' ? l.peak : peak, typeof l.peak === 'number' ? l.peak : peak] }))
+  } else {
+    let mapping = getSettings().audioInputMapping ?? {}
+    let inputNames = Array.from(
+      new Set(Object.values(mapping).filter((v): v is string => typeof v === 'string' && v.length > 0)),
+    )
+    // Self-heal: if no inputs are mapped (fresh/empty settings), install a
+    // synthetic mapping for performance + judge1..judgeCount so wsHub can
+    // resolve roles for the VerticalMeters component, then re-read.
+    if (inputNames.length === 0) {
+      const settingsMod = await import('./settings')
+      const judgeCount = getSettings().competition?.judgeCount ?? 3
+      const synthetic: Record<string, string> = { performance: 'PERF_MIX' }
+      for (let i = 1; i <= judgeCount; i++) synthetic[`judge${i}`] = `JUDGE_${i}`
+      settingsMod.setSettings({ audioInputMapping: synthetic } as Partial<import('../../shared/types').AppSettings>)
+      mapping = getSettings().audioInputMapping ?? {}
+      inputNames = Array.from(
+        new Set(Object.values(mapping).filter((v): v is string => typeof v === 'string' && v.length > 0)),
+      )
+    }
+    levels = inputNames.map((inputName) => ({ inputName, levels: [peak, peak] }))
+  }
+  obs.pushTestAudioLevels(levels as unknown as import('../../shared/types').AudioLevel[])
+  sendJson(res, 200, { ok: true, count: levels.length, inputNames: levels.map((l) => l.inputName), peak })
+}
+
 // ── GET /debug/snapshot ────────────────────────────────────────────────
 // Full deterministic state dump for golden-file regression testing.
 // Excludes timestamps that change between runs (snapshot.takenAt is the

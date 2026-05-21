@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import type { AppSettings, MonitorInfo } from '../../shared/types'
 import BackupMedia from './BackupMedia'
 import StreamDeckPluginSection from './StreamDeckPluginSection'
+import { LowerThirdAnimConfig } from './OverlayControls'
 import '../styles/settings.css'
 
 // --- Hotkey Capture Component ---
@@ -68,9 +69,37 @@ function HotkeyInput({
   )
 }
 
+// 2026-05-15: section title → tab. Drives the tab bar; sections are
+// show/hidden by an effect reading each .settings-section-title, so the
+// 21 existing sections need zero JSX changes.
+const SETTINGS_TABS: { id: string; label: string; sections: string[] }[] = [
+  { id: 'general', label: 'General', sections: [
+    'Competition Setup', 'Day Checklists', 'Behavior', 'Next Sequence', 'Global Hotkeys',
+  ] },
+  { id: 'recording', label: 'Recording', sections: [
+    'OBS Connection', 'File Naming', 'Audio Configuration', 'FFmpeg Processing',
+    'Performance (advanced)', 'Tablet Display',
+  ] },
+  { id: 'overlay', label: 'Overlay', sections: [
+    'Lower Third Animation', 'Overlay', 'Branding & Socials',
+  ] },
+  { id: 'media', label: 'Media', sections: [
+    'Upload', 'Upload Recovery', 'Automatic Sync', 'Photo Tether', 'Photo Import',
+    'Backup Media',
+  ] },
+  { id: 'tools', label: 'Tools', sections: ['Tools', 'Stream Deck Plugin'] },
+]
+function tabForSection(title: string): string {
+  for (const t of SETTINGS_TABS) {
+    if (t.sections.some((s) => title.startsWith(s) || s.startsWith(title))) return t.id
+  }
+  return 'general'
+}
+
 export default function Settings(): React.ReactElement {
   const currentSettings = useStore((s) => s.settings)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const [activeTab, setActiveTab] = useState<string>('general')
   const [draft, setDraft] = useState<AppSettings | null>(null)
   const [obsInputs, setObsInputs] = useState<string[]>([])
   const [namingPreview, setNamingPreview] = useState('')
@@ -99,6 +128,21 @@ export default function Settings(): React.ReactElement {
       if (r && typeof r.count === 'number') setResumeUnfinishedCount(r.count)
     }).catch(() => {})
   }, [currentSettings])
+
+  // 2026-05-15: tabbed Settings. Show/hide each .settings-section by reading
+  // its title text and matching to the active tab. Re-runs whenever the tab
+  // or draft changes (draft change can add/remove conditional sections).
+  useEffect(() => {
+    const root = document.querySelector('.settings-body')
+    if (!root) return
+    const sections = root.querySelectorAll<HTMLElement>('.settings-section')
+    sections.forEach((sec) => {
+      const titleEl = sec.querySelector('.settings-section-title')
+      const title = (titleEl?.textContent || '').trim()
+      const tab = tabForSection(title)
+      sec.style.display = tab === activeTab ? '' : 'none'
+    })
+  }, [activeTab, draft])
 
   function updatePreview(pattern: string): void {
     const tokens: Record<string, string> = {
@@ -173,7 +217,19 @@ export default function Settings(): React.ReactElement {
         <h2>Settings</h2>
       </div>
 
-      <div className="settings-body">
+      <div className="settings-tabbar">
+        {SETTINGS_TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`settings-tab${activeTab === t.id ? ' active' : ''}`}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="settings-body" data-active-tab={activeTab}>
         {/* Competition Setup - FIRST */}
         <div className="settings-section">
           <div className="settings-section-title">Competition Setup</div>
@@ -560,6 +616,17 @@ export default function Settings(): React.ReactElement {
               <span className="hint">
                 Controls which pending photo gets picked next when uploads are active. Use newest-first on event day so the latest imported photos surface fastest.
               </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Lower-third animation config — moved from rail 2026-05-15 */}
+        <div className="settings-section">
+          <div className="settings-section-title">Lower Third Animation</div>
+          <div className="settings-grid single">
+            <div className="field">
+              <label>Animation, auto-hide seconds, duration, easing</label>
+              <LowerThirdAnimConfig />
             </div>
           </div>
         </div>
@@ -1201,6 +1268,17 @@ export default function Settings(): React.ReactElement {
                 <option value="30">30</option>
                 <option value="60">60</option>
               </select>
+            </div>
+            <div className="field">
+              <label>Encoder</label>
+              <select
+                value={draft.wifiDisplay?.encoder ?? 'openh264'}
+                onChange={(e) => update('wifiDisplay', { encoder: e.target.value as 'openh264' | 'hevc-nvenc' })}
+              >
+                <option value="openh264">H.264 (OpenH264)</option>
+                <option value="hevc-nvenc">H.265/HEVC (NVENC)</option>
+              </select>
+              <span className="hint">Match this to the tablet codec selection.</span>
             </div>
             <div className="field">
               <label>Client IP</label>

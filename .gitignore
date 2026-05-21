@@ -11,3 +11,35 @@ Thumbs.db
 .worktrees/
 .gitnexus
 resources/ffmpeg/
+
+# --- session/runtime artifacts (added 2026-05-21 consolidation) ---
+.claude/
+.ccbot-uploads/
+.claude-crash-transcript.md
+compsync-state.json
+# stray build bundles dropped in repo root
+/index.js
+/index-*.js
+/global-*.js
+/.cse-shot-*.mjs
+/.udc-overlay-bundled.cjs
+# editor/agent backups
+*.codex-bak
+*.bak
+*.bak.*
+# debug screenshots in root
+/meters-*.png
+/preview-*.png
+# old staged asars + test output
+staging/
+test-results/
+tests/reports/
+tests/**/results/
+tests/**/.build/
+__pycache__/
+tools/**/bin/
+# more stray root vite output
+/index.html
+/*.css
+/compStateSync-*.js
+/index-*.css

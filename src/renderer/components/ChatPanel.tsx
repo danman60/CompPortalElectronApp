@@ -21,6 +21,8 @@ function relTime(ts: number): string {
 
 export default function ChatPanel(): React.ReactElement | null {
   const chat = useStore((s) => s.chat)
+  const competition = useStore((s) => s.competition)
+  const currentRoutine = useStore((s) => s.currentRoutine)
   const setChatMessages = useStore((s) => s.setChatMessages)
   const setChatPinned = useStore((s) => s.setChatPinned)
   const setChatVisible = useStore((s) => s.setChatVisible)
@@ -176,8 +178,12 @@ export default function ChatPanel(): React.ReactElement | null {
                   gap: 8,
                   padding: '6px 4px',
                   borderBottom: '1px solid rgba(255,255,255,0.05)',
-                  background: pinnedIds.has(msg.id) ? 'rgba(168, 85, 247, 0.12)' : 'transparent',
-                  borderLeft: pinnedIds.has(msg.id) ? '2px solid var(--stream-purple)' : '2px solid transparent',
+                  background: msg.routineIdAtPost && msg.routineIdAtPost === currentRoutine?.id
+                    ? 'linear-gradient(90deg, rgba(251, 191, 36, 0.22), rgba(251, 191, 36, 0.06) 52%, rgba(59, 130, 246, 0.08))'
+                    : pinnedIds.has(msg.id) ? 'rgba(168, 85, 247, 0.12)' : 'transparent',
+                  borderLeft: msg.routineIdAtPost && msg.routineIdAtPost === currentRoutine?.id
+                    ? '2px solid #fbbf24'
+                    : pinnedIds.has(msg.id) ? '2px solid var(--stream-purple)' : '2px solid transparent',
                 }}
               >
                 <div

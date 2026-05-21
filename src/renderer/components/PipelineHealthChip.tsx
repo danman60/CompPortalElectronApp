@@ -10,11 +10,12 @@ import type { PipelineHealthSnapshot } from '../../shared/types'
  * reflects worst stage health. Click → expand inline panel with each
  * stage's last-activity timestamp + pending count + reason.
  *
- * Encode + thumb + keyframe stages deferred (not in tonight's slice).
+ * Thumb + keyframe stages deferred.
  */
 
 const STAGE_LABELS: Record<string, string> = {
   recording:    'Recording',
+  encode:       'Encode',
   photoImport:  'Photo Import',
   photoUpload:  'Photo Upload',
   videoUpload:  'Video Upload',

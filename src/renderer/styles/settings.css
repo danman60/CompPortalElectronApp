@@ -42,6 +42,31 @@
   color: var(--text-primary);
 }
 
+/* 2026-05-15: tabbed settings */
+.settings-tabbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0;
+  border-bottom: 1px solid var(--border, #2a2a3c);
+  flex-wrap: wrap;
+}
+.settings-tab {
+  padding: 7px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary, #9aa8bc);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.settings-tab:hover { color: var(--text-primary, #fff); }
+.settings-tab.active {
+  color: var(--accent, #667eea);
+  border-bottom-color: var(--accent, #667eea);
+}
+
 .settings-body {
   flex: 1;
   overflow-y: auto;

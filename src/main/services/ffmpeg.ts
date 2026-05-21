@@ -3,7 +3,7 @@ import os from 'os'
 import path from 'path'
 import fs from 'fs'
 import { app } from 'electron'
-import { FFmpegJob, FFmpegProgress, IPC_CHANNELS, EncodedFile } from '../../shared/types'
+import { FFmpegJob, FFmpegProgress, IPC_CHANNELS, EncodedFile, RoutineStatus } from '../../shared/types'
 import { sendToRenderer } from '../ipcUtil'
 import { logger } from '../logger'
 import { getSettings } from './settings'
@@ -13,6 +13,7 @@ import * as jobQueue from './jobQueue'
 import { broadcastFullState, broadcastRoutineUpdate, pickLongestMkv } from './recording'
 import * as schedule from './schedule'
 import * as events from './events'
+import * as pipelineHealth from './pipelineHealth'
 
 let ffmpegProcess: ChildProcess | null = null
 let isProcessing = false
@@ -757,6 +758,7 @@ function sendProgress(progress: FFmpegProgress): void {
 /** Enqueue an FFmpeg job via the persistent job queue. */
 export function enqueueJob(job: FFmpegJob): void {
   jobQueue.enqueue('encode', job.routineId, job as unknown as Record<string, unknown>)
+  pipelineHealth.bumpActivity('encode')
   logger.ffmpeg.info(`Job queued for routine ${job.routineId}`)
   sendProgress({
     routineId: job.routineId,
@@ -1143,6 +1145,7 @@ function spawnFFmpegWithTimeout(ffmpegPath: string, args: string[], timeoutMs = 
     ffmpegProcess.stderr?.on('data', (data: Buffer) => {
       const line = data.toString().trim()
       if (line) {
+        if (line.includes('frame=')) pipelineHealth.bumpActivity('encode')
         logger.ffmpeg.debug(`stderr: ${line}`)
       }
     })
@@ -1229,10 +1232,66 @@ export function pauseEncoding(): void {
 }
 
 export function resumeEncoding(): void {
-  if (!isPaused) return
-  isPaused = false
-  logger.ffmpeg.info('Encoding resumed')
+  if (isPaused) {
+    isPaused = false
+    logger.ffmpeg.info('Encoding resumed')
+  }
   processNext()
+}
+
+export function nudgeRoutineEncode(routineId: string): {
+  ok: boolean
+  reason?: string
+  enqueued?: boolean
+  requeuedStaleRunning?: number
+  activeJobs?: number
+} {
+  const comp = state.getCompetition()
+  if (!comp) return { ok: false, reason: 'No competition loaded' }
+  const routine = comp.routines.find((r) => r.id === routineId)
+  if (!routine || !routine.outputPath) return { ok: false, reason: 'Routine not found or not recorded' }
+
+  const existing = jobQueue
+    .getByRoutine(routineId)
+    .filter((j) => j.type === 'encode' && (j.status === 'pending' || j.status === 'running'))
+
+  let requeuedStaleRunning = 0
+  if (!ffmpegProcess && !isProcessing) {
+    for (const job of existing) {
+      if (job.status !== 'running') continue
+      jobQueue.updateStatus(job.id, 'pending', { error: 'manual encode nudge: stale running job reset' })
+      requeuedStaleRunning++
+    }
+  }
+
+  const activeJobs = jobQueue
+    .getByRoutine(routineId)
+    .filter((j) => j.type === 'encode' && (j.status === 'pending' || j.status === 'running'))
+    .length
+
+  let enqueued = false
+  if (activeJobs === 0) {
+    const settings = getSettings()
+    const dir = routine.outputDir || path.dirname(routine.outputPath)
+    const encodeInput = pickLongestMkv(dir, routine.outputPath)
+    state.updateRoutineStatus(routine.id, 'queued', { encodeSkipReason: undefined })
+    enqueueJob({
+      routineId: routine.id,
+      inputPath: encodeInput,
+      outputDir: dir,
+      judgeCount: settings.competition.judgeCount,
+      trackMapping: settings.audioTrackMapping,
+      processingMode: settings.ffmpeg.processingMode,
+      filePrefix: schedule.buildFilePrefix(routine.entryNumber),
+    })
+    enqueued = true
+  } else if (routine.status === 'encoding' && !ffmpegProcess && !isProcessing) {
+    state.updateRoutineStatus(routine.id, 'queued', { encodeSkipReason: undefined })
+  }
+
+  pipelineHealth.bumpActivity('encode')
+  processNext()
+  return { ok: true, enqueued, requeuedStaleRunning, activeJobs }
 }
 
 export function resumeRecordedRoutines(): number {
@@ -1240,6 +1299,17 @@ export function resumeRecordedRoutines(): number {
   if (!comp) return 0
 
   const settings = getSettings()
+  let requeuedStaleRunning = 0
+  if (!ffmpegProcess && !isProcessing) {
+    for (const job of jobQueue.getRunning('encode')) {
+      jobQueue.updateStatus(job.id, 'pending', { error: 'manual encode resume: stale running job reset' })
+      requeuedStaleRunning++
+    }
+    if (requeuedStaleRunning > 0) {
+      logger.ffmpeg.warn(`Resume recorded: reset ${requeuedStaleRunning} stale running encode job(s) to pending`)
+    }
+  }
+
   const existingEncodeRoutineIds = new Set(
     jobQueue
       .getAll()
@@ -1247,13 +1317,33 @@ export function resumeRecordedRoutines(): number {
       .map((j) => j.routineId),
   )
 
+  // Resumable = has output AND status is somewhere in the pre-encode/encode
+  // band (recorded | queued | encoding) AND no live job already covers it.
+  // The encode job queue is in-memory and dies on every app restart (asar
+  // swap mid-show, crash). A routine left at 'queued' or 'encoding' when the
+  // app went down has no job recreating it, and the only other boot recovery
+  // (the 'uploading' reconcile in index.ts) never touches these — so without
+  // this they orphan forever. The existingEncodeRoutineIds guard still
+  // prevents double-enqueuing a routine that already has a live job.
+  const resumableStatuses: ReadonlySet<RoutineStatus> = new Set<RoutineStatus>([
+    'recorded',
+    'queued',
+    'encoding',
+  ])
+
   let queued = 0
   for (const routine of comp.routines) {
-    if (routine.status !== 'recorded' || !routine.outputPath) continue
+    if (!resumableStatuses.has(routine.status) || !routine.outputPath) continue
     if (existingEncodeRoutineIds.has(routine.id)) continue
 
     const dir = routine.outputDir || path.dirname(routine.outputPath)
     const encodeInput = pickLongestMkv(dir, routine.outputPath)
+    // Mirror the normal recording.ts flow: the caller owns the status
+    // transition; enqueueJob never sets routine status, and processNext()
+    // flips each job to 'encoding' only when it actually starts. Resume is a
+    // batch (queue will be busy), so park at 'queued' — without this, a
+    // routine resumed from 'encoding' would display "encoding" forever.
+    state.updateRoutineStatus(routine.id, 'queued', { encodeSkipReason: undefined })
     enqueueJob({
       routineId: routine.id,
       inputPath: encodeInput,
@@ -1269,6 +1359,7 @@ export function resumeRecordedRoutines(): number {
   if (queued > 0) {
     logger.ffmpeg.info(`Resume recorded: queued ${queued} recorded routine(s) for encoding`)
   }
+  if (queued > 0 || requeuedStaleRunning > 0) pipelineHealth.bumpActivity('encode')
   return queued
 }
 

@@ -34,12 +34,30 @@ const HIDDEN_KINDS = new Set<string>([
   'recording.started',
   'recording.stopped',
   'encode.started',
-  'encode.completed',
   'upload.started',
-  'upload.completed',
   'chat.backfill.ok',
   'chat.message.received',
+  // queue.status fires on every job state transition (pending→running→done
+  // for each photo, plus retries). With round-robin upload spreading work
+  // across routines, this dominates the Activity panel. Dedicated
+  // upload.failed / encode.failed events surface real failures.
+  'queue.status',
 ])
+
+/* ── Batching ────────────────────────────────────────────────────────────── */
+
+/**
+ * Kinds that should collapse into one row when many fire in a short window.
+ * Operator request 2026-05-15: don't spam one row per photo upload — batch
+ * them into "5 uploads finished". Dedicated failure events stay un-batched.
+ */
+const BATCHABLE_KINDS = new Set<string>(['upload.completed', 'encode.completed'])
+const BATCH_WINDOW_MS = 60_000
+
+const BATCH_LABELS: Record<string, { singular: string; plural: string }> = {
+  'upload.completed': { singular: 'upload finished', plural: 'uploads finished' },
+  'encode.completed': { singular: 'encode finished', plural: 'encodes finished' },
+}
 
 interface RenderAPI {
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void
@@ -218,6 +236,15 @@ const FORMATTERS: Record<string, (data: Record<string, unknown>) => Formatted> =
 }
 
 function formatRecord(record: EventRecord): Formatted {
+  // Batched synthetic row: data._batchCount > 1 means this row stands in
+  // for N adjacent same-kind events collapsed in the visible pass below.
+  const batchCount = typeof record.data._batchCount === 'number' ? record.data._batchCount : 0
+  if (batchCount > 1) {
+    const meta = BATCH_LABELS[record.kind]
+    if (meta) {
+      return { label: `${batchCount} ${meta.plural}`, summary: '' }
+    }
+  }
   const fn = FORMATTERS[record.kind]
   if (fn) return fn(record.data)
   // Fallback: derive label from kind, summary from JSON snippet
@@ -264,7 +291,14 @@ export default function EventLogPanel(): React.ReactElement {
     }).catch(() => { /* ignore */ })
     const off = api.on(IPC_CHANNELS.EVENT_STREAM, (record: unknown) => {
       if (record && typeof record === 'object' && 'kind' in record) {
-        appendEvent(record as EventRecord)
+        const r = record as EventRecord
+        // Drop HIDDEN_KINDS at the IPC boundary so they never enter the
+        // store and never trigger React re-renders. main/index.ts fans out
+        // every events.emit() regardless of visibility; without this gate,
+        // high-volume kinds (chat.backfill.ok, queue.status) drown the
+        // renderer and produced a 75s "Next" lag on 2026-05-15.
+        if (HIDDEN_KINDS.has(r.kind)) return
+        appendEvent(r)
       }
     })
     return () => { try { off() } catch { /* ignore */ } }
@@ -303,7 +337,7 @@ export default function EventLogPanel(): React.ReactElement {
   // (errors always render regardless of bucket toggles).
   const visible = useMemo<Array<EventRecord & { id: string; severity: EventSeverity; bucket: EventBucket; isError: boolean }>>(() => {
     const errorsOn = activeBuckets.has('errors')
-    return events
+    const filtered = events
       .map((e, idx) => ({
         ...e,
         id: `${e.t}::${e.kind}::${idx}`,
@@ -317,6 +351,42 @@ export default function EventLogPanel(): React.ReactElement {
         if (e.isError && errorsOn) return true
         return activeBuckets.has(e.bucket)
       })
+
+    // Collapse adjacent runs of same batchable kind within BATCH_WINDOW_MS
+    // into one synthetic row. Anchor on the newest event so the row's time
+    // and severity reflect "when the batch finished".
+    const out: typeof filtered = []
+    let i = 0
+    while (i < filtered.length) {
+      const head = filtered[i]
+      if (!BATCHABLE_KINDS.has(head.kind)) {
+        out.push(head)
+        i++
+        continue
+      }
+      const startMs = new Date(head.t).getTime()
+      let j = i + 1
+      while (
+        j < filtered.length &&
+        filtered[j].kind === head.kind &&
+        Math.abs(new Date(filtered[j].t).getTime() - startMs) <= BATCH_WINDOW_MS
+      ) {
+        j++
+      }
+      const count = j - i
+      if (count === 1) {
+        out.push(head)
+      } else {
+        const newest = filtered[j - 1]
+        out.push({
+          ...newest,
+          id: `batch::${head.kind}::${head.id}::${count}`,
+          data: { ...newest.data, _batchCount: count, _batchStart: head.t },
+        })
+      }
+      i = j
+    }
+    return out
   }, [events, activeBuckets, dismissedIds])
 
   return (

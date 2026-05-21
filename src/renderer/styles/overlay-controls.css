@@ -102,6 +102,43 @@
 .oc-graphics-section {
   padding: 8px 8px 10px;
 }
+
+.oc-feature-card-module {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.oc-feature-card-header {
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  margin-bottom: 0;
+}
+
+.oc-feature-card-header .oc-graphics-section {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.oc-feature-card-header .oc-section-title {
+  display: none;
+}
+
+.oc-feature-card-header .oc-graphics-row {
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.oc-feature-card-header .oc-graphics-btn {
+  flex: 0 1 86px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
 .oc-section-title {
   font-size: 10px;
   font-weight: 700;
@@ -147,6 +184,20 @@
 .ic-strip-wrap {
   padding: 6px 8px;
   background: rgba(99, 102, 234, 0.04);
+  position: relative;
+  overflow: hidden;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.ic-strip-wrap.has-new-message {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(56, 189, 248, 0.26), transparent 42%),
+    linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(16, 185, 129, 0.10));
+  box-shadow:
+    0 0 0 1px rgba(125, 211, 252, 0.55),
+    0 0 18px rgba(56, 189, 248, 0.42),
+    inset 0 0 24px rgba(96, 165, 250, 0.16);
+  animation: ic-panel-flash 2.6s ease-out both;
 }
 
 .ic-strip-header {
@@ -202,7 +253,7 @@
   flex-direction: column;
   gap: 2px;
   flex: 1 1 auto;
-  min-height: 60px;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -224,8 +275,9 @@
   font-size: 10px;
   line-height: 1.3;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
   border-left: 2px solid transparent;
+  position: relative;
 }
 
 .ic-strip-msg:hover {
@@ -236,6 +288,19 @@
 .ic-strip-msg.pinned {
   background: rgba(102, 126, 234, 0.15);
   border-left-color: var(--accent);
+}
+
+.ic-strip-msg.current-routine {
+  background:
+    linear-gradient(90deg, rgba(251, 191, 36, 0.22), rgba(251, 191, 36, 0.06) 52%, rgba(59, 130, 246, 0.08));
+  border-left-color: #fbbf24;
+  box-shadow:
+    inset 0 0 0 1px rgba(251, 191, 36, 0.20),
+    0 0 10px rgba(251, 191, 36, 0.12);
+}
+
+.ic-strip-msg.new-flash {
+  animation: ic-message-flash 2.4s ease-out both;
 }
 
 .ic-strip-name {
@@ -274,6 +339,13 @@
   padding: 0 4px;
   flex-shrink: 0;
   letter-spacing: 0.3px;
+}
+
+.ic-strip-entry.current {
+  color: #111827;
+  background: #fbbf24;
+  border-color: #fde68a;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.42);
 }
 
 .ic-strip-entry.estimated {
@@ -324,19 +396,68 @@
   text-align: center;
 }
 
-.ic-strip-admin {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border, #2a2a36);
+@keyframes ic-panel-flash {
+  0% {
+    box-shadow:
+      0 0 0 1px rgba(186, 230, 253, 0.95),
+      0 0 30px rgba(56, 189, 248, 0.68),
+      0 0 58px rgba(34, 197, 94, 0.26),
+      inset 0 0 32px rgba(96, 165, 250, 0.28);
+  }
+  55% {
+    box-shadow:
+      0 0 0 1px rgba(125, 211, 252, 0.70),
+      0 0 22px rgba(56, 189, 248, 0.44),
+      inset 0 0 24px rgba(96, 165, 250, 0.18);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(125, 211, 252, 0),
+      0 0 0 rgba(56, 189, 248, 0),
+      inset 0 0 0 rgba(96, 165, 250, 0);
+  }
 }
 
-.ic-strip-admin-header {
+@keyframes ic-message-flash {
+  0% {
+    background:
+      linear-gradient(90deg, rgba(125, 211, 252, 0.34), rgba(59, 130, 246, 0.18) 48%, rgba(16, 185, 129, 0.16));
+    border-left-color: #7dd3fc;
+    box-shadow:
+      0 0 0 1px rgba(125, 211, 252, 0.62),
+      0 0 18px rgba(56, 189, 248, 0.45);
+  }
+  38% {
+    background:
+      linear-gradient(90deg, rgba(125, 211, 252, 0.25), rgba(59, 130, 246, 0.12) 48%, rgba(16, 185, 129, 0.10));
+    box-shadow:
+      0 0 0 1px rgba(125, 211, 252, 0.46),
+      0 0 14px rgba(56, 189, 248, 0.30);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(125, 211, 252, 0),
+      0 0 0 rgba(56, 189, 248, 0);
+  }
+}
+
+.ic-strip-admin {
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border, #2a2a36);
+  flex: 0 0 auto;
+}
+
+/* 2026-05-15: name baked as "Admin"; label now inline with the input so
+   the composer is one row instead of two. */
+.ic-strip-admin-label {
+  flex: 0 0 auto;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   color: var(--accent, #4b7bff);
   text-transform: uppercase;
-  margin-bottom: 4px;
+  white-space: nowrap;
 }
 
 .ic-strip-admin-row {

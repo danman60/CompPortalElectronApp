@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { ChatMessage, PinnedChatMessage, LivestreamPinnedMessage } from '../../shared/types'
 
@@ -27,10 +27,16 @@ function relTime(ts: number): string {
  */
 export default function PanelChat(): React.ReactElement {
   const chat = useStore((s) => s.chat)
+  const competition = useStore((s) => s.competition)
+  const currentRoutine = useStore((s) => s.currentRoutine)
   const setChatMessages = useStore((s) => s.setChatMessages)
   const setChatPinned = useStore((s) => s.setChatPinned)
   const setChatLivestreamPinned = useStore((s) => s.setChatLivestreamPinned)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const seenMessageIdsRef = useRef<Set<string>>(new Set())
+  const flashTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const [flashMessageIds, setFlashMessageIds] = useState<Set<string>>(() => new Set())
+  const [panelFlash, setPanelFlash] = useState(false)
 
   useEffect(() => {
     const api = window.api as any
@@ -51,6 +57,38 @@ export default function PanelChat(): React.ReactElement {
     const el = listRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [chat.messages.length])
+
+  useEffect(() => {
+    const seen = seenMessageIdsRef.current
+    const isInitialLoad = seen.size === 0
+    const incomingIds = chat.messages
+      .map((msg) => msg.id)
+      .filter((id) => id && !seen.has(id))
+    for (const msg of chat.messages) seen.add(msg.id)
+    if (isInitialLoad || incomingIds.length === 0) return
+
+    setFlashMessageIds((prev) => {
+      const next = new Set(prev)
+      for (const id of incomingIds) next.add(id)
+      return next
+    })
+    setPanelFlash(false)
+    requestAnimationFrame(() => setPanelFlash(true))
+    const timer = setTimeout(() => {
+      setPanelFlash(false)
+      setFlashMessageIds((prev) => {
+        const next = new Set(prev)
+        for (const id of incomingIds) next.delete(id)
+        return next
+      })
+    }, 2600)
+    flashTimersRef.current.push(timer)
+  }, [chat.messages])
+
+  useEffect(() => () => {
+    for (const timer of flashTimersRef.current) clearTimeout(timer)
+    flashTimersRef.current = []
+  }, [])
 
   async function handlePin(id: string): Promise<void> {
     try { await (window.api as any)?.chatPin?.(id) } catch { /* ignore */ }
@@ -86,6 +124,11 @@ export default function PanelChat(): React.ReactElement {
 
   const pinnedIds = new Set(chat.pinned.map((p) => p.id))
   const livestreamPinnedIds = new Set(chat.livestreamPinned.map((p) => p.id))
+  const routineEntryById = useMemo(() => {
+    const entries = new Map<string, string>()
+    for (const routine of (competition?.routines ?? [])) entries.set(routine.id, routine.entryNumber)
+    return entries
+  }, [competition])
 
   const [adminName, setAdminName] = useState<string>(() => {
     try { return localStorage.getItem(ADMIN_NAME_KEY) || 'Host' } catch { return 'Host' }
@@ -118,7 +161,7 @@ export default function PanelChat(): React.ReactElement {
   }
 
   return (
-    <div className="panel-chat">
+    <div className={`panel-chat${panelFlash ? ' has-new-message' : ''}`}>
       <div className="panel-chat-header">
         <span>Messages</span>
         <span className="panel-chat-count">{chat.messages.length}</span>
@@ -131,13 +174,29 @@ export default function PanelChat(): React.ReactElement {
           const pinned = pinnedIds.has(msg.id)
           const livestreamPinned = livestreamPinnedIds.has(msg.id)
           const anyPinned = pinned || livestreamPinned
+          const isCurrentRoutineMessage = !!msg.routineIdAtPost && msg.routineIdAtPost === currentRoutine?.id
+          const entryNum = msg.routineIdAtPost ? routineEntryById.get(msg.routineIdAtPost) : null
+          const className = [
+            'panel-chat-msg',
+            anyPinned ? 'pinned' : '',
+            isCurrentRoutineMessage ? 'current-routine' : '',
+            flashMessageIds.has(msg.id) ? 'new-flash' : '',
+          ].filter(Boolean).join(' ')
           return (
-            <div key={msg.id} className={`panel-chat-msg${anyPinned ? ' pinned' : ''}`}>
+            <div key={msg.id} className={className}>
               <div className="panel-chat-avatar">{initial(msg.name)}</div>
               <div className="panel-chat-body">
                 <div className="panel-chat-meta">
                   <strong>{msg.name || 'anon'}</strong>
                   <span className="panel-chat-time">{relTime(msg.timestamp)}</span>
+                  {entryNum && (
+                    <span
+                      className={`panel-chat-routine-badge${isCurrentRoutineMessage ? ' current' : ''}`}
+                      title="Routine that was active when this message was posted"
+                    >
+                      R{entryNum}
+                    </span>
+                  )}
                   {pinned && <span className="panel-chat-pin-badge pin-video" title="Pinned to recording">\ud83d\udcf9</span>}
                   {livestreamPinned && <span className="panel-chat-pin-badge pin-stream" title="Pinned to livestream">\ud83c\udf10</span>}
                 </div>

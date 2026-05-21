@@ -15,6 +15,9 @@
   gap: 10px;
   padding: 12px;
   min-height: 0;
+  /* No scrollbar — operator wants graphics + chat to always fit. Chat is the
+     flexible region; graphics card is natural-size. If they together exceed
+     the rail height, chat will shrink toward its min before any clipping. */
   overflow: hidden;
   flex: 1 1 auto;
 }
@@ -26,6 +29,28 @@
   overflow: hidden;
 }
 
+.meter-card {
+  flex: 0 0 128px;
+  padding: 10px 14px 8px;
+}
+
+.meter-card .v-meters {
+  min-height: 108px;
+  padding: 0;
+  gap: 12px;
+}
+
+.meter-card .v-meter-track {
+  max-width: 22px;
+}
+
+.meter-card .v-meter-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.6px;
+}
+
 .show-rail-title {
   padding: 8px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -34,6 +59,64 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.graphics-card-title {
+  display: grid;
+  grid-template-columns: minmax(82px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+/* UP NEXT / THAT WAS / FIRE LT share one row (2026-05-15 operator request).
+   Hide the redundant inner "GRAPHICS" section title since the outer
+   .show-rail-title already labels the card. */
+.graphics-feature-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+.graphics-feature-row .oc-graphics-section { padding: 0; border-bottom: 0; flex: 1 1 auto; }
+.graphics-feature-row .oc-section-title { display: none; }
+.graphics-feature-row .oc-graphics-row { justify-content: stretch; gap: 6px; }
+/* 2026-05-15: shorter feature buttons to reclaim graphics-panel height. */
+.graphics-feature-row .oc-graphics-btn {
+  flex: 1 1 auto;
+  padding: 4px 8px;
+  min-height: 26px;
+  font-size: 10px;
+  line-height: 1.05;
+}
+/* Collapse the OverlayControls wrapper so its Fire LT button lives inline. */
+.graphics-feature-row .oc-panel { padding: 0; background: transparent; border: 0; flex: 0 0 auto; }
+.graphics-feature-row .oc-fire-anim-row { padding: 0; }
+.graphics-feature-row .oc-fire-btn { padding: 4px 10px; font-size: 10px; min-height: 26px; white-space: nowrap; }
+
+.graphics-card-title .oc-graphics-section {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.graphics-card-title .oc-section-title {
+  display: none;
+}
+
+.graphics-card-title .oc-graphics-row {
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.graphics-card-title .oc-graphics-btn {
+  flex: 0 1 74px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 1.05;
+  letter-spacing: 0.25px;
+  white-space: nowrap;
 }
 
 .show-rail .oc-panel,
@@ -57,13 +140,7 @@
 .graphics-card {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.graphics-card-title {
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  flex: 0 0 auto;
 }
 
 .graphics-sub {
@@ -84,20 +161,29 @@
   opacity: 0.78;
 }
 
-/* Chat sub-surface fills remaining card space so the empty area below
- * CHAT AS ADMIN gets absorbed by the chat feed. */
-.graphics-sub-chat {
+/* Chat is its own .show-rail-section sibling of .graphics-card and takes
+ * whatever vertical space is left after the graphics card. No min-height —
+ * operator wants both visible without scroll, so chat shrinks if the rail
+ * is short rather than forcing a scrollbar. */
+.chat-card {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.graphics-sub-chat .ic-strip-wrap {
+.chat-card .ic-strip-wrap {
   background: transparent;
-  padding-top: 4px;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  padding: 6px 8px;
+}
+
+.chat-card .ic-strip-feed,
+.chat-card .ic-strip-history {
+  flex: 1 1 auto;
+  min-height: 0;
 }

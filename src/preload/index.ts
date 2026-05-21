@@ -24,6 +24,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_SCRATCH, routineId),
   recordingUnscratch: (routineId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.RECORDING_UNSCRATCH, routineId),
+  routineArchiveMedia: (routineId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ROUTINE_ARCHIVE_MEDIA, routineId),
 
   // FFmpeg
   ffmpegEncode: (routineId: string) =>

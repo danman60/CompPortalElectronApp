@@ -89,6 +89,7 @@
 		"monitorIndex": 1,
 		"bitrate": 3000,
 		"fps": 30,
+		"encoder": "openh264",
 		"clientIp": null,
 		"videoPort": 5000,
 		"touchPort": 5001,

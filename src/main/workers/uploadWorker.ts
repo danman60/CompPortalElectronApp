@@ -14,7 +14,7 @@
  *   - Args via stdin (single JSON line on stdin, parent closes stdin to signal
  *     "go"). Avoids argv/env escaping of long signed URLs.
  *   - Progress + completion via stdout (newline-delimited JSON):
- *       {"type":"progress","percent":25}
+ *       {"type":"progress","percent":25,"bytesUploaded":1234,"bytesTotal":5678,"bytesPerSecond":91011}
  *       {"type":"done"}
  *       {"type":"error","message":"..."}
  *   - Exit code: 0 on success, 1 on any error.
@@ -111,6 +111,7 @@ async function main(): Promise<void> {
   const fileStream = fs.createReadStream(filePath)
   let bytesUploaded = 0
   let lastEmittedMilestone = 0
+  const startedAt = Date.now()
   let timer: NodeJS.Timeout | null = null
   let aborted = false
 
@@ -172,7 +173,14 @@ async function main(): Promise<void> {
     const milestone = Math.floor(percent / 5) * 5  // emit every 5%
     if (milestone > lastEmittedMilestone) {
       lastEmittedMilestone = milestone
-      emit({ type: 'progress', percent })
+      const elapsedSec = Math.max(0.001, (Date.now() - startedAt) / 1000)
+      emit({
+        type: 'progress',
+        percent,
+        bytesUploaded,
+        bytesTotal: fileSize,
+        bytesPerSecond: Math.round(bytesUploaded / elapsedSec),
+      })
     }
   })
 

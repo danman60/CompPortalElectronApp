@@ -18,6 +18,7 @@ import {
 } from './actions/overlay-toggle'
 import { JudgeMeterAction } from './actions/judge-meter'
 import { CycleTransitionAction } from './actions/cycle-transition'
+import { UdcStingerAction } from './actions/udc-stinger'
 import { SlowZoomWideAction, SlowZoomTightAction } from './actions/slow-zoom'
 import { UnifiedMetersAction } from './actions/unified-meters'
 import { FeatureCardUpNextAction, FeatureCardThatWasAction } from './actions/feature-card'
@@ -37,6 +38,7 @@ streamDeck.actions.registerAction(new OverlayStartingSoonAction())
 streamDeck.actions.registerAction(new OverlayTickerAction())
 streamDeck.actions.registerAction(new JudgeMeterAction())
 streamDeck.actions.registerAction(new CycleTransitionAction())
+streamDeck.actions.registerAction(new UdcStingerAction())
 streamDeck.actions.registerAction(new SlowZoomWideAction())
 streamDeck.actions.registerAction(new SlowZoomTightAction())
 streamDeck.actions.registerAction(new UnifiedMetersAction())

@@ -2,10 +2,10 @@
  * Structured event emitter for remote debugging.
  *
  * Every meaningful state transition in the app emits a structured JSON event
- * to `events.log` (newline-delimited JSON, append-only, no rotation). Pairs
- * with the `/debug/*` HTTP endpoints to give Claude (or any operator) a
- * complete forensic timeline after an incident — without needing to parse
- * main.log or guess from side effects.
+ * to `events.log` (newline-delimited JSON, append-only with a ~25MB size
+ * roll-over to `events.log.1`). Pairs with the `/debug/*` HTTP endpoints to
+ * give Claude (or any operator) a complete forensic timeline after an
+ * incident — without needing to parse main.log or guess from side effects.
  *
  * Rules:
  * - Events are pure data (no functions, no circular refs). JSON.stringify-safe.
@@ -24,10 +24,41 @@ let eventsPath: string | null = null
 let writeFailures = 0
 const MAX_WRITE_FAILURES_BEFORE_QUIET = 5
 
+/**
+ * Size-based roll-over. Before 2026-05-15 this log grew unbounded (observed
+ * 1.4GB after a long live show, one fs.appendFile per emit). At ~25MB we
+ * rename events.log → events.log.1 (replacing any prior .1) and start fresh,
+ * so worst-case on-disk footprint is ~50MB and the most recent timeline is
+ * always intact. Best-effort: a failed rename just defers a cycle.
+ */
+const MAX_EVENTS_LOG_BYTES = 25 * 1024 * 1024
+let currentLogBytes = -1 // -1 = not yet measured from disk
+let rotating = false
+
 function getPath(): string {
   if (eventsPath) return eventsPath
   eventsPath = path.join(app.getPath('userData'), 'logs', 'events.log')
   return eventsPath
+}
+
+function ensureLogBytesSeed(p: string): void {
+  if (currentLogBytes >= 0) return
+  try {
+    currentLogBytes = fs.statSync(p).size
+  } catch {
+    currentLogBytes = 0
+  }
+}
+
+function rotateIfNeeded(p: string): void {
+  if (rotating || currentLogBytes < MAX_EVENTS_LOG_BYTES) return
+  rotating = true
+  // Optimistically reset the counter so we don't re-trigger a rename on every
+  // emit while the async rename is in flight. New appends recreate events.log.
+  currentLogBytes = 0
+  fs.rename(p, p + '.1', () => {
+    rotating = false
+  })
 }
 
 /**
@@ -63,12 +94,17 @@ export function emit(kind: string, data: EventPayload = {}): void {
 
   try {
     const line = JSON.stringify(record) + '\n'
-    fs.appendFile(getPath(), line, (err) => {
+    const p = getPath()
+    ensureLogBytesSeed(p)
+    rotateIfNeeded(p)
+    fs.appendFile(p, line, (err) => {
       if (err) {
         writeFailures++
         if (writeFailures === MAX_WRITE_FAILURES_BEFORE_QUIET) {
           logger.app.warn(`events.ts: ${writeFailures} write failures — muting further warnings`)
         }
+      } else {
+        currentLogBytes += Buffer.byteLength(line)
       }
     })
   } catch (err) {

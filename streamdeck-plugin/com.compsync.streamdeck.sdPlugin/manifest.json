@@ -166,6 +166,14 @@
       "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
     },
     {
+      "UUID": "com.compsync.streamdeck.udc-stinger",
+      "Name": "UDC Stinger",
+      "Tooltip": "Sets OBS transition to UDC Stinger. Existing OBS handler auto-reverts to Cut after the transition fires.",
+      "Icon": "imgs/actions/clock",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/actions/clock", "Title": "" }]
+    },
+    {
       "UUID": "com.compsync.streamdeck.slow-zoom",
       "Name": "Slow Zoom (Wide)",
       "Tooltip": "Toggle slow zoom on the Wide scene via OBS Move Transition",
