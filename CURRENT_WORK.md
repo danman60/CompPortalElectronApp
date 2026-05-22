@@ -1,5 +1,39 @@
 # Current Work — CompSyncElectronApp
 
+**Status: 2026-05-22 13:31 EDT — /wrap-up. Post-show (UDC Cobourg ended 05-17). Tree CONSOLIDATED + clean. Branch `feat/ui-redesign-pass1` @ `c8a0932`, pushed, up-to-date with upstream, working tree clean (only gitignored artifacts remain).**
+
+## Last session summary
+Post-Cobourg cleanup + deliverables. Built/proven fixes (isolated, NOT yet integrated/swapped), consolidated the working tree into a clean commit, delivered a marketing screenshot + MKV copies. Live DART app unchanged throughout (ffrevert EF44C08F); nothing swapped.
+
+## What changed / shipped this session
+- **`c8a0932`** consolidation commit (pushed): 48 modified source files (renderer redesign, recording stop≥15s auto-advance, ffmpeg/jobQueue/upload/wifiDisplay/pipelineHealth, debug capture-renderer route, streamdeck udc-stinger) + new proof harnesses, docs/plans handoffs, F1F2/B1B2 `.patch` files, udc-bug assets, scripts. Extended `.gitignore` to exclude runtime state, stray root Vite bundles, `staging/` asars, `.claude/` agent worktrees, `test-results/`, telegram uploads, `*.bak`.
+- **Screenshot delivered** (DM msg 4025): `/tmp/cse-midshow-shot.png` (1920×1080) — rendered from the **live DART build EF44C08F** (pulled read-only to `/tmp/livesnap.asar`), real `VerticalMeters` left of RECORD fed via ws://localhost:9877 audioLevels, 56 TEST2026 routines, session breaks, no disk/SD banners. Caveat: RECORD button shows dark-red *ready* (glow keys off live OBS); the LIVE highlighted table row is the real record indicator.
+- **MKV copy**: `18-00-52_26-05-16.mkv` (2.77GB) + `14-59-39_26-05-16.mkv` (145MB) copied (no remux, trailing space stripped) ASTEROID→FIRMAMENT `C:\Users\danie\Desktop\`, byte-verified.
+
+## Built + proven, NOT integrated (isolated branches + committed patches)
+- **F1+F2 durable media-completion** (`fix/durable-media-completion`; patch `docs/plans/2026-05-17-durable-media-completion-F1F2.patch`). 16/16.
+- **B1+B2 4700-counter/queue fix + F1F2** (`fix/post-cobourg-batch`; patch `docs/plans/2026-05-19-post-cobourg-B1B2.patch`). 14/14 + 16/16. Close-dialog count 1509→6 in proof.
+- ⚠ Both patch-bases = committed `7a0baf8`; folding into the redesign tree needs a deliberate 3-way merge (will conflict in upload.ts/state.ts/types.ts/jobQueue.ts/index.ts). Re-run both harnesses on the merged tree before any build. Never bundle with an encode-deadlock asar.
+
+## The "4700 pending" investigation (RESOLVED — root cause, evidence-based)
+Close-dialog "uploads pending" = raw `jobQueue.getPending('upload')+getRunning('upload')` count (`src/main/index.ts:217`). Inflated by: thumbnails enqueued as separate jobs, duplicate re-enqueues of already-uploaded files (fail "already exists"), order-A gated remaining-photo tier, and never-pruned terminal failed/quarantined records. DB proved zero media lost (544/545 published). Fix = B1 (distinct-undelivered count + enqueue dedupe + terminal prune) — built, in `fix/post-cobourg-batch`, not integrated.
+
+## Re-scope of the post-Cobourg fix list (staleness sweep — most items were already done in-tree)
+Plan: `docs/plans/2026-05-19-post-cobourg-fix-batch.md`. STALE/already-implemented (shipped via this commit): slow-zoom CUT+FADE-4s, photo-tier order A, day-scoped RoutineTable, BATCH alerts, CSE archive-media row action, import-pill pulse, audio-meter 10Hz throttle.
+
+## Open / NOT done (operator's call — do NOT auto-start)
+1. **D1 R222/R223 photo cleanup — STALE PREMISE, do NOT run the original UPDATE.** DB now: R222 pkg `c40d0848`=84 photos (cap 05-15 16:19:59–16:25:53 EDT); R223 pkg `d9961024`=**43 photos already** (NOT 0; cap 12:23:31–12:25:53 EDT); both published. Windows don't match the "split @20:23:02Z" premise. Ask operator for the correct end-state before any DB write.
+2. **B4** activity-log status tabs (Queued/Encoding/Uploading/Uploaded board) — genuinely not built.
+3. **B5-CompPortal** clear-media endpoint (CSE-side archive-media already in tree; needs the server endpoint that sets deleted_at + nulls video fields).
+4. **B8** R2 archive-on-overwrite (CompPortal `src/lib/r2.ts` signGuardedUpload overwrites in place; `copyInR2` exists but unused; ~30-45min, Vercel deploy).
+5. **C2** swap the staged 82C34FC0 build, or leave DART on ffrevert — encode deadlock self-resolved live, so this is preventive only. Staged at `C:\CompSync-staging\app.asar.new`; 6825923C preserved as `.bak`.
+6. **Fold F1+F2 / B1+B2** into the tree when ready (3-way merge per above).
+
+## Hard rules still in force
+Never close/kill/swap on DART without explicit operator go (operator owns app close+relaunch); each asar swap its own gated action; DB/R2/CompPortal writes need explicit go; machine_logs (Supabase COMPSYNC, ts UTC→EDT) not ssh for DART logs; ASTEROID/DART PowerShell over ssh MUST be a `.ps1 -File` (inline `-Command` quoting mangles — burned 2× this session); strip `\r` from PowerShell stdout before bash compares; PowerShell `Write-Output` per-file in `while read` loops needs `ssh -n`/`</dev/null` (stdin consumption).
+
+---
+
 **Status: 2026-05-17 13:23 EDT — Plain-Stop auto-advance woven into the staged ASAR (RESTAGED, NOT swapped). Operator directive: a plain Stop (NOT Next) of a take >=15s advances routine SELECTION to next routine (no recording started); <15s stays. Single-file change `src/main/services/recording.ts` (handleRecordingStopped): captures `navInitiatedStop = pendingStopProcessing !== null` at entry (next()/nextFull() route through stopRecordingAndWait→barrier; plain Stop/hotkey/OBS-auto-stop don't), sets `advanceAfterStop = !navInitiatedStop && durationSec>=15` after the recording.stopped emit, calls `state.advanceToNext()` in finally before broadcast. No double-advance (nav stops suppressed). sub-10s discard path returns earlier; 10–14s stays. OBS auto-stop intentionally treated as plain Stop (operator: "OBS shouldn't matter"). electron-vite + electron-builder exit 0. Combined asar rebuilt from shared tree = Codex 6825923C content (in-asar verified: freeWifiDisplayPorts/nudgeRoutineEncode/resumeRecordedRoutines) + this change + Header.tsx/ShowControlRail.tsx edits already in the shared tree @12:37 EDT (post Codex 12:16 build). Encoder SAFE in-asar: h264_cuvid=0, hwaccel cuda=0, hwaccel_output_format=0. NEW staged `C:\CompSync-staging\app.asar.new` = **sha `82C34FC08A9191DBAA3E19EA33447AC8A25B2DBB02781873D63E3105E3F23D8A`, 132,578,365 bytes**, LastWriteTime 2026-05-17 13:23:02 EDT, byte-identical local↔DART verified. Codex's prior 6825923C (132,578,089) PRESERVED at `C:\CompSync-staging\app.asar.6825923C.bak` (intact, rollback target). Live DART `app.asar` UNCHANGED (ffrevert EF44C08F, 132,569,626). NOT swapped, NOT committed, Program Files + running app untouched. Encode-deadlock swap remains operator-gated + Codex-coordinated; staged-sha verification expectation is now 82C34FC0…, not 6825923C (Codex notified via INBOX). feat/ui-redesign-pass1.**
 
 **Status: 2026-05-17 13:02 EDT — /fresh RESTART (long live-incident session, context rot — many wrong theories burned, operator called fresh). UDC Cobourg 2026 LIVE on DART. Codex is co-working this and maintains the authoritative status block below (12:18). READ THIS + the 12:18 block + .claude-crash-transcript.md first.**
